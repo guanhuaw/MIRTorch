@@ -30,8 +30,8 @@ class Linearmap():
             @staticmethod
             def backward(ctx, grad_data_in):
                 return self.adjoint_op(grad_data_in)
-        self._apply = forward.apply # This may look wired to you. But the torch.autograd.Function requires .apply
-        
+        self._apply = forward.apply # This may look wired to you. But the torch.autograd. Function requires .apply
+
         class adjoint(torch.autograd.Function):
             @staticmethod
             def forward(ctx, data_in):
@@ -50,14 +50,15 @@ class Linearmap():
     def __call__(self):
         pass
 
+
+    # TODO add class
     # you can try the sigpy approach or your own one
     def __add__(self, other):
-        output = 0
         with other.device:
             self.forward_op += other.forward_op
             self.adjoint_op += adjoint_op
 
-    def __matmul__(self, other):
+    def __mul__(self, other):
         pass
 
     def __sub__(self, other):
@@ -72,4 +73,3 @@ class Linearmap():
 
     def _combine_compose_linops(self, linops):
         pass
-
