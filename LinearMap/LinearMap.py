@@ -18,10 +18,10 @@ class Linearmap():
         size_in: the size of the input of the linear map
         size_out: ...
         '''
-        self.size_in = size_in
-        self.size_out = size_out
-        self.forward_op = forward_op
-        self.adjoint_op = adjoint_op
+        self.size_in = size_in          # size_in: input data dimention
+        self.size_out = size_out        # size_out: output data dimention
+        self.forward_op = forward_op    # forward function i.e. fft
+        self.adjoint_op = adjoint_op    # adjoint function i.e. ifft
 
         class forward(torch.autograd.Function):
             @staticmethod
@@ -79,17 +79,18 @@ class Add(Linearmap):
     Addition of linear operators.
     '''
     def __init__(self, other):
-        super().__init__(size_in, size_out, forward_op, adjoint_op)
         # check shape
         assert(self.size_in == other.size_in)
         assert(self.size_out == other.size_out)
+        self.other = other
 
-    def apply(self, other):
-        with other.device:
-            output = Linearmap(self.size_in,
-                               self.size_out,
-                               self.forward_op + other.forward_op,
-                               self.adjoint_op + other.adjoint_op)
+        # ? How to define forward and adjoint op here
+        super().__init__(self.size_in, self.size_out, forward_op, adjoint_op)
+
+    def apply(self, input_):
+        output = 0
+        with input_.device:
+            output = self.other.forward_op(self.forward_op(input_))
         return output
 
 class Matmul(Linearmap):
@@ -97,8 +98,9 @@ class Matmul(Linearmap):
     Matrix multiplication of linear operators.
     '''
     def __init__(self, other):
-        super().__init__(size_in, size_out, forward_op, adjoint_op)
-        # TODO: check shape
+        # check shape
+        assert(self.size_out == other.size_in)
+        super().__init__(self.size_in, other.size_out, forward_op, adjoint_op)
 
     def apply(self, other):
         with other.device:
