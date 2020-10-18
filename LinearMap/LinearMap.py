@@ -46,30 +46,64 @@ class Linearmap():
     def check_device(self):
         return self.forward_op.device == self.adjoint_op.device
 
-    # ?
-    def __call__(self):
-        pass
+    # # ?
+    # def __call__(self):
+    #     pass
 
 
-    # TODO add class
-    # you can try the sigpy approach or your own one
-    def __add__(self, other):
-        with other.device:
-            self.forward_op += other.forward_op
-            self.adjoint_op += adjoint_op
+    # # TODO add class
+    # # you can try the sigpy approach or your own one
+    # def __add__(self, other):
+    #     with other.device:
+    #         self.forward_op += other.forward_op
+    #         self.adjoint_op += adjoint_op
 
-    def __mul__(self, other):
-        pass
+    # def __mul__(self, other):
+    #     pass
 
-    def __sub__(self, other):
-        return self.__add__(-other)
+    # def __sub__(self, other):
+    #     return self.__add__(-other)
 
-    def __neg__(self):
-        return -1 * self
+    # def __neg__(self):
+    #     return -1 * self
         
-    @property
-    def H(self):
-        pass
+    # @property
+    # def H(self):
+    #     pass
 
-    def _combine_compose_linops(self, linops):
-        pass
+    # def _combine_compose_linops(self, linops):
+    #     pass
+
+class Add(Linearmap):
+    '''
+    Addition of linear operators.
+    '''
+    def __init__(self, other):
+        super().__init__(size_in, size_out, forward_op, adjoint_op)
+        # check shape
+        assert(self.size_in == other.size_in)
+        assert(self.size_out == other.size_out)
+
+    def apply(self, other):
+        with other.device:
+            output = Linearmap(self.size_in,
+                               self.size_out,
+                               self.forward_op + other.forward_op,
+                               self.adjoint_op + other.adjoint_op)
+        return output
+
+class Matmul(Linearmap):
+    '''
+    Matrix multiplication of linear operators.
+    '''
+    def __init__(self, other):
+        super().__init__(size_in, size_out, forward_op, adjoint_op)
+        # TODO: check shape
+
+    def apply(self, other):
+        with other.device:
+            output = Linearmap(self.size_in, # !
+                               self.size_out, # !
+                               torch.matmul(self.forward_op, other.forward_op),
+                               self.adjoint_op + other.adjoint_op) # ???
+        return output
