@@ -7,7 +7,7 @@ class Prox():
     Prox is currently supported to be called on a torch.Tensor
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(x)
+       Prox_f(v) \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(x)
 
     Args:
         device (None or torch.device): device of output tensor, default on same device as input
