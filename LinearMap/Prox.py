@@ -34,8 +34,8 @@ class L1Regularizer(Prox):
         device (None or torch.device): device of output tensor, default on same device as input
     """
     
-    def __init__(self, Lambda, device = None):
-        super().__init__(device)
+    def __init__(self, Lambda):
+        super().__init__()
         self.Lambda = float(Lambda)
 
     def _apply(self, v):
@@ -47,8 +47,6 @@ class L1Regularizer(Prox):
 
         x = thresh(v)
 
-        if self.device is not None:
-            x = x.to(self.device)
 
         return x
 
@@ -66,8 +64,8 @@ class L2Regularizer(Prox):
         Lambda (float): regularization parameter.
         device (None or torch.device): device of output tensor, default on same device as input
     """
-    def __init__(self, Lambda, device=None):
-        super().__init__(device)
+    def __init__(self, Lambda):
+        super().__init__()
         self.Lambda = float(Lambda)
 
     def _apply(self, v):
@@ -78,9 +76,6 @@ class L2Regularizer(Prox):
         scale = 1 - self.Lambda / torch.max(v, torch.linalg.norm(v))
 
         x = torch.mul(scale, v)
-
-        if self.device is not None:
-            x = x.to(self.device)
 
         return x
 
@@ -97,17 +92,15 @@ class SqauredL2Regularizer(Prox):
         device (None or torch.device): device of output tensor, default on same device as input
     """
 
-    def __init__(self, Lambda, device=None):
+    def __init__(self, Lambda):
 
-        super().__init__(device)
+        super().__init__()
         self.Lambda = float(Lambda)
     
     def _apply(self, v):
 
         x = torch.div(v, 1 + 2*self.Lambda)
 
-        if self.device is not None:
-            x = x.to(self.device)
         
         return x
 
@@ -124,9 +117,9 @@ class BoxConstraint(Prox):
         device (None or torch.device): device of output tensor, default on same device as input
     """
 
-    def __init__(self, lower, upper, Lambda = 1, device=None):
+    def __init__(self, lower, upper, Lambda = 1):
         
-        super().__init__(device)
+        super().__init__()
         self.l = lower
         self.u = upper
         self.Lambda = float(Lambda)
@@ -135,8 +128,6 @@ class BoxConstraint(Prox):
 
         x = torch.clamp(v, self.l, self.u)
 
-        if self.device is not None:
-            x = x.to(self.device)
         
         return x
         
