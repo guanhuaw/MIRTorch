@@ -124,7 +124,7 @@ class BoxConstraint(Prox):
         device (None or torch.device): device of output tensor, default on same device as input
     """
 
-    def __init__(self, lower, upper, device=None):
+    def __init__(self, lower, upper, Lambda = 1, device=None):
         
         super().__init__(device)
         self.l = lower
