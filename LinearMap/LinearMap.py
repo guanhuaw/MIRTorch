@@ -43,9 +43,11 @@ class Linearmap():
         self.size_in = size_in              # size_in: input data dimention
         self.size_out = size_out            # size_out: output data dimention
         self.device = device
+
     def check_device(self, x, y):
         # TODO: check if the output and input are on the same device (Guanhua)
         pass
+
     def __repr__(self):
         # Name of the linear operator
         pass
@@ -59,29 +61,35 @@ class Linearmap():
         # or torch.autograd.Function, or nn.module
         raise NotImplementedError
 
-    def _apply_adjoint(self,x):
+    def _apply_adjoint(self, x):
         raise NotImplementedError
 
-    def apply(self,x):
+    def apply(self, x):
         assert(x.size == self.size_in)
         self._apply(x)
 
-    def adjoint(self,x):
+    def adjoint(self, x):
         assert (x.size == self.size_out)
-        self._apply_adjoint(self,x)
+        self._apply_adjoint(self, x)
 
-    def H(self,x):
+    def H(self, x):
         return Transpose(self)
 
     # TODO: Reload the operator
     def __add__(self, other):
-        return Add(self,other)
+        return Add(self, other)
 
     def __mul__(self, other):
         if np.isscalar(other):
+            return Multiply(self, other)
         elif isinstance(other, Linearmap):
-        elif isinstance(other, torch.tensor):
+            return Matmul(self, other)
+        elif isinstance(other, torch.Tensor):
+            if not other.shape:
+                raise ValueError("Input tensor has empty shape.")
+            return self.apply(other)
         else:
+            raise NotImplementedError("Only scalers, Linearmaps or Tensors are allowed as arguments for this function.")
 
 
     # def __sub__(self, other):
@@ -103,33 +111,51 @@ class Add(Linearmap):
     '''
     def __init__(self, other):
         # check shape/device: TODO: change to try catch
-
-        assert(self.size_in == other.size_in)
-        assert(self.size_out == other.size_out)
+        if self.size_in != other.size_in:
+            raise ValueError("The input dimentions are not the same.")
+        if self.size_out != other.size_out:
+            raise ValueError("The output dimentions are not the same.")
         self.other = other
 
-        # ? How to define forward and adjoint op here
         super().__init__(self.size_in, self.size_out)
 
-    def _apply(self, input_):
-        output = 0
-        with input_.device:
-            output = self.other.forward_op(self.forward_op(input_))
+    def _apply(self, input):
+        with input.device:
+            output = self(input) + self.other(input)
         return output
+
+    def _apply_adjoint(self, input):
+        with input.device:
+            output = self.H(input) + self.other.H(input)
+        return output
+
+
+class Multiply(Linearmap):
+    '''
+    Multiplication linear operator.
+    '''
+    def __init__(self, other):
+        self.other = other
+        super().__init__(self.size_in, self.size_out)
+
+    def _apply(self, input):
+        # ! not sure
+        with input.device:
+            mult = input * self.other
+            output = self(mult)
+        return output
+
 
 class Matmul(Linearmap):
     '''
     Matrix multiplication of linear operators.
     '''
     def __init__(self, other):
-        # check shape
-        assert(self.size_out == other.size_in)
-        super().__init__(self.size_in, other.size_out, forward_op, adjoint_op)
+        # TODO: check shape
+        self.other = other
+        super().__init__(self.size_in, other.size_out)
 
-    def _apply(self, other):
-        with other.device:
-            output = Linearmap(self.size_in, # !
-                               self.size_out, # !
-                               torch.matmul(self.forward_op, other.forward_op),
-                               self.adjoint_op + other.adjoint_op) # ???
+    def _apply(self, input):
+        with input.device:
+            output = self(self.other(input))
         return output
