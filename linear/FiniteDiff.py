@@ -2,7 +2,7 @@
 Linear Operator implementations.
 """
 import torch
-from .LinearMap import Linearmap
+from .Linearmaps import Linearmap
 class FiniteDiff(Linearmap):
 
 

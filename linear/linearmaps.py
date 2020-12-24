@@ -5,6 +5,7 @@ import torch
 import abc
 import os
 import numpy as np
+
 '''
  Recommendation for linear operation:
  class forward(torch.autograd.Function):
@@ -23,11 +24,15 @@ class adjoint(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_data_in):
         return adjoint_func(grad_data_in)
-adjoint_op = adjoint.apply
+adjoint_op = adjoint.apply 
 '''
 
-class Linearmap():
 
+def check_device(x, y):
+    assert x.device == y.device, "tensors should be on the same device"
+
+
+class LinearMap():
     '''
         We followed the idea of Sigpy rather than ModOpt:
         Each son class (like FFT, Wavelet ...) defines it own _apply and _apply_adjoint
@@ -40,13 +45,9 @@ class Linearmap():
         size_in: the size of the input of the linear map (a list)
         size_out: the size of the output of the linear map (a list)
         '''
-        self.size_in = size_in              # size_in: input data dimention
-        self.size_out = size_out            # size_out: output data dimention
+        self.size_in = size_in  # size_in: input data dimention
+        self.size_out = size_out  # size_out: output data dimention
         self.device = device
-
-    def check_device(self, x, y):
-        # TODO: check if the output and input are on the same device (Guanhua)
-        pass
 
     def __repr__(self):
         # Name of the linear operator
@@ -65,97 +66,111 @@ class Linearmap():
         raise NotImplementedError
 
     def apply(self, x):
-        assert(x.size == self.size_in)
+        assert x.size == self.size_in, "input size and linear op size does not match"
         self._apply(x)
 
     def adjoint(self, x):
-        assert (x.size == self.size_out)
+        assert x.size == self.size_out, "input size and adjoint op size does not match"
         self._apply_adjoint(self, x)
 
     def H(self, x):
         return Transpose(self)
 
-    # TODO: Reload the operator
     def __add__(self, other):
         return Add(self, other)
 
     def __mul__(self, other):
         if np.isscalar(other):
             return Multiply(self, other)
-        elif isinstance(other, Linearmap):
+        elif isinstance(other, LinearMap):
             return Matmul(self, other)
         elif isinstance(other, torch.Tensor):
             if not other.shape:
-                raise ValueError("Input tensor has empty shape.")
+                raise ValueError(
+                    "Input tensor has empty shape. If want to scale the linear map, please use the standard scalar")
             return self.apply(other)
         else:
             raise NotImplementedError("Only scalers, Linearmaps or Tensors are allowed as arguments for this function.")
 
+    def __rmul__(self, other):
+        if np.isscalar(other):
+            return Multiply(self, other)
+        else:
+            return NotImplemented
 
-    # def __sub__(self, other):
-    #     return self.__add__(-other)
+    def __sub__(self, other):
+        return self.__add__(-other)
 
-    # def __neg__(self):
-    #     return -1 * self
-        
-    # @property
-    # def H(self):
-    #     pass
+    def __neg__(self):
+        return -1 * self
 
-    # def _combine_compose_linops(self, linops):
-    #     pass
 
-class Add(Linearmap):
+class Add(LinearMap):
     '''
     Addition of linear operators.
+    (A+B)*x = A(x) + B(x)
     '''
-    def __init__(self, other):
-        # check shape/device: TODO: change to try catch
-        if self.size_in != other.size_in:
-            raise ValueError("The input dimentions are not the same.")
-        if self.size_out != other.size_out:
-            raise ValueError("The output dimentions are not the same.")
-        self.other = other
 
-        super().__init__(self.size_in, self.size_out)
+    def __init__(self, A, B):
+        assert A.size_in == B.size_in, "The input dimentions of two combined ops are not the same."
+        assert A.size_out == B.size_out, "The output dimentions of two combined are not the same."
+        self.A = A
+        self.B = B
+        super().__init__(self.A.size_in, self.B.size_out)
 
-    def _apply(self, input):
-        with input.device:
-            output = self(input) + self.other(input)
-        return output
+    def _apply(self, x):
+        return self.A(x) + self.B(x)
 
-    def _apply_adjoint(self, input):
-        with input.device:
-            output = self.H(input) + self.other.H(input)
-        return output
+    def _apply_adjoint(self, x):
+        return self.A.H(x) + self.B.H(x)
 
 
-class Multiply(Linearmap):
+class Multiply(LinearMap):
     '''
-    Multiplication linear operator.
+    Scaling linear operators
+    a*A*x = A(ax)
     '''
-    def __init__(self, other):
-        self.other = other
-        super().__init__(self.size_in, self.size_out)
 
-    def _apply(self, input):
-        # ! not sure
-        with input.device:
-            mult = input * self.other
-            output = self(mult)
-        return output
+    def __init__(self, A, a):
+        self.a = a
+        self.A = A
+        super().__init__(self.A.size_in, self.A.size_out)
+
+    def _apply(self, x):
+        ax = x * self.a
+        return self.A(ax)
+
+    def _apply_adjoint(self, x):
+        ax = x * self.a
+        return self.A.H(ax)
 
 
-class Matmul(Linearmap):
+class Matmul(LinearMap):
     '''
     Matrix multiplication of linear operators.
+    A*B*x = A(B(x))
     '''
-    def __init__(self, other):
-        # TODO: check shape
-        self.other = other
-        super().__init__(self.size_in, other.size_out)
 
-    def _apply(self, input):
-        with input.device:
-            output = self(self.other(input))
-        return output
+    def __init__(self, A, B):
+        self.A = A
+        self.B = B
+        assert self.B.size_out == self.A.size_in, "Shapes do not match"
+        super().__init__(self.B.size_in, self.A.size_out)
+
+    def _apply(self, x):
+        return self.A(self.B(x))
+
+    def _apply_adjoint(self, x):
+        return self.B.H(self.A.H(x))
+
+
+class Transpose(LinearMap):
+    def __init__(self, A):
+        self.A = A
+        super().__init__(self.A.size_out, self.A.size_in)
+
+    def _apply(self, x):
+        return self.A.H(x)
+
+    def _apply_adjoint(self, x):
+        return self.A(x)

@@ -3,7 +3,7 @@ import sys, os
 path = os.path.dirname(os.path.abspath(__file__))
 path = path[:path.rfind('/')]
 sys.path.insert(0, path)
-from LinearMap import Prox
+from prox import Prox
 import torch
 import numpy as np
 import numpy.testing as npt

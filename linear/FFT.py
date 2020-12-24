@@ -1,4 +1,4 @@
-from .LinearMap import Linearmap
+from .Linearmaps import Linearmap
 import torch
 
 # Below for Reference
@@ -80,4 +80,5 @@ def ifft2(data):
     return data
 
 class FFT(Linearmap):
-    pass
+    def __init__(self, size_in, size_out):
+
