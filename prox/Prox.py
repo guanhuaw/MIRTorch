@@ -1,5 +1,11 @@
 import torch
 
+
+# Neel, here some some suggestions:
+# 1. Add a __call__ to each operator, just like linearmap
+# 2. Add the complex support. Some of the functions may not support the complex ops,
+# then you may want to do with the real/imag component respectively.
+
 class Prox():
     r"""
     Proximal operator base class

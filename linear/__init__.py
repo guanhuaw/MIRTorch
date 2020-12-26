@@ -1,2 +1,1 @@
-__all__ = ['linearmaps']
-from . import *
+__all__ = ['linearmaps', 'mri', 'wavelets', 'basics']
