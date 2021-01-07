@@ -75,7 +75,8 @@ class LinearMap():
         assert x.size == self.size_out, "input size and adjoint op size does not match"
         self._apply_adjoint(self, x)
 
-    def H(self, x):
+    # def H(self, x):
+    def H(self):
         return Transpose(self)
 
     def __add__(self, other):
@@ -117,7 +118,7 @@ class Add(LinearMap):
 
     def __init__(self, A, B):
         assert A.size_in == B.size_in, "The input dimentions of two combined ops are not the same."
-        assert A.size_out == B.size_out, "The output dimentions of two combined are not the same."
+        assert A.size_out == B.size_out, "The output dimentions of two combined ops are not the same."
         self.A = A
         self.B = B
         super().__init__(self.A.size_in, self.B.size_out)

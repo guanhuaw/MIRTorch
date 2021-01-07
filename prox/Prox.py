@@ -3,17 +3,17 @@ import torch
 
 # Neel, here some some suggestions:
 # 1. Add a __call__ to each operator, just like linearmap
-# 2. Add the complex support. Some of the functions may not support the complex ops,
-# then you may want to do with the real/imag component respectively.
+# 2. Add the complex(v) support. Some of the functions may not support the complex(v) ops,
+# then you may want to do with the real(v)/imag component respectively.
 
-class Prox():
+class Prox:
     r"""
-    Proximal operator base class
+    Prox(v)imal operator base class
 
-    Prox is currently supported to be called on a torch.Tensor
+    Prox(v) is currently supported to be called on a torch.Tensor
 
     .. math::
-       Prox_f(v) \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(x)
+       Prox(v)_f(v) \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + f(x(v))
 
     Args:
 
@@ -29,10 +29,10 @@ class Prox():
 
 class L1Regularizer(Prox):
     r"""
-    Proximal operator for L1 regularizer, using soft thresholding
+    Prox(v)imal operator for L1 regularizer, using soft thresholding
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_1
+        \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + \lambda \| x(v) \|_1
 
     Args:
         Lambda (float): regularization parameter.
@@ -45,8 +45,11 @@ class L1Regularizer(Prox):
     def _apply(self, v):
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
+        dtype = v.dtype
         thresh = torch.nn.Softshrink(self.Lambda)
+        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_real(v)
         x = thresh(v)
+        if dtype == torch.cfloat or dtype == torch.cdouble: x = torch.view_as_complex(x)
         return x
 
 
@@ -54,10 +57,10 @@ class L1Regularizer(Prox):
 
 class L2Regularizer(Prox):
     r"""
-    Proximal operator for L2 regularizer
+    Prox(v)imal operator for L2 regularizer
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_2
+        \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + \lambda \| x(v) \|_2
 
     Args:
         Lambda (float): regularization parameter.
@@ -69,17 +72,20 @@ class L2Regularizer(Prox):
     def _apply(self, v):
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf 
+        dtype = v.dtype
+        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_real(v)
         scale = 1.0 - self.Lambda / torch.max(torch.Tensor([self.Lambda]), torch.linalg.norm(v))
+        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_complex(v)
         x = torch.mul(scale, v)
         return x
 
-class SqauredL2Regularizer(Prox):
+class SquaredL2Regularizer(Prox):
 
     r"""
-    Proximal operator for Squared L2 regularizer
+    Prox(v)imal operator for Squared L2 regularizer
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_2^2
+        \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + \lambda \| x(v) \|_2^2
 
     Args:
         Lambda (float): regularization parameter.
@@ -90,21 +96,21 @@ class SqauredL2Regularizer(Prox):
         self.Lambda = float(Lambda)
     
     def _apply(self, v):
-        x = torch.div(v, 1 + 2*self.Lambda)
+        x =  torch.div(v, 1 + 2*self.Lambda)
         return x
 
 class BoxConstraint(Prox):
 
     r"""
-    Proximal operator for Box Constraint
+    Prox(v)imal operator for Box(v) Constraint
 
     .. math::
-        \arg \min_{x \in [lower, upper]} \frac{1}{2} \| x - v \|_2^2
+        \arg \min_{x(v) \in [lower, upper]} \frac{1}{2} \| x(v) - v \|_2^2
 
     Args:
         Lambda (float): regularization parameter.
         lower (scalar): minimum value
-        upper (scalar): maximum value
+        upper (scalar): max(v)imum value
     """
 
     def __init__(self, Lambda, lower, upper):
@@ -114,6 +120,9 @@ class BoxConstraint(Prox):
         self.Lambda = float(Lambda)
     
     def _apply(self, v):
+        dtype = v.dtype
+        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_real(v)
         x = torch.clamp(v, self.l, self.u)
+        if dtype == torch.cfloat or dtype == torch.cdouble: x = torch.view_as_complex(x)
         return x
         
