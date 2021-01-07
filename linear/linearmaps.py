@@ -6,6 +6,8 @@ import abc
 import os
 import numpy as np
 
+# To Do: frame operator
+
 '''
  Recommendation for linear operation:
  class forward(torch.autograd.Function):
@@ -104,6 +106,8 @@ class LinearMap():
     def __neg__(self):
         return -1 * self
 
+    def __matmul__(self,other):
+        pass
 
 class Add(LinearMap):
     '''

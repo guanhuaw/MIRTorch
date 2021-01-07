@@ -38,6 +38,21 @@ class Diag(LinearMap):
     def _apply_adjoint(self, x):
         # conjugate here
         return torch.conj(self.P)*x
+class Identity(LinearMap):
+    pass
+
+class Smoothing1d(LinearMap):
+    pass
+
+class Smoothing2d(LinearMap):
+    pass
+
+class convolve(LinearMap):
+    pass
+
+class interp_li_1d(LinearMap):
+    pass
+
 
 def finitediff(x, dim=-1):
     """
