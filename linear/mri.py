@@ -1,6 +1,6 @@
 from .linearmaps import LinearMap
 import torch
-from torch.fft import fft, ifft
+from torch.fft import fft, ifft, fftn, ifftn
 from .linearmaps import LinearMap, check_device
 
 
@@ -48,18 +48,18 @@ class FFTn(LinearMap):
 
     def _apply(self, x):
         x = ifftshift(x, self.dims)
-        x = fft(x, dim=self.dims, norm=self.norm)
+        x = fftn(x, dim=self.dims, norm=self.norm)
         x = fftshift(x, self.dims)
         return x
 
     def _apply_adjoint(self, x):
         x = ifftshift(x, self.dims)
         if self.norm == 'ortho':
-            x = ifft(x, dim=self.dims, norm='ortho')
+            x = ifftn(x, dim=self.dims, norm='ortho')
         elif self.norm == 'forward':
-            x = ifft(x, dim=self.dims, norm='backward')
+            x = ifftn(x, dim=self.dims, norm='backward')
         else:
-            x = ifft(x, dim=self.dims, norm='forward')
+            x = ifftn(x, dim=self.dims, norm='forward')
         x = fftshift(x, self.dims)
         return x
 
@@ -86,7 +86,7 @@ class Sense(LinearMap):
         masks = self.masks.unsqueeze(1)
         x = x * self.smaps
         x = ifftshift(x, self.dims)
-        k = fft(x, dim=self.dims, norm=self.norm)
+        k = fftn(x, dim=self.dims, norm=self.norm)
         k = fftshift(k, self.dims) * masks
         return k
 
@@ -96,18 +96,23 @@ class Sense(LinearMap):
         k = k * masks
         k = ifftshift(k, self.dims)
         if self.norm == 'ortho':
-            x = ifft(k, dim=self.dims, norm='ortho')
+            x = ifftn(k, dim=self.dims, norm='ortho')
         elif self.norm == 'forward':
-            x = ifft(k, dim=self.dims, norm='backward')
+            x = ifftn(k, dim=self.dims, norm='backward')
         else:
-            x = ifft(k, dim=self.dims, norm='forward')
+            x = ifftn(k, dim=self.dims, norm='forward')
         x = fftshift(x, self.dims)
         x = (x * torch.conj(self.smaps)).sum(1)
         return x
 
-
-class NuFFT:
-    def __init__(self, size_in, size_out, dims, smaps, masks, norm='ortho'):
-
-
-class NuSense
+#
+# class NuFFT:
+#     def __init__(self, size_in, size_out, dims, smaps, traj, norm='ortho'):
+#
+#
+# class NuSense:
+#     pass
+#
+# class MRI:
+#     def __init__(self, size_in, size_out, dims, smaps, masks, zmap, norm='ortho'):
+#         pass

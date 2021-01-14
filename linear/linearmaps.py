@@ -26,7 +26,7 @@ class adjoint(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_data_in):
         return adjoint_func(grad_data_in)
-adjoint_op = adjoint.apply 
+adjoint_op = adjoint.apply
 '''
 
 
@@ -68,16 +68,14 @@ class LinearMap():
         raise NotImplementedError
 
     def apply(self, x):
-        assert x.size == self.size_in, "input size and linear op size does not match"
-        self._apply(x)
-
+        assert x.shape == self.size_in, "input size and linear op size does not match"
+        return self._apply(x)
     def adjoint(self, x):
-        assert x.size == self.size_out, "input size and adjoint op size does not match"
-        self._apply_adjoint(self, x)
-
-    # def H(self, x):
+        assert x.shape == self.size_out, "input size and adjoint op size does not match"
+        return self._apply_adjoint(x)
+    @property
     def H(self):
-        return Transpose(self)
+        return ConjTranspose(self)
 
     def __add__(self, other):
         return Add(self, other)
@@ -117,8 +115,8 @@ class Add(LinearMap):
     '''
 
     def __init__(self, A, B):
-        assert A.size_in == B.size_in, "The input dimentions of two combined ops are not the same."
-        assert A.size_out == B.size_out, "The output dimentions of two combined ops are not the same."
+        assert list(A.size_in) == list(B.size_in), "The input dimentions of two combined ops are not the same."
+        assert list(A.size_out) == list(B.size_out), "The output dimentions of two combined ops are not the same."
         self.A = A
         self.B = B
         super().__init__(self.A.size_in, self.B.size_out)
@@ -159,7 +157,7 @@ class Matmul(LinearMap):
     def __init__(self, A, B):
         self.A = A
         self.B = B
-        assert self.B.size_out == self.A.size_in, "Shapes do not match"
+        assert list(self.B.size_out) == list(self.A.size_in), "Shapes do not match"
         super().__init__(self.B.size_in, self.A.size_out)
 
     def _apply(self, x):
@@ -169,13 +167,14 @@ class Matmul(LinearMap):
         return self.B.H(self.A.H(x))
 
 
-class Transpose(LinearMap):
+class ConjTranspose(LinearMap):
     def __init__(self, A):
         self.A = A
-        super().__init__(self.A.size_out, self.A.size_in)
+        super().__init__(A.size_out, A.size_in)
 
     def _apply(self, x):
-        return self.A.H(x)
+        return self.A.adjoint(x)
 
     def _apply_adjoint(self, x):
-        return self.A(x)
+        return self.A.apply(x)
+

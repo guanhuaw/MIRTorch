@@ -27,6 +27,9 @@ class Prox:
         #sigpy also has alpha value, maybe add that here after implementing basic functionality
         return self._apply(v)
 
+    def __repr__(self):
+        return NotImplementedError
+
 class L1Regularizer(Prox):
     r"""
     Prox(v)imal operator for L1 regularizer, using soft thresholding
