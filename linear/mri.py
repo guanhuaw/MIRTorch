@@ -2,6 +2,7 @@ from .linearmaps import LinearMap
 import torch
 from torch.fft import fft, ifft, fftn, ifftn
 from .linearmaps import LinearMap, check_device
+from torchkbnufft import AdjMriSenseNufft, MriSenseNufft, KbNufft, AdjKbNufft, ToepSenseNufft
 
 
 # To Do: toeplitz embedding, field inhomogeneity
@@ -34,15 +35,15 @@ def ifftshift(x, dims=None):
     return torch.roll(x, shifts, dims)
 
 
-class FFTn(LinearMap):
+class FFTCn(LinearMap):
     '''
-    FFT operators with FFTshift and iFFTshift
+    FFT operators with FFTshift and iFFTshift for multidimensional data.
     Pytorch provides three modes in FFT: 'ortho', 'forward', 'backward'.
     Each pair of FFT and iFFT with same mode is inverse, but not necessarily adjoint to each other.
     '''
 
     def __init__(self, size_in, size_out, dims, norm='ortho'):
-        super(FFTn, self).__init__(size_in, size_out)
+        super(FFTCn, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
 
@@ -72,47 +73,84 @@ class Sense(LinearMap):
         sensitivity maps: [batch, ncoil, nx, ny, (nz)]
     '''
 
-    def __init__(self, size_in, size_out, dims, smaps, masks, norm='ortho'):
+    def __init__(self, size_in, size_out, dims, smaps, masks, norm='ortho', batchmode=True):
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
-        assert smaps.shape[0] + smaps.shape[2:] == masks.shape, "mask and sensitivity map mismatch"
+        # TODO: check the size match between smaps and masks. (try-catch)
         self.smaps = smaps
         self.masks = masks
+        self.batchmode = batchmode
 
     def _apply(self, x):
+        '''
+            x in size [batch, nx, ny, (nz)]
+        '''
         assert x.shape == self.masks.shape, "mask and image's shape mismatch"
-        x = x.unsqueeze(1)
-        masks = self.masks.unsqueeze(1)
+        if self.batchmode:
+            x = x.unsqueeze(1)
+            masks = self.masks.unsqueeze(1)
+        else:
+            x = x.unsqueeze(0)
+            masks = self.masks.unsqueeze(0)
+        dims = tuple([x + 1 for x in self.dims])
         x = x * self.smaps
-        x = ifftshift(x, self.dims)
-        k = fftn(x, dim=self.dims, norm=self.norm)
-        k = fftshift(k, self.dims) * masks
+        x = ifftshift(x, dims)
+        k = fftn(x, dim=dims, norm=self.norm)
+        k = fftshift(k, dims) * masks
         return k
 
     def _apply_adjoint(self, k):
         assert k.shape == self.smaps.shape, "sensitivity maps and signal's shape mismatch"
-        masks = self.masks.unsqueeze(1)
-        k = k * masks
-        k = ifftshift(k, self.dims)
-        if self.norm == 'ortho':
-            x = ifftn(k, dim=self.dims, norm='ortho')
-        elif self.norm == 'forward':
-            x = ifftn(k, dim=self.dims, norm='backward')
+        if self.batchmode:
+            masks = self.masks.unsqueeze(1)
         else:
-            x = ifftn(k, dim=self.dims, norm='forward')
-        x = fftshift(x, self.dims)
-        x = (x * torch.conj(self.smaps)).sum(1)
+            masks = self.masks.unsqueeze(0)
+        dims = tuple([x + 1 for x in self.dims])
+        k = k * masks
+        k = ifftshift(k, dims)
+        if self.norm == 'ortho':
+            x = ifftn(k, dim=dims, norm='ortho')
+        elif self.norm == 'forward':
+            x = ifftn(k, dim=dims, norm='backward')
+        else:
+            x = ifftn(k, dim=dims, norm='forward')
+        x = fftshift(x, dims)
+        if self.batchmode:
+            x = (x * torch.conj(self.smaps)).sum(1)
+        else:
+            x = (x * torch.conj(self.smaps)).sum(0)
         return x
 
-#
-# class NuFFT:
-#     def __init__(self, size_in, size_out, dims, smaps, traj, norm='ortho'):
-#
-#
-# class NuSense:
-#     pass
-#
+
+class NuSense:
+    '''
+    Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
+    Input:
+        traj: [ndim, nshot, nechos]
+        sensitivity maps: [batch, ncoil, nx, ny, (nz)]
+    '''
+    def __init__(self, smaps, traj, norm='ortho', batchmode=True):
+        if batchmode:
+            self.A = MriSenseNufft(smap=smaps, im_size=tuple(smaps.shape[2:]), norm=norm).to(device=smaps.device,
+                                                                                           dtype=smaps.dtype)
+            self.AT = AdjMriSenseNufft(smap=smaps, im_size=tuple(smaps.shape[2:]), norm=norm).to(device=smaps.device,
+                                                                                               dtype=smaps.dtype)
+            super(NuSense, self).__init__(tuple(smaps.shape[2:]), tuple(smaps.shape[1:]), device = smaps.device)
+        else:
+            self.A = MriSenseNufft(smap=smaps, im_size=tuple(smaps.shape[1:]), norm=norm).to(device=smaps.device,
+                                                                                       dtype=smaps.dtype)
+            self.AT = AdjMriSenseNufft(smap=smaps, im_size=tuple(smaps.shape[1:]), norm=norm).to(device=smaps.device,
+                                                                                           dtype=smaps.dtype)
+            super(NuSense, self).__init__(tuple(smaps.shape[1:]), tuple(smaps.shape), device=smaps.device)
+        self.traj = traj
+
+    def _apply(self,x):
+        return self.A(x, self.traj)
+
+    def _apply_adjoint(self,x):
+        return self.AT(x, self.traj)
+
 # class MRI:
 #     def __init__(self, size_in, size_out, dims, smaps, masks, zmap, norm='ortho'):
 #         pass
