@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from .linearmaps import LinearMap, check_device
 
 
@@ -38,17 +39,51 @@ class Diag(LinearMap):
     def _apply_adjoint(self, x):
         # conjugate here
         return torch.conj(self.P)*x
+
 class Identity(LinearMap):
-    pass
+    def __init__(self, size_in, size_out, device):
+        super(Identity, self).__init__(size_in, size_out, device=device)
+
+    def _apply(self, x):
+        pass
+
+    def _apply_adjoint(self, x):
+        pass
 
 class Smoothing1d(LinearMap):
-    pass
+    def __init__(self, size_in, size_out, device):
+        super(Smoothing1d, self).__init__(size_in, size_out, device=device)
+
+    def _apply(self, x):
+        pass
+
+    def _apply_adjoint(self, x):
+        pass
 
 class Smoothing2d(LinearMap):
-    pass
+    def __init__(self, size_in, size_out, device):
+        super(Smoothing2d, self).__init__(size_in, size_out, device=device)
+
+    def _apply(self, x):
+        pass
+
+    def _apply_adjoint(self, x):
+        pass
 
 class convolve(LinearMap):
-    pass
+    def __init__(self, size_in, size_out, device, h):
+        super(convolve, self).__init__(size_in, size_out, device=device)
+        self.h = h
+        
+    def _apply(self, x):
+        return F.conv2d(self.x, self.h)
+
+    def _apply_adjoint(self, x):
+        # ?
+        tconv = torch.nn.ConvTranspose2d(1, 1, kernel_size=2, bias=False)
+        tconv.weight.data = self.h
+        return tconv(x)
+
 
 class interp_li_1d(LinearMap):
     pass
