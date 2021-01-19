@@ -3,17 +3,17 @@ import torch
 
 # Neel, here some some suggestions:
 # 1. Add a __call__ to each operator, just like linearmap
-# 2. Add the complex(v) support. Some of the functions may not support the complex(v) ops,
+# 2. Add the complex support. Some of the functions may not support the complex ops,
 # then you may want to do with the real(v)/imag component respectively.
 
 class Prox:
     r"""
-    Prox(v)imal operator base class
+    Proximal operator base class
 
-    Prox(v) is currently supported to be called on a torch.Tensor
+    Prox is currently supported to be called on a torch.Tensor
 
     .. math::
-       Prox(v)_f(v) \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + f(x(v))
+       Prox_f(v) \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(x)
 
     Args:
 
@@ -32,10 +32,10 @@ class Prox:
 
 class L1Regularizer(Prox):
     r"""
-    Prox(v)imal operator for L1 regularizer, using soft thresholding
+    Proximal operator for L1 regularizer, using soft thresholding
 
     .. math::
-        \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + \lambda \| x(v) \|_1
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_1
 
     Args:
         Lambda (float): regularization parameter.
@@ -60,10 +60,10 @@ class L1Regularizer(Prox):
 
 class L2Regularizer(Prox):
     r"""
-    Prox(v)imal operator for L2 regularizer
+    Proximal operator for L2 regularizer
 
     .. math::
-        \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + \lambda \| x(v) \|_2
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_2
 
     Args:
         Lambda (float): regularization parameter.
@@ -85,10 +85,10 @@ class L2Regularizer(Prox):
 class SquaredL2Regularizer(Prox):
 
     r"""
-    Prox(v)imal operator for Squared L2 regularizer
+    Proximal operator for Squared L2 regularizer
 
     .. math::
-        \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + \lambda \| x(v) \|_2^2
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_2^2
 
     Args:
         Lambda (float): regularization parameter.
@@ -105,15 +105,15 @@ class SquaredL2Regularizer(Prox):
 class BoxConstraint(Prox):
 
     r"""
-    Prox(v)imal operator for Box(v) Constraint
+    Proximal operator for Box Constraint
 
     .. math::
-        \arg \min_{x(v) \in [lower, upper]} \frac{1}{2} \| x(v) - v \|_2^2
+        \arg \min_{x} \in [lower, upper]} \frac{1}{2} \| x - v \|_2^2
 
     Args:
         Lambda (float): regularization parameter.
         lower (scalar): minimum value
-        upper (scalar): max(v)imum value
+        upper (scalar): maximum value
     """
 
     def __init__(self, Lambda, lower, upper):
