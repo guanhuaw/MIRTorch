@@ -25,10 +25,22 @@ class Prox:
 
     def __call__(self, v): 
         #sigpy also has alpha value, maybe add that here after implementing basic functionality
+        if v.dtype == torch.cfloat or v.dtype == torch.cdouble:
+            return self._complex(self, v) * self._apply(v.abs())
         return self._apply(v)
 
     def __repr__(self):
         return NotImplementedError
+    
+    def _complex(self, v):
+        '''
+        Note when .backwards() is run,
+        "RuntimeError: the derivative for 'angle' is not implemented."
+        Will this cause problems in the near future?
+        '''
+        angle = v.angle()
+        exp = torch.complex(torch.cos(angle), torch.sign(angle))
+        return exp
 
 class L1Regularizer(Prox):
     r"""
@@ -48,11 +60,8 @@ class L1Regularizer(Prox):
     def _apply(self, v):
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
-        dtype = v.dtype
         thresh = torch.nn.Softshrink(self.Lambda)
-        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_real(v)
         x = thresh(v)
-        if dtype == torch.cfloat or dtype == torch.cdouble: x = torch.view_as_complex(x)
         return x
 
 
@@ -75,10 +84,7 @@ class L2Regularizer(Prox):
     def _apply(self, v):
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf 
-        dtype = v.dtype
-        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_real(v)
         scale = 1.0 - self.Lambda / torch.max(torch.Tensor([self.Lambda]), torch.linalg.norm(v))
-        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_complex(v)
         x = torch.mul(scale, v)
         return x
 
@@ -123,9 +129,6 @@ class BoxConstraint(Prox):
         self.Lambda = float(Lambda)
     
     def _apply(self, v):
-        dtype = v.dtype
-        if dtype == torch.cfloat or dtype == torch.cdouble: v = torch.view_as_real(v)
         x = torch.clamp(v, self.l, self.u)
-        if dtype == torch.cfloat or dtype == torch.cdouble: x = torch.view_as_complex(x)
         return x
         
