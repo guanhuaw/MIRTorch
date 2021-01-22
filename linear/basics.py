@@ -5,8 +5,10 @@ from .linearmaps import LinearMap, check_device
 
 class Diff1d(LinearMap):
     def __init__(self, size_in, size_out, dim, device='cuda:0'):
+        # TODO: determine size_out by size in
         super(Diff1d, self).__init__(size_in, size_out)
         self.dim = dim
+        assert len(self.dim) == 1, "Please denote two dimension for a 1D finite difference operator"
 
     def _apply(self, x):
         return finitediff(x, self.dim)
@@ -17,8 +19,9 @@ class Diff1d(LinearMap):
 class Diff2d(LinearMap):
     def __init__(self, size_in, size_out, dim, device='cuda:0'):
         super(Diff2d, self).__init__(size_in, size_out)
+        # TODO: determine size_out by size in
         self.dim = dim
-        assert len(self.dim) == 2, "Please denote two dimension for a 2d finite difference operator"
+        assert len(self.dim) == 2, "Please denote two dimension for a 2D finite difference operator"
 
     def _apply(self, x):
         return finitediff(finitediff(x, self.dim[1]), self.dim[2])
@@ -27,10 +30,11 @@ class Diff2d(LinearMap):
         return finitediff_adj(finitediff_adj(y, self.dim[1]), self.dim[2])
 
 class Diag(LinearMap):
-    def __init__(self, size_in, size_out, P):
-        assert size_in == size_out
-        assert P.shape == size_in
-        super(Diag, self).__init__(size_in, size_out)
+    '''
+        Expand an input vetor into a diagonal matrix
+    '''
+    def __init__(self, P):
+        super(Diag, self).__init__(list(P.shape), list(P.shape))
         self.P = P
 
     def _apply(self, x):
@@ -41,8 +45,8 @@ class Diag(LinearMap):
         return torch.conj(self.P)*x
 
 class Identity(LinearMap):
-    def __init__(self, size_in, size_out, device):
-        super(Identity, self).__init__(size_in, size_out, device=device)
+    def __init__(self, size_in, size_out):
+        super(Identity, self).__init__(size_in, size_out)
 
     def _apply(self, x):
         pass
@@ -52,7 +56,7 @@ class Identity(LinearMap):
 
 class Smoothing1d(LinearMap):
     def __init__(self, size_in, size_out, device):
-        super(Smoothing1d, self).__init__(size_in, size_out, device=device)
+        super(Smoothing1d, self).__init__(size_in, size_out)
 
     def _apply(self, x):
         pass
@@ -62,7 +66,7 @@ class Smoothing1d(LinearMap):
 
 class Smoothing2d(LinearMap):
     def __init__(self, size_in, size_out, device):
-        super(Smoothing2d, self).__init__(size_in, size_out, device=device)
+        super(Smoothing2d, self).__init__(size_in, size_out)
 
     def _apply(self, x):
         pass

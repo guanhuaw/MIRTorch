@@ -34,7 +34,7 @@ def check_device(x, y):
     assert x.device == y.device, "Tensors should be on the same device"
 
 
-class LinearMap():
+class LinearMap:
     '''
         We followed the idea of Sigpy rather than ModOpt:
         Each instance (like FFT, Wavelet ...) defines it own _apply and _apply_adjoint
@@ -51,11 +51,11 @@ class LinearMap():
         self.size_in = size_in  # size_in: input data dimension
         self.size_out = size_out  # size_out: output data dimension
         self.device = device      # some linear operators do not depend on devices, like FFT.
-        self.property = None      # properties like unitary, Toeplitz...
+        self.property = None      # properties like 'unitary', 'Toeplitz', 'frame' ...
 
     def __repr__(self):
-        # name of the linear operator
-        pass
+        return '<{oshape}x{ishape}] {repr_str} Linop>'.format(
+            oshape=self.size_out, ishape=self.size_in, repr_str=self.__class__.__name__)
 
     def __call__(self, x):
         # for a instance A, we can apply it by calling A(x). Equal to A*x
@@ -81,6 +81,11 @@ class LinearMap():
     @property
     def H(self):
         return ConjTranspose(self)
+
+    # @property
+    # def T(self):
+    #     pass
+    #     return RealTranspose(self)
 
     def __add__(self, other):
         return Add(self, other)

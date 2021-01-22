@@ -4,12 +4,10 @@ from torch.fft import fft, ifft, fftn, ifftn
 from .linearmaps import LinearMap, check_device
 from torchkbnufft import AdjMriSenseNufft, MriSenseNufft, KbNufft, AdjKbNufft, ToepSenseNufft
 
-
 # To Do: toeplitz embedding, field inhomogeneity
-
 def fftshift(x, dims=None):
     """
-    Similar to np.fft.fftshift but applies to PyTorch Tensors
+    Similar to np.fft.fftshift but applies to PyTorch tensors
     """
     if dims is None:
         dims = tuple(range(x.dim()))
@@ -20,10 +18,9 @@ def fftshift(x, dims=None):
         shifts = [x.shape[i] // 2 for i in dims]
     return torch.roll(x, shifts, dims)
 
-
 def ifftshift(x, dims=None):
     """
-    Similar to np.fft.ifftshift but applies to PyTorch Tensors
+    Similar to np.fft.ifftshift but applies to PyTorch tensors
     """
     if dims is None:
         dims = tuple(range(x.dims()))
@@ -68,7 +65,7 @@ class FFTCn(LinearMap):
 class Sense(LinearMap):
     '''
     Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
-    Input:
+    Parameters:
         mask: [batch, nx, ny, (nz)]
         sensitivity maps: [batch, ncoil, nx, ny, (nz)]
     '''
@@ -126,9 +123,12 @@ class Sense(LinearMap):
 class NuSense:
     '''
     Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
-    Input:
-        traj: [ndim, nshot, nechos]
+    Parameters:
+        traj: [ndim, nshot*npoints]
         sensitivity maps: [batch, ncoil, nx, ny, (nz)]
+    Input/Output:
+        x(complex-valued images): [batch, nx, ny, (nz)]
+        k(k-space data): [batch, ncoil, nshot*npoints]
     '''
     def __init__(self, smaps, traj, norm='ortho', batchmode=True):
         if batchmode:
@@ -136,21 +136,36 @@ class NuSense:
                                                                                            dtype=smaps.dtype)
             self.AT = AdjMriSenseNufft(smap=smaps, im_size=tuple(smaps.shape[2:]), norm=norm).to(device=smaps.device,
                                                                                                dtype=smaps.dtype)
-            super(NuSense, self).__init__(tuple(smaps.shape[2:]), tuple(smaps.shape[1:]), device = smaps.device)
+            super(NuSense, self).__init__([smaps.shape[0]]+list(smaps.shape[2:]), list(smaps.shape[0:2])+[traj.shape[1]], device = smaps.device)
         else:
             self.A = MriSenseNufft(smap=smaps, im_size=tuple(smaps.shape[1:]), norm=norm).to(device=smaps.device,
                                                                                        dtype=smaps.dtype)
             self.AT = AdjMriSenseNufft(smap=smaps, im_size=tuple(smaps.shape[1:]), norm=norm).to(device=smaps.device,
                                                                                            dtype=smaps.dtype)
-            super(NuSense, self).__init__(tuple(smaps.shape[1:]), tuple(smaps.shape), device=smaps.device)
+            super(NuSense, self).__init__(list(smaps.shape[0:2])+[traj.shape[1]], [smaps.shape[0]]+list(smaps.shape[2:]), device=smaps.device)
         self.traj = traj
 
     def _apply(self,x):
-        return self.A(x, self.traj)
+        if self.batchmode:
+            # export complex x to 2-channel
+            torch.view_as_real(x)
+            self.A(x, self.traj)
 
-    def _apply_adjoint(self,x):
-        return self.AT(x, self.traj)
+        else:
+            # export x to complex
+            # unsqueeze x
+            self.A(x, self.traj)
 
-# class MRI:
-#     def __init__(self, size_in, size_out, dims, smaps, masks, zmap, norm='ortho'):
-#         pass
+    def _apply_adjoint(self,y):
+        if self.batchmode:
+            # export commplex y to 2-channel
+
+            self.A(y, self.traj)
+
+        else:
+            # export y to complex
+            # unsqueeze y
+            self.A(y, self.traj)
+class MRI:
+    def __init__(self, size_in, size_out, dims, smaps, masks, zmap, norm='ortho'):
+        pass
