@@ -60,7 +60,7 @@ class L1Regularizer(Prox):
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
         thresh = torch.nn.Softshrink(self.Lambda)
         if self.T is not None:
-            v = self.T(v)
+            raise NotImplementedError
         x = thresh(v)
         return x
 
