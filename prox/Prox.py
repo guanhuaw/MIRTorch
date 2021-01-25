@@ -20,7 +20,7 @@ class Prox:
     """
 
     def __init__(self):
-        #sigpy has size/shape input parameter, but I don't see why we would need it?: Maybe for now we do not need it
+        #sigpy has size/shape input parameter, but I don't see why we would need it?: Maybe for now we do not need it: we do not.
         pass
 
     def __call__(self, v): 
@@ -63,8 +63,15 @@ class L1Regularizer(Prox):
         thresh = torch.nn.Softshrink(self.Lambda)
         x = thresh(v)
         return x
-
-
+        #pseudo code here:
+        # if dtype == torch.cfloat or dtype == torch.cdouble:
+            # v_abs = torch.abs(v)
+            # v_phs = torch.angle(v)
+            # return torch.nn.functional.gumbel_softmax(v_abs, lambd = self.Lambda)*(torch.exp(1j*v_phs))
+    # to do: add the repr
+    # Consider this case:
+    # \arg \min_x(v) \frac{1}{2} \| x(v) - v \|_2^2 + \lambda \|P x(v) \|_1
+    # where P is orthogonal or diagonal, labeled in the property of LinearMap class
 
 
 class L2Regularizer(Prox):
