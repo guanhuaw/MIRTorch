@@ -56,12 +56,12 @@ class L1Regularizer(Prox):
         self.T = T
 
     def _apply(self, v):
-        # Closed form solution from
-        # https://archive.siam.org/books/mo25/mo25_ch6.pdf
         thresh = torch.nn.Softshrink(self.Lambda)
         if self.T is not None:
-            raise NotImplementedError
+            v = T(v)
         x = thresh(v)
+        if self.T is not None:
+            x = T.H(x)
         return x
 
 class L2Regularizer(Prox):
@@ -86,7 +86,6 @@ class L2Regularizer(Prox):
         return x
 
 class SquaredL2Regularizer(Prox):
-
     r"""
     Proximal operator for Squared L2 regularizer
 
@@ -106,7 +105,6 @@ class SquaredL2Regularizer(Prox):
         return x
 
 class BoxConstraint(Prox):
-
     r"""
     Proximal operator for Box Constraint
 
