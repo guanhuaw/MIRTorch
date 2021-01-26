@@ -9,25 +9,25 @@ import numpy as np
 import numpy.testing as npt
 
 class TestProx(unittest.TestCase):
-    
+
     def test_l1(self):
         lambd = np.random.random()
         prox = Prox.L1Regularizer(lambd)
         a = torch.rand((5,4,8), dtype=torch.float)
         exp = np.zeros((5,4,8)).flatten()
         out = prox(a)
-        
+
         a = a.numpy().flatten()
         for i in range(a.shape[0]):
-            if a[i]>lambd: 
+            if a[i]>lambd:
                 exp[i] = a[i] - lambd
             elif a[i]<-lambd:
                 exp[i] = a[i] + lambd
             else:
                 exp[i] = 0
-                
+
         exp = exp.reshape((5,4,8))
-        
+
         npt.assert_allclose(out, exp, rtol=1e-3)
 
     def test_l2(self):
@@ -54,16 +54,50 @@ class TestProx(unittest.TestCase):
         npt.assert_allclose(out, exp, rtol=1e-3)
 
     def test_l1_complex(self):
-        pass
+        lambd = np.random.random()
+        prox = Prox.L1Regularizer(lambd)
+        a = torch.rand(2,2, dtype=torch.cfloat, requires_grad=True)
+        out = prox(a)
+        torch.sum(out).backward()
+        a.requires_grad=False
+        exp = torch.exp(1j*a.angle())*prox(a.abs())
+        npt.assert_allclose(out.detach(), exp, rtol=1e-3)
 
     def test_l2_complex(self):
-        pass
+        lambd = np.random.random()
+        prox = Prox.L2Regularizer(lambd)
+        a = torch.rand(2,2, dtype=torch.cfloat, requires_grad=True)
+        out = prox(a)
+        torch.sum(out).backward()
+        a.requires_grad=False
+        exp = torch.exp(1j*a.angle())*prox(a.abs())
+        npt.assert_allclose(out.detach(), exp, rtol=1e-3)
+
 
     def test_squaredl2_complex(self):
-        pass
+        lambd = np.random.random()
+        prox = Prox.SquaredL2Regularizer(lambd)
+        a = torch.rand(2,2, dtype=torch.cfloat, requires_grad=True)
+        out = prox(a)
+        torch.sum(out).backward()
+        a.requires_grad=False
+        exp = torch.exp(1j*a.angle())*prox(a.abs())
+        npt.assert_allclose(out.detach(), exp, rtol=1e-3)
+
+
 
     def test_boxconstraint_complex(self):
-        pass
+        lambd = np.random.random()
+        lower, upper = np.random.randint(0, 10), np.random.randint(10, 20)
+        prox = Prox.BoxConstraint(lambd, lower, upper)
+        a = torch.rand(2,2, dtype=torch.cfloat, requires_grad=True)
+        out = prox(a)
+        torch.sum(out).backward()
+        a.requires_grad=False
+        exp = torch.exp(1j*a.angle())*prox(a.abs())
+        npt.assert_allclose(out.detach(), exp, rtol=1e-3)
+
+
 
 if __name__ == '__main__':
     print(f'PyTorch version: {torch.__version__}')
