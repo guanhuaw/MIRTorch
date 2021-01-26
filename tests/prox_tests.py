@@ -97,6 +97,20 @@ class TestProx(unittest.TestCase):
         exp = torch.exp(1j*a.angle())*prox(a.abs())
         npt.assert_allclose(out.detach(), exp, rtol=1e-3)
 
+    def test_complex_edge_cases(self):
+        a = torch.complex(torch.Tensor([1]),torch.Tensor([0]))
+        npt.assert_allclose(a.angle(), torch.atan(a.imag/a.real))
+
+    def test_complex_edge_cases2(self):
+        a = torch.complex(torch.Tensor([0]),torch.Tensor([1]))
+        npt.assert_allclose(a.angle(), torch.atan(a.imag/a.real))
+
+    def test_complex_edge_cases3(self):
+        #Should we ever need to worry about this issue?
+        a = torch.complex(torch.Tensor([0]),torch.Tensor([0]))
+        npt.assert_allclose(a.angle(), torch.atan(a.imag/a.real))
+
+
 
 
 if __name__ == '__main__':
