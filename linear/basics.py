@@ -31,7 +31,7 @@ class Diff2d(LinearMap):
 
 class Diag(LinearMap):
     '''
-        Expand an input vetor into a diagonal matrix
+        Expand an input vector into a diagonal matrix
     '''
     def __init__(self, P):
         super(Diag, self).__init__(list(P.shape), list(P.shape))
@@ -74,20 +74,46 @@ class Smoothing2d(LinearMap):
     def _apply_adjoint(self, x):
         pass
 
-class convolve(LinearMap):
-    def __init__(self, size_in, size_out, device, h):
-        super(convolve, self).__init__(size_in, size_out, device=device)
-        self.h = h
+class Convolve1d(LinearMap):
+    def __init__(self, input, weight, device):
+        assert len(list(input.shape)) == 3, "input must have the shape (minibatch, in_channels, iW)"
+        assert len(list(weight.shape)) == 3, "weight must have the shape (out_channels, in_channels, kW)"
+        minimatch, _, iW = input.shape
+        out_channel, _, kW = weight.shape
+        assert iW >= kW, "Kernel size can't be greater than actual input size"
+        size_out = (minimatch, out_channel, iW - kW + 1)
+        # TODO: bias, padding, stride ....
+        super(Convolve1d, self).__init__(list(input.shape), size_out)
+        self.input = input
+        self.weight = weight
         
-    def _apply(self, x):
-        return F.conv2d(self.x, self.h)
+    def _apply(self):
+        return F.conv1d(self.input, self.weight)
 
-    def _apply_adjoint(self, x):
-        # ?
-        tconv = torch.nn.ConvTranspose2d(1, 1, kernel_size=2, bias=False)
-        tconv.weight.data = self.h
-        return tconv(x)
+    def _apply_adjoint(self):
+        return F.conv_transpose1d(self.input, self.weight)
 
+class Convolve2d(LinearMap):
+    def __init__(self, input, weight, device):
+        assert len(list(input.shape)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
+        assert len(list(weight.shape)) == 4, "weight must have the shape (out_channels, in_channels, kH, kW)"
+        minimatch, _, iH, iW = input.shape
+        out_channel, _, kH, kW = weight.shape
+        assert iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
+        size_out = (minimatch, out_channel, iH - kH + 1, iW - kW + 1)
+        # TODO: bias, padding, stride ....
+        super(Convolve2d, self).__init__(list(input.shape), size_out)
+        self.input = input
+        self.weight = weight
+        
+    def _apply(self):
+        return F.conv2d(self.input, self.weight)
+
+    def _apply_adjoint(self):
+        return F.conv_transpose2d(self.input, self.weight)
+
+class Convolve3d(LinearMap):
+    pass
 
 class interp_li_1d(LinearMap):
     pass
