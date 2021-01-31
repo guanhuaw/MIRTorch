@@ -75,42 +75,41 @@ class Smoothing2d(LinearMap):
         pass
 
 class Convolve1d(LinearMap):
-    def __init__(self, input, weight, device):
-        assert len(list(input.shape)) == 3, "input must have the shape (minibatch, in_channels, iW)"
+    def __init__(self, size_in, weight, device):
+        # only weight and input size
+        assert len(list(size_in)) == 3, "input must have the shape (minibatch, in_channels, iW)"
         assert len(list(weight.shape)) == 3, "weight must have the shape (out_channels, in_channels, kW)"
-        minimatch, _, iW = input.shape
+        minimatch, _, iW = size_in
         out_channel, _, kW = weight.shape
         assert iW >= kW, "Kernel size can't be greater than actual input size"
         size_out = (minimatch, out_channel, iW - kW + 1)
         # TODO: bias, padding, stride ....
-        super(Convolve1d, self).__init__(list(input.shape), size_out)
-        self.input = input
+        super(Convolve1d, self).__init__(size_in, size_out)
         self.weight = weight
         
-    def _apply(self):
-        return F.conv1d(self.input, self.weight)
+    def _apply(self, x):
+        return F.conv1d(x, self.weight)
 
-    def _apply_adjoint(self):
-        return F.conv_transpose1d(self.input, self.weight)
+    def _apply_adjoint(self, x):
+        return F.conv_transpose1d(x, self.weight)
 
 class Convolve2d(LinearMap):
-    def __init__(self, input, weight, device):
-        assert len(list(input.shape)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
+    def __init__(self, size_in, weight, device):
+        assert len(list(size_in)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
         assert len(list(weight.shape)) == 4, "weight must have the shape (out_channels, in_channels, kH, kW)"
-        minimatch, _, iH, iW = input.shape
+        minimatch, _, iH, iW = size_in
         out_channel, _, kH, kW = weight.shape
         assert iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
         size_out = (minimatch, out_channel, iH - kH + 1, iW - kW + 1)
         # TODO: bias, padding, stride ....
-        super(Convolve2d, self).__init__(list(input.shape), size_out)
-        self.input = input
+        super(Convolve2d, self).__init__(size_in, size_out)
         self.weight = weight
         
-    def _apply(self):
-        return F.conv2d(self.input, self.weight)
+    def _apply(self, x):
+        return F.conv2d(x, self.weight)
 
-    def _apply_adjoint(self):
-        return F.conv_transpose2d(self.input, self.weight)
+    def _apply_adjoint(self, x):
+        return F.conv_transpose2d(x, self.weight)
 
 class Convolve3d(LinearMap):
     pass
