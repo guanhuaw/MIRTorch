@@ -7,32 +7,34 @@ class Prox:
     Prox is currently supported to be called on a torch.Tensor
 
     .. math::
-       Prox_f(v) = \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(x)
+       Prox_f(v) = \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(Tx)
 
     Args:
-
+        T (LinearMap): optional, unitary LinearMap
     """
 
-    def __init__(self):
-        #sigpy has size/shape input parameter, but I don't see why we would need it?: Maybe for now we do not need it: we do not.
-        pass
+    def __init__(self, T = None):
+        if T is not None:
+            assert('unitary' in T.property)
+        self.T = T
+
 
     def __call__(self, v):
         #sigpy also has alpha value, maybe add that here after implementing basic functionality
         if v.dtype == torch.cfloat or v.dtype == torch.cdouble:
             return self._complex(v) * self._apply(v.abs())
-        return self._apply(v)
+        if self.T is not None:
+            v = self.T(v)
+        out = self._apply(v)
+        if self.T is not None:
+            out = self.T.H(out)
+        return out
 
     def __repr__(self):
         return f'<{self.__class__.__name__} Prox'
 
     def _complex(self, v):
-        '''
-        Backprop .backward() currently not implemented for .angle() and .exp()
-        Current solution: calculate angle as torch.atan(a.imag/a.real) and use cos + i sin
-        formulation to avoid .angle() and .exp()
-        '''
-        angle = torch.atan(v.imag/v.real)
+        angle = torch.atan2(v.imag, v.real)
         exp = torch.complex(torch.cos(angle), torch.sin(angle))
         return exp
 
@@ -49,11 +51,8 @@ class L1Regularizer(Prox):
     """
 
     def __init__(self, Lambda, T=None):
-        super().__init__()
+        super().__init__(T)
         self.Lambda = float(Lambda)
-        if T is not None:
-            assert('unitary' in T.property)
-        self.T = T
 
     def _apply(self, v):
         thresh = torch.nn.Softshrink(self.Lambda)
@@ -69,13 +68,14 @@ class L2Regularizer(Prox):
     Proximal operator for L2 regularizer
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_2
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| Tx \|_2
 
     Args:
         Lambda (float): regularization parameter.
+        T (LinearMap): optional, unitary LinearMap
     """
-    def __init__(self, Lambda):
-        super().__init__()
+    def __init__(self, Lambda, T = None):
+        super().__init__(T)
         self.Lambda = float(Lambda)
 
     def _apply(self, v):
@@ -90,14 +90,15 @@ class SquaredL2Regularizer(Prox):
     Proximal operator for Squared L2 regularizer
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| x \|_2^2
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| Tx \|_2^2
 
     Args:
         Lambda (float): regularization parameter.
+        T (LinearMap): optional, unitary LinearMap
     """
 
-    def __init__(self, Lambda):
-        super().__init__()
+    def __init__(self, Lambda, T = None):
+        super().__init__(T)
         self.Lambda = float(Lambda)
 
     def _apply(self, v):
@@ -115,10 +116,11 @@ class BoxConstraint(Prox):
         Lambda (float): regularization parameter.
         lower (scalar): minimum value
         upper (scalar): maximum value
+        T (LinearMap): optional, unitary LinearMap
     """
 
-    def __init__(self, Lambda, lower, upper):
-        super().__init__()
+    def __init__(self, Lambda, lower, upper, T = None):
+        super().__init__(T)
         self.l = lower
         self.u = upper
         self.Lambda = float(Lambda)
