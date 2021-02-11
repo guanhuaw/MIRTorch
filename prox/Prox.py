@@ -18,7 +18,9 @@ class Prox:
             assert('unitary' in T.property)
         self.T = T
 
-
+    def _apply(self, v):
+        raise NotImplementedError
+    
     def __call__(self, v):
         #sigpy also has alpha value, maybe add that here after implementing basic functionality
         if v.dtype == torch.cfloat or v.dtype == torch.cdouble:
@@ -43,18 +45,26 @@ class L1Regularizer(Prox):
     Proximal operator for L1 regularizer, using soft thresholding
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| Tx \|_1
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| WTx \|_1
 
     Args:
         Lambda (float): regularization parameter.
+        W (LinearMap): optional, diagonal LinearMap
         T (LinearMap): optional, unitary LinearMap
     """
 
-    def __init__(self, Lambda, T=None):
+    def __init__(self, Lambda, ,W=None,T=None):
         super().__init__(T)
         self.Lambda = float(Lambda)
+        if W is not None:
+            assert('diagonal' in W.property)
+        self.W = W
 
     def _apply(self, v):
+        '''
+        How can I vectorize lambda||Wx||_1 = lambda W_i ||x||_1, does W_i imply element wise operations? 
+        In nn.Softshrink I can only use float lambda, potential solutions? 
+        '''
         thresh = torch.nn.Softshrink(self.Lambda)
         if self.T is not None:
             v = T(v)
