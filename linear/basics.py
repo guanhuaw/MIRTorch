@@ -57,65 +57,115 @@ class Identity(LinearMap):
     def _apply_adjoint(self, x):
         pass
 
-class Smoothing1d(LinearMap):
-    def __init__(self, size_in, size_out, device):
-        super(Smoothing1d, self).__init__(size_in, size_out)
+# class Smoothing1d(LinearMap):
+#     def __init__(self, size_in, size_out, device):
+#         super(Smoothing1d, self).__init__(size_in, size_out)
 
-    def _apply(self, x):
-        pass
+#     def _apply(self, x):
+#         pass
 
-    def _apply_adjoint(self, x):
-        pass
+#     def _apply_adjoint(self, x):
+#         pass
 
-class Smoothing2d(LinearMap):
-    def __init__(self, size_in, size_out, device):
-        super(Smoothing2d, self).__init__(size_in, size_out)
+# class Smoothing2d(LinearMap):
+#     def __init__(self, size_in, size_out, device):
+#         super(Smoothing2d, self).__init__(size_in, size_out)
 
-    def _apply(self, x):
-        pass
+#     def _apply(self, x):
+#         pass
 
-    def _apply_adjoint(self, x):
-        pass
+#     def _apply_adjoint(self, x):
+#         pass
 
 class Convolve1d(LinearMap):
-    def __init__(self, size_in, weight, device):
+    def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
         # only weight and input size
         assert len(list(size_in)) == 3, "input must have the shape (minibatch, in_channels, iW)"
         assert len(list(weight.shape)) == 3, "weight must have the shape (out_channels, in_channels, kW)"
         minimatch, _, iW = size_in
         out_channel, _, kW = weight.shape
         assert iW >= kW, "Kernel size can't be greater than actual input size"
-        size_out = (minimatch, out_channel, iW - kW + 1)
-        # TODO: bias, padding, stride ....
+        Lout = (iW + 2 * padding - dilation * (kW - 1) - 1) // stride + 1
+        size_out = (minimatch, out_channel, Lout)
         super(Convolve1d, self).__init__(size_in, size_out)
         self.weight = weight
+        self.bias = bias
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
         
     def _apply(self, x):
-        return F.conv1d(x, self.weight)
+        return F.conv1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
     def _apply_adjoint(self, x):
-        return F.conv_transpose1d(x, self.weight)
+        return F.conv_transpose1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
 class Convolve2d(LinearMap):
-    def __init__(self, size_in, weight, device):
+    def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
+        # TODO: unsqueeze check batch
         assert len(list(size_in)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
         assert len(list(weight.shape)) == 4, "weight must have the shape (out_channels, in_channels, kH, kW)"
         minimatch, _, iH, iW = size_in
         out_channel, _, kH, kW = weight.shape
         assert iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
-        size_out = (minimatch, out_channel, iH - kH + 1, iW - kW + 1)
-        # TODO: bias, padding, stride ....
+
+        if isinstance(stride, int):
+            stride = tuple([stride] * 2)
+        if isinstance(padding, int):
+            padding = tuple([padding] * 2)
+        if isinstance(dilation, int):
+            dilation = tuple([dilation] * 2)
+
+        Hout = (iH + 2 * padding[0] - dilation[0] * (kH - 1) - 1) // stride[0] + 1
+        Wout = (iW + 2 * padding[1] - dilation[1] * (kW - 1) - 1) // stride[1] + 1
+        size_out = (minimatch, out_channel, Hout, Wout)
+
         super(Convolve2d, self).__init__(size_in, size_out)
         self.weight = weight
+        self.bias = bias
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
         
     def _apply(self, x):
-        return F.conv2d(x, self.weight)
+        return F.conv2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
     def _apply_adjoint(self, x):
-        return F.conv_transpose2d(x, self.weight)
+        return F.conv_transpose2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
 class Convolve3d(LinearMap):
-    pass
+    def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
+        # TODO: unsqueeze check batch
+        assert len(list(size_in)) == 5, "input must have the shape (minibatch, in_channels, iD, iH, iW)"
+        assert len(list(weight.shape)) == 5, "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
+        minimatch, _, iD, iH, iW = size_in
+        out_channel, _, kD, kH, kW = weight.shape
+        assert iD >= kD and iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
+
+        if isinstance(stride, int):
+            stride = tuple([stride] * 3)
+        if isinstance(padding, int):
+            padding = tuple([padding] * 3)
+        if isinstance(dilation, int):
+            dilation = tuple([dilation] * 3)
+
+        Dout = (iD + 2 * padding[0] - dilation[0] * (kD - 1) - 1) // stride[0] + 1
+        Hout = (iH + 2 * padding[1] - dilation[1] * (kH - 1) - 1) // stride[1] + 1
+        Wout = (iW + 2 * padding[2] - dilation[2] * (kW - 1) - 1) // stride[2] + 1
+        size_out = (minimatch, out_channel, Dout, Hout, Wout)
+
+        super(Convolve2d, self).__init__(size_in, size_out)
+        self.weight = weight
+        self.bias = bias
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        
+    def _apply(self, x):
+        return F.conv3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
+
+    def _apply_adjoint(self, x):
+        return F.conv_transpose3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
 class interp_li_1d(LinearMap):
     pass

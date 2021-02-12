@@ -18,9 +18,14 @@ class Prox:
         if T is not None:
             assert('unitary' in T.property)
         self.T = T
+
         if P is not None:
             assert('diagonal' in P.property)
         self.P = P
+
+
+    def _apply(self, v):
+        raise NotImplementedError
 
     def __call__(self, v):
         #sigpy also has alpha value, maybe add that here after implementing basic functionality
@@ -46,12 +51,14 @@ class L1Regularizer(Prox):
     Proximal operator for L1 regularizer, using soft thresholding
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| Tx \|_1
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| WTx \|_1
 
     Args:
         Lambda (float): regularization parameter.
+        W (LinearMap): optional, diagonal LinearMap
         T (LinearMap): optional, unitary LinearMap
     """
+
 
     def __init__(self, Lambda, T = None, P = None):
         super().__init__(T, P)
