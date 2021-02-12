@@ -31,7 +31,10 @@ class Diff2d(LinearMap):
 
 class Diag(LinearMap):
     '''
-        Expand an input vector into a diagonal matrix
+        Expand an input vector into a diagonal matrix.
+        For example, x is an 5*5 image.
+        So P should be also a 5*5 weight vector.
+        P*x (pytorch multiplication here) = Diag{vec(P)}*vec(x)
     '''
     def __init__(self, P):
         super(Diag, self).__init__(list(P.shape), list(P.shape))

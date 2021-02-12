@@ -7,17 +7,20 @@ class Prox:
     Prox is currently supported to be called on a torch.Tensor
 
     .. math::
-       Prox_f(v) = \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(Tx)
+       Prox_f(v) = \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(PTx)
 
     Args:
         T (LinearMap): optional, unitary LinearMap
+        P (LinearMap): optional, diagonal matrix
     """
 
-    def __init__(self, T = None):
+    def __init__(self, T = None, P = None):
         if T is not None:
             assert('unitary' in T.property)
         self.T = T
-
+        if P is not None:
+            assert('diagonal' in P.property)
+        self.P = P
 
     def __call__(self, v):
         #sigpy also has alpha value, maybe add that here after implementing basic functionality
@@ -50,17 +53,28 @@ class L1Regularizer(Prox):
         T (LinearMap): optional, unitary LinearMap
     """
 
-    def __init__(self, Lambda, T=None):
-        super().__init__(T)
-        self.Lambda = float(Lambda)
+    def __init__(self, Lambda, T = None, P = None):
+        super().__init__(T, P)
+        #self.Lambda = float(Lambda)
+        if self.P is not None:
+            self.Lambda = P(torch.tensor(Lambda*torch.ones(P.size_in))) # Pay attention here that Lambda is tensor, not value here
+        self.T = T
+
+    def _softshrink(x, lambd):
+        mask1 = x > lambd
+        mask2 = x < -lambd
+        out = torch.zeros_like(x)
+        out += mask1.float() * -lambd + mask1.float() * x
+        out += mask2.float() * lambd + mask2.float() * x
+        return out
+
 
     def _apply(self, v):
-        thresh = torch.nn.Softshrink(self.Lambda)
-        if self.T is not None:
-            v = T(v)
-        x = thresh(v)
-        if self.T is not None:
-            x = T.H(x)
+        if type(self.Lambda) is not torch.Tensor:
+            thresh = torch.nn.Softshrink(self.Lambda) # Again, the softshrink function do not support tensor as Lambda
+            x = thresh(v)
+        else:
+            x = self._softshrink(v, self.Lambda)
         return x
 
 class L2Regularizer(Prox):
@@ -102,7 +116,8 @@ class SquaredL2Regularizer(Prox):
         self.Lambda = float(Lambda)
 
     def _apply(self, v):
-        x =  torch.div(v, 1 + 2*self.Lambda)
+        # T here?
+        x = torch.div(v, 1 + 2*self.Lambda)
         return x
 
 class BoxConstraint(Prox):
