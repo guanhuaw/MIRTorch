@@ -63,9 +63,9 @@ class L1Regularizer(Prox):
     def __init__(self, Lambda, T = None, P = None):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
-        if self.P is not None:
-            self.Lambda = P(Lambda*torch.ones(P.size_in)) # Pay attention here that Lambda is tensor, not value here
-        self.T = T
+        if P is not None:
+            # Lambda is tensor here.
+            self.Lambda = P(Lambda*torch.ones(P.size_in))
 
     def _softshrink(x, lambd):
         mask1 = x > lambd
@@ -77,7 +77,8 @@ class L1Regularizer(Prox):
 
     def _apply(self, v):
         if type(self.Lambda) is not torch.Tensor:
-            thresh = torch.nn.Softshrink(self.Lambda) # Again, the softshrink function do not support tensor as Lambda
+            # The softshrink function do not support tensor as Lambda.
+            thresh = torch.nn.Softshrink(self.Lambda)
             x = thresh(v)
         else:
             x = self._softshrink(v, self.Lambda.to(v.device))

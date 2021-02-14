@@ -48,10 +48,10 @@ class LinearMap:
             size_in: the size of the input of the linear map (a list)
             size_out: the size of the output of the linear map (a list)
         '''
-        self.size_in = size_in  # size_in: input data dimension
-        self.size_out = size_out  # size_out: output data dimension
-        self.device = device      # some linear operators do not depend on devices, like FFT.
-        self.property = None      # properties like 'unitary', 'Toeplitz', 'frame' ...
+        self.size_in = list(size_in)  # size_in: input data dimension
+        self.size_out = list(size_out)  # size_out: output data dimension
+        self.device = device  # some linear operators do not depend on devices, like FFT.
+        self.property = None  # properties like 'unitary', 'Toeplitz', 'frame' ...
 
     def __repr__(self):
         return '<{oshape}x{ishape}] {repr_str} Linop>'.format(
@@ -97,14 +97,18 @@ class LinearMap:
             return Matmul(self, other)
         elif isinstance(other, torch.Tensor):
             if not other.shape:
-                raise ValueError(
-                    "Input tensor has empty shape. If want to scale the linear map, please use the standard scalar")
+                # raise ValueError(
+                #     "Input tensor has empty shape. If want to scale the linear map, please use the standard scalar")
+                return Multiply(self, other)
             return self.apply(other)
         else:
-            raise NotImplementedError("Only scalers, Linearmaps or Tensors are allowed as arguments for this function.")
+            raise NotImplementedError(
+                f"Only scalers, Linearmaps or Tensors, rather than '{type(other)}' are allowed as arguments for this function.")
 
     def __rmul__(self, other):
         if np.isscalar(other):
+            return Multiply(self, other)
+        elif isinstance(other, torch.Tensor) and not other.shape:
             return Multiply(self, other)
         else:
             return NotImplemented

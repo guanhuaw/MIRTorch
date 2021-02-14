@@ -1,14 +1,18 @@
 import torch
 import torch.nn.functional as F
+import copy
+import numpy as np
 from .linearmaps import LinearMap, check_device
 
 
 class Diff1d(LinearMap):
-    def __init__(self, size_in, size_out, dim, device='cuda:0'):
+    def __init__(self, size_in, dim, device='cuda:0'):
         # TODO: determine size_out by size in
+        size_out = copy.copy(size_in)
+        size_out[dim] -= 1
         super(Diff1d, self).__init__(size_in, size_out)
         self.dim = dim
-        assert len(self.dim) == 1, "Please denote two dimension for a 1D finite difference operator"
+        assert np.isscalar(dim), "Please denote 1 dimension for a 1D finite difference operator"
 
     def _apply(self, x):
         return finitediff(x, self.dim)
@@ -17,17 +21,37 @@ class Diff1d(LinearMap):
         return finitediff_adj(y, self.dim)
 
 class Diff2d(LinearMap):
-    def __init__(self, size_in, size_out, dim, device='cuda:0'):
+    def __init__(self, size_in, dim, device='cuda:0'):
+        size_out = copy.copy(size_in)
+        size_out[dim[1]] -= 1
+        size_out[dim[0]] -= 1
         super(Diff2d, self).__init__(size_in, size_out)
         # TODO: determine size_out by size in
         self.dim = dim
         assert len(self.dim) == 2, "Please denote two dimension for a 2D finite difference operator"
 
     def _apply(self, x):
-        return finitediff(finitediff(x, self.dim[1]), self.dim[2])
+        return finitediff(finitediff(x, self.dim[0]), self.dim[1])
 
     def _apply_adjoint(self, y):
-        return finitediff_adj(finitediff_adj(y, self.dim[1]), self.dim[2])
+        return finitediff_adj(finitediff_adj(y, self.dim[0]), self.dim[1])
+
+class Diff2dframe(LinearMap):
+    def __init__(self, size_in, dim, device='cuda:0'):
+        super(Diff2dframe, self).__init__(size_in, size_in)
+        # TODO: determine size_out by size in
+
+    def RtR(self, x):
+        return torch.cat(((x[..., 0, :] - x[..., 1, :]).unsqueeze(-2),
+                          (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]),
+                          (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2)), dim=-2) + torch.cat(((x[..., 0] - x[
+            ..., 1]).unsqueeze(-1), (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]), (x[..., -1] - x[..., -2]).unsqueeze(
+            -1)), dim=-1)
+    def _apply(self, x):
+        return self.RtR(x)
+    def _apply_adjoint(self, x):
+        return self.RtR(x)
+
 
 class Diag(LinearMap):
     '''
@@ -52,10 +76,10 @@ class Identity(LinearMap):
         super(Identity, self).__init__(size_in, size_out)
 
     def _apply(self, x):
-        pass
+        return x
 
     def _apply_adjoint(self, x):
-        pass
+        return x
 
 # class Smoothing1d(LinearMap):
 #     def __init__(self, size_in, size_out, device):
