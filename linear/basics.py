@@ -4,6 +4,25 @@ import copy
 import numpy as np
 from .linearmaps import LinearMap, check_device
 
+class DiffFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, dim):
+        ctx.dim = dim
+        return finitediff(x, dim)
+
+    @staticmethod
+    def backward(ctx, dx):
+        return finitediff_adj(dx, ctx.dim), None
+
+class DiffFunc_adj(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, dim):
+        ctx.dim = dim
+        return finitediff_adj(x, dim)
+
+    @staticmethod
+    def backward(ctx, dx):
+        return finitediff(dx, ctx.dim), None
 
 class Diff1d(LinearMap):
     def __init__(self, size_in, dim, device='cuda:0'):
@@ -13,12 +32,11 @@ class Diff1d(LinearMap):
         super(Diff1d, self).__init__(size_in, size_out)
         self.dim = dim
         assert np.isscalar(dim), "Please denote 1 dimension for a 1D finite difference operator"
-
     def _apply(self, x):
-        return finitediff(x, self.dim)
+        return DiffFunc.apply(x, self.dim)
 
     def _apply_adjoint(self, y):
-        return finitediff_adj(y, self.dim)
+        return DiffFunc_adj.apply(y, self.dim)
 
 class Diff2d(LinearMap):
     def __init__(self, size_in, dim, device='cuda:0'):
@@ -31,10 +49,10 @@ class Diff2d(LinearMap):
         assert len(self.dim) == 2, "Please denote two dimension for a 2D finite difference operator"
 
     def _apply(self, x):
-        return finitediff(finitediff(x, self.dim[0]), self.dim[1])
+        return DiffFunc.apply(DiffFunc.apply(x, self.dim[0]), self.dim[1])
 
     def _apply_adjoint(self, y):
-        return finitediff_adj(finitediff_adj(y, self.dim[0]), self.dim[1])
+        return DiffFunc_adj.apply(DiffFunc_adj.apply(y, self.dim[0]), self.dim[1])
 
 class Diff2dframe(LinearMap):
     def __init__(self, size_in, dim, device='cuda:0'):
@@ -190,9 +208,6 @@ class Convolve3d(LinearMap):
 
     def _apply_adjoint(self, x):
         return F.conv_transpose3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
-
-class interp_li_1d(LinearMap):
-    pass
 
 
 def finitediff(x, dim=-1):

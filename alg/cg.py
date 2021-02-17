@@ -37,8 +37,7 @@ def cg_block(x0, b, A, tol, max_iter):
         pk = pk1
         num_loop = num_loop + 1
         rktrk = rk1trk1
-        rktark = torch.sum(rk.conj()*(A*rk)).abs()
-        print(f'residual at {num_loop}th iter: {rktark}')
+        print(f'residual at {num_loop}th iter: {rktrk}')
     return xk
 
 class CG():

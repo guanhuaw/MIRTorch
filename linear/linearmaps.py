@@ -3,11 +3,13 @@ Linear Operator implementations, based on SigPy:
 https://github.com/mikgroup/sigpy
 """
 import torch
+from torch import Tensor
 import abc
 import os
 import numpy as np
+from typing import Union, Sequence, TypeVar
 
-# To Do: frame operators, extended assignments, unary operators
+# To Do: extended assignments, unary operators
 '''
     Recommendation for linear operation:
      class forward(torch.autograd.Function):
@@ -34,15 +36,18 @@ def check_device(x, y):
     assert x.device == y.device, "Tensors should be on the same device"
 
 
+T = TypeVar('T', bound='LinearMap')
+
+
 class LinearMap:
     '''
-        We followed the idea of Sigpy rather than ModOpt:
-        Each instance (like FFT, Wavelet ...) defines it own _apply and _apply_adjoint
-        This approach lacks the versatility of define new linear operator on the run,
-        but is easier to implement.
+        Linear Operator: y = A*x
     '''
 
-    def __init__(self, size_in, size_out, device='cuda:0'):
+    def __init__(self,
+                 size_in: Sequence[int],
+                 size_out: Sequence[int],
+                 device='cpu'):
         '''
             Initilization requires:
             size_in: the size of the input of the linear map (a list)
@@ -57,40 +62,35 @@ class LinearMap:
         return '<{oshape}x{ishape}] {repr_str} Linop>'.format(
             oshape=self.size_out, ishape=self.size_in, repr_str=self.__class__.__name__)
 
-    def __call__(self, x):
+    def __call__(self, x) -> Tensor:
         # for a instance A, we can apply it by calling A(x). Equal to A*x
         return self.apply(x)
 
-    def _apply(self, x):
+    def _apply(self, x) -> Tensor:
         # worth noting that the function here should be differentiable,
         # for example, composed of native torch functions,
         # or torch.autograd.Function, or nn.module
         raise NotImplementedError
 
-    def _apply_adjoint(self, x):
+    def _apply_adjoint(self, x) -> Tensor:
         raise NotImplementedError
 
-    def apply(self, x):
+    def apply(self, x) -> Tensor:
         assert list(x.shape) == list(self.size_in), "Shape of input data and forward linear op do not match!"
         return self._apply(x)
 
-    def adjoint(self, x):
+    def adjoint(self, x) -> Tensor:
         assert list(x.shape) == list(self.size_out), "Shape of input data and adjoint linear op do not match!"
         return self._apply_adjoint(x)
 
     @property
-    def H(self):
+    def H(self) -> T:
         return ConjTranspose(self)
 
-    # @property
-    # def T(self):
-    #     pass
-    #     return RealTranspose(self)
-
-    def __add__(self, other):
+    def __add__(self: T, other: T) -> T:
         return Add(self, other)
 
-    def __mul__(self, other):
+    def __mul__(self: T, other) -> T:
         if np.isscalar(other):
             return Multiply(self, other)
         elif isinstance(other, LinearMap):
@@ -105,7 +105,7 @@ class LinearMap:
             raise NotImplementedError(
                 f"Only scalers, Linearmaps or Tensors, rather than '{type(other)}' are allowed as arguments for this function.")
 
-    def __rmul__(self, other):
+    def __rmul__(self: T, other) -> T:
         if np.isscalar(other):
             return Multiply(self, other)
         elif isinstance(other, torch.Tensor) and not other.shape:
@@ -113,14 +113,14 @@ class LinearMap:
         else:
             return NotImplemented
 
-    def __sub__(self, other):
+    def __sub__(self: T, other: T) -> T:
         return self.__add__(-other)
 
-    def __neg__(self):
+    def __neg__(self: T) -> T:
         return -1 * self
 
-    def __matmul__(self, other):
-        pass
+    # def __matmul__(self, other):
+    #     pass
 
 
 class Add(LinearMap):
@@ -129,17 +129,17 @@ class Add(LinearMap):
     (A+B)*x = A(x) + B(x)
     '''
 
-    def __init__(self, A, B):
+    def __init__(self, A: LinearMap, B: LinearMap):
         assert list(A.size_in) == list(B.size_in), "The input dimentions of two combined ops are not the same."
         assert list(A.size_out) == list(B.size_out), "The output dimentions of two combined ops are not the same."
         self.A = A
         self.B = B
         super().__init__(self.A.size_in, self.B.size_out)
 
-    def _apply(self, x):
+    def _apply(self: T, x: Tensor) -> Tensor:
         return self.A(x) + self.B(x)
 
-    def _apply_adjoint(self, x):
+    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         return self.A.H(x) + self.B.H(x)
 
 
@@ -154,11 +154,11 @@ class Multiply(LinearMap):
         self.A = A
         super().__init__(self.A.size_in, self.A.size_out)
 
-    def _apply(self, x):
+    def _apply(self: T, x: Tensor) -> Tensor:
         ax = x * self.a
         return self.A(ax)
 
-    def _apply_adjoint(self, x):
+    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         ax = x * self.a
         return self.A.H(ax)
 
@@ -175,11 +175,11 @@ class Matmul(LinearMap):
         assert list(self.B.size_out) == list(self.A.size_in), "Shapes do not match"
         super().__init__(self.B.size_in, self.A.size_out)
 
-    def _apply(self, x):
+    def _apply(self: T, x: Tensor) -> Tensor:
         # TODO: add frame operator
         return self.A(self.B(x))
 
-    def _apply_adjoint(self, x):
+    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         return self.B.H(self.A.H(x))
 
 
@@ -188,8 +188,8 @@ class ConjTranspose(LinearMap):
         self.A = A
         super().__init__(A.size_out, A.size_in)
 
-    def _apply(self, x):
+    def _apply(self: T, x: Tensor) -> Tensor:
         return self.A.adjoint(x)
 
-    def _apply_adjoint(self, x):
+    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         return self.A.apply(x)
