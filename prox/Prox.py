@@ -51,11 +51,11 @@ class L1Regularizer(Prox):
     Proximal operator for L1 regularizer, using soft thresholding
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| WTx \|_1
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| PTx \|_1
 
     Args:
         Lambda (float): regularization parameter.
-        W (LinearMap): optional, diagonal LinearMap
+        P (LinearMap): optional, diagonal LinearMap
         T (LinearMap): optional, unitary LinearMap
     """
 
@@ -64,7 +64,7 @@ class L1Regularizer(Prox):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
         if P is not None:
-            # Lambda is tensor here.
+            # Should this be v.shape instead of P.size_in? TODO: Verify this through test
             self.Lambda = P(Lambda*torch.ones(P.size_in))
 
     def _softshrink(x, lambd):
@@ -95,16 +95,22 @@ class L2Regularizer(Prox):
         Lambda (float): regularization parameter.
         T (LinearMap): optional, unitary LinearMap
     """
-    def __init__(self, Lambda, T = None):
-        super().__init__(T)
+    def __init__(self, Lambda, T = None, P = None):
+        super().__init__(T, P)
         self.Lambda = float(Lambda)
+        if P is not None:
+            self.Lambda = P(Lambda*torch.ones(P.size_in))
 
+    
     def _apply(self, v):
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
-        scale = 1.0 - self.Lambda / torch.max(torch.Tensor([self.Lambda]), torch.linalg.norm(v))
-        x = torch.mul(scale, v)
-        return x
+        if self.P is None:
+            scale = 1.0 - self.Lambda / torch.max(torch.Tensor([self.Lambda]), torch.linalg.norm(v))
+            # x = torch.mul(scale, v)
+        else:
+            scale = torch.ones_like(v) - self.Lambda / torch.max(torch.Tensor(self.Lambda), torch.linalg.norm(v))
+        return scale * v
 
 class SquaredL2Regularizer(Prox):
     r"""
@@ -117,14 +123,18 @@ class SquaredL2Regularizer(Prox):
         Lambda (float): regularization parameter.
         T (LinearMap): optional, unitary LinearMap
     """
-
-    def __init__(self, Lambda, T = None):
-        super().__init__(T)
+    def __init__(self, Lambda, T = None, P = None):
+        super().__init__(T, P)
         self.Lambda = float(Lambda)
+        if P is not None:
+            self.Lambda = P(Lambda*torch.ones(P.size_in))
+
 
     def _apply(self, v):
-        # T here?
-        x = torch.div(v, 1 + 2*self.Lambda)
+        if self.P is None:
+            x = torch.div(v, 1 + 2*self.Lambda)
+        else:
+            x = torch.div(v, torch.ones(v.shape) + 2*self.Lambda)
         return x
 
 class BoxConstraint(Prox):
@@ -141,13 +151,21 @@ class BoxConstraint(Prox):
         T (LinearMap): optional, unitary LinearMap
     """
 
-    def __init__(self, Lambda, lower, upper, T = None):
+    def __init__(self, Lambda, lower, upper, T = None, P = None):
         super().__init__(T)
         self.l = lower
         self.u = upper
         self.Lambda = float(Lambda)
+        if P is not None:
+            self.Lambda = P(Lambda * torch.ones(P.size_in))
+            self.l = l / self.Lambda
+            self.u = u / self.Lambda
+
 
     def _apply(self, v):
-        x = torch.clamp(v, self.l, self.u)
+        if self.P is None:
+            x = torch.clamp(v, self.l, self.u)
+        else:
+            x = torch.minimum(self.u , torch.minimum(v, self.l))
         return x
 
