@@ -124,6 +124,7 @@ class Convolve1d(LinearMap):
         # only weight and input size
         assert len(list(size_in)) == 3, "input must have the shape (minibatch, in_channels, iW)"
         assert len(list(weight.shape)) == 3, "weight must have the shape (out_channels, in_channels, kW)"
+        assert device == weight.device, "Tensors should be on the same device"
         minimatch, _, iW = size_in
         out_channel, _, kW = weight.shape
         assert iW >= kW, "Kernel size can't be greater than actual input size"
@@ -135,11 +136,14 @@ class Convolve1d(LinearMap):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
+        self.device = device
         
     def _apply(self, x):
+        x = x.to(self.device)
         return F.conv1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
     def _apply_adjoint(self, x):
+        x = x.to(self.device)
         return F.conv_transpose1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
 class Convolve2d(LinearMap):
@@ -147,6 +151,7 @@ class Convolve2d(LinearMap):
         # TODO: unsqueeze check batch
         assert len(list(size_in)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
         assert len(list(weight.shape)) == 4, "weight must have the shape (out_channels, in_channels, kH, kW)"
+        assert device == weight.device, "Tensors should be on the same device"
         minimatch, _, iH, iW = size_in
         out_channel, _, kH, kW = weight.shape
         assert iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
@@ -168,11 +173,14 @@ class Convolve2d(LinearMap):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
+        self.device = device
         
     def _apply(self, x):
+        x = x.to(self.device)
         return F.conv2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
     def _apply_adjoint(self, x):
+        x = x.to(self.device)
         return F.conv_transpose2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
 class Convolve3d(LinearMap):
@@ -180,6 +188,7 @@ class Convolve3d(LinearMap):
         # TODO: unsqueeze check batch
         assert len(list(size_in)) == 5, "input must have the shape (minibatch, in_channels, iD, iH, iW)"
         assert len(list(weight.shape)) == 5, "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
+        assert device == weight.device, "Tensors should be on the same device"
         minimatch, _, iD, iH, iW = size_in
         out_channel, _, kD, kH, kW = weight.shape
         assert iD >= kD and iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
@@ -202,11 +211,14 @@ class Convolve3d(LinearMap):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
+        self.device = device
         
     def _apply(self, x):
+        x = x.to(self.device)
         return F.conv3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
     def _apply_adjoint(self, x):
+        x = x.to(self.device)
         return F.conv_transpose3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation)
 
 
