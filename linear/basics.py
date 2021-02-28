@@ -205,7 +205,7 @@ class Convolve3d(LinearMap):
         Wout = (iW + 2 * padding[2] - dilation[2] * (kW - 1) - 1) // stride[2] + 1
         size_out = (minimatch, out_channel, Dout, Hout, Wout)
 
-        super(Convolve2d, self).__init__(size_in, size_out)
+        super(Convolve3d, self).__init__(size_in, size_out)
         self.weight = weight
         self.bias = bias
         self.stride = stride
