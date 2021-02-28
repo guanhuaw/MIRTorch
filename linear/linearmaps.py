@@ -1,16 +1,8 @@
 """
-Linear Operator implementations, based on SigPy:
-https://github.com/mikgroup/sigpy
-"""
-import torch
-from torch import Tensor
-import abc
-import os
-import numpy as np
-from typing import Union, Sequence, TypeVar
+Linear Operator implementations, based on SigPy(https://github.com/mikgroup/sigpy) and LinearmapAA (https://github.com/JeffFessler/LinearMapsAA.jl):
 
-# To Do: extended assignments, unary operators
-'''
+2021-02. Guanhua Wang and Keyue Zhu, University of Michigan
+
     Recommendation for linear operation:
      class forward(torch.autograd.Function):
         @staticmethod
@@ -20,7 +12,7 @@ from typing import Union, Sequence, TypeVar
         def backward(ctx, grad_data_in):
             return adjoint_func(grad_data_in)
      forward_op = forward.apply
-    
+
      class adjoint(torch.autograd.Function):
         @staticmethod
         def forward(ctx, data_in):
@@ -29,7 +21,15 @@ from typing import Union, Sequence, TypeVar
         def backward(ctx, grad_data_in):
             return adjoint_func(grad_data_in)
      adjoint_op = adjoint.apply
-'''
+
+ To Do: extended assignments, unary operators
+"""
+import torch
+from torch import Tensor
+import abc
+import os
+import numpy as np
+from typing import Union, Sequence, TypeVar
 
 
 def check_device(x, y):

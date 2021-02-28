@@ -1,3 +1,9 @@
+"""
+Discrete-to-discreate system matrices for MRI.
+2021-02. Guanhua Wang, University of Michigan
+To Do: toeplitz embedding, field inhomogeneity, frame operator
+"""
+
 import numpy as np
 from .linearmaps import LinearMap
 import torch
@@ -6,35 +12,6 @@ from torch.fft import fft, ifft, fftn, ifftn
 from .linearmaps import LinearMap, check_device
 import torchkbnufft as tkbn
 from typing import Union, Sequence, TypeVar
-
-
-# To Do: toeplitz embedding, field inhomogeneity, frame operator
-def fftshift(x: Tensor, dims=None):
-    """
-    Similar to np.fft.fftshift but applies to PyTorch tensors
-    """
-    if dims is None:
-        dims = tuple(range(x.dim()))
-        shifts = [dim // 2 for dim in x.shape]
-    elif isinstance(dims, int):
-        shifts = x.shape[dims] // 2
-    else:
-        shifts = [x.shape[i] // 2 for i in dims]
-    return torch.roll(x, shifts, dims)
-
-
-def ifftshift(x: Tensor, dims=None):
-    """
-    Similar to np.fft.ifftshift but applies to PyTorch tensors
-    """
-    if dims is None:
-        dims = tuple(range(x.dims()))
-        shifts = [(dim + 1) // 2 for dim in x.shape]
-    elif isinstance(dims, int):
-        shifts = (x.shape[dims] + 1) // 2
-    else:
-        shifts = [(x.shape[i] + 1) // 2 for i in dims]
-    return torch.roll(x, shifts, dims)
 
 
 class FFTCn(LinearMap):
@@ -192,3 +169,32 @@ class NuSense(LinearMap):
 class MRI:
     def __init__(self, size_in, size_out, dims, norm='ortho', smaps=None, masks=None, zmap=None):
         pass
+
+
+
+def fftshift(x: Tensor, dims=None):
+    """
+    Similar to np.fft.fftshift but applies to PyTorch tensors
+    """
+    if dims is None:
+        dims = tuple(range(x.dim()))
+        shifts = [dim // 2 for dim in x.shape]
+    elif isinstance(dims, int):
+        shifts = x.shape[dims] // 2
+    else:
+        shifts = [x.shape[i] // 2 for i in dims]
+    return torch.roll(x, shifts, dims)
+
+
+def ifftshift(x: Tensor, dims=None):
+    """
+    Similar to np.fft.ifftshift but applies to PyTorch tensors
+    """
+    if dims is None:
+        dims = tuple(range(x.dims()))
+        shifts = [(dim + 1) // 2 for dim in x.shape]
+    elif isinstance(dims, int):
+        shifts = (x.shape[dims] + 1) // 2
+    else:
+        shifts = [(x.shape[i] + 1) // 2 for i in dims]
+    return torch.roll(x, shifts, dims)
