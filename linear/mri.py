@@ -5,13 +5,42 @@ To Do: toeplitz embedding, field inhomogeneity, frame operator
 """
 
 import numpy as np
-from .linearmaps import LinearMap
 import torch
 from torch import Tensor
-from torch.fft import fft, ifft, fftn, ifftn
+from torch.fft import fftn, ifftn
 from .linearmaps import LinearMap, check_device
 import torchkbnufft as tkbn
 from typing import Union, Sequence, TypeVar
+
+
+# To Do: frame operator
+
+def fftshift(x: Tensor, dims=None):
+    """
+    Similar to np.fft.fftshift but applies to PyTorch tensors. From fastMRI code.
+    """
+    if dims is None:
+        dims = tuple(range(x.dim()))
+        shifts = [dim // 2 for dim in x.shape]
+    elif isinstance(dims, int):
+        shifts = x.shape[dims] // 2
+    else:
+        shifts = [x.shape[i] // 2 for i in dims]
+    return torch.roll(x, shifts, dims)
+
+
+def ifftshift(x: Tensor, dims=None):
+    """
+    Similar to np.fft.ifftshift but applies to PyTorch tensors. From fastMRI code.
+    """
+    if dims is None:
+        dims = tuple(range(x.dims()))
+        shifts = [(dim + 1) // 2 for dim in x.shape]
+    elif isinstance(dims, int):
+        shifts = (x.shape[dims] + 1) // 2
+    else:
+        shifts = [(x.shape[i] + 1) // 2 for i in dims]
+    return torch.roll(x, shifts, dims)
 
 
 class FFTCn(LinearMap):
@@ -62,8 +91,8 @@ class Sense(LinearMap):
                  dims: Union[int, Sequence[int]],
                  smaps: Tensor,
                  masks: Tensor,
-                 norm='ortho',
-                 batchmode=True):
+                 norm: str = 'ortho',
+                 batchmode: bool = True):
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
@@ -139,7 +168,8 @@ class NuSense(LinearMap):
         if batchmode:
             self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
                                   numpoints=numpoints).to(smaps)
-            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
+            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
+                                          grid_size=tuple(np.array(smaps.shape[2:]) * 2),
                                           numpoints=numpoints).to(smaps)
             size_in = [smaps.shape[0]] + list(smaps.shape[2:])
             size_out = list(smaps.shape[0:2]) + [traj.shape[1]]
@@ -147,7 +177,8 @@ class NuSense(LinearMap):
         else:
             self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
                                   numpoints=numpoints).to(smaps)
-            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
+            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
+                                          grid_size=tuple(np.array(smaps.shape[2:]) * 2),
                                           numpoints=numpoints).to(smaps)
             size_in = smaps.shape[2:]
             size_out = [smaps.shape[0]] + [traj.shape[1]]
@@ -155,46 +186,87 @@ class NuSense(LinearMap):
 
     def _apply(self, x: Tensor) -> Tensor:
         if self.batchmode:
-            return self.A(x, self.traj, smaps=self.smaps, norm = self.norm)
+            return self.A(x, self.traj, smaps=self.smaps, norm=self.norm)
         else:
-            return self.A(x.unsqueeze(0), self.traj, smaps=self.smaps, norm = self.norm).squeeze(0)
+            return self.A(x.unsqueeze(0), self.traj, smaps=self.smaps, norm=self.norm).squeeze(0)
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
         if self.batchmode:
-            return self.AT(y, self.traj, smaps=self.smaps, norm = self.norm).squeeze(1)
+            # The output of the
+            return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm).squeeze(1)
         else:
-            return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps, norm = self.norm).squeeze(0).squeeze(0)
+            return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps, norm=self.norm).squeeze(0).squeeze(0)
 
 
-class MRI:
-    def __init__(self, size_in, size_out, dims, norm='ortho', smaps=None, masks=None, zmap=None):
-        pass
+class Gmri(LinearMap):
+    '''
+    B0-informed mri reconstruction
+    Parameters:
+        Norm: like the Sense cases
+        zmap: relaxation and off-resonance effects: [batch, nx, ny, (nz)] ref: DOI: 10.1109/TSP.2005.853152
+        traj: [ndim, nshot*npoints]
+        L: number of segmentations
+        ti: time points
+    Input/Output:
+        x(complex-valued images): [batch, nx, ny, (nz)]
+        k(k-space data): [batch, ncoil, nshot*npoints] or [batch, ncoil, nx, ny, (nz)]
+    '''
+
+    def __init__(self,
+                 size_in: Sequence[int],
+                 size_out: Sequence[int],
+                 norm='ortho',
+                 smaps: Tensor = None,
+                 traj: Tensor = None,
+                 dims: Union[int, Sequence[int]] = None,
+                 zmap: Tensor = None,
+                 L: int = None,
+                 ti: int = None,
+                 ):
+        if masks is not None:
+            pass
+        elif traj is not None:
+
+        else:
+            pass
+        A.repr_str = 'Sense'
 
 
-
-def fftshift(x: Tensor, dims=None):
+def mri_exp_approx(b0, bins, lseg, dt, T):
     """
-    Similar to np.fft.fftshift but applies to PyTorch tensors
+    From Sigpy: https://github.com/mikgroup/sigpy
+    and MIRT: https://web.eecs.umich.edu/~fessler/code/
+    Creates B and Ct matrices needed for time-segmented off-resonance
+    compensation.
+    Args:
+        b0 (array): inhomogeneity matrix.
+        bins (int): number of histogram bins to use.
+        lseg (int): number of time segments.
+        dt (float): hardware dwell time (ms).
+        T (float): length of pulse (ms).
+    Returns:
+        2-element tuple containing
+        - **B** (*array*): temporal interpolator.
+        - **Ct** (*array*): off-resonance phase at each time segment center.
     """
-    if dims is None:
-        dims = tuple(range(x.dim()))
-        shifts = [dim // 2 for dim in x.shape]
-    elif isinstance(dims, int):
-        shifts = x.shape[dims] // 2
-    else:
-        shifts = [x.shape[i] // 2 for i in dims]
-    return torch.roll(x, shifts, dims)
 
+    # create time vector
+    t = np.linspace(0, T, np.int(T / dt))
+    hist_wt, bin_edges = np.histogram(np.imag(2j * np.pi * np.concatenate(b0)),
+                                      bins)
 
-def ifftshift(x: Tensor, dims=None):
-    """
-    Similar to np.fft.ifftshift but applies to PyTorch tensors
-    """
-    if dims is None:
-        dims = tuple(range(x.dims()))
-        shifts = [(dim + 1) // 2 for dim in x.shape]
-    elif isinstance(dims, int):
-        shifts = (x.shape[dims] + 1) // 2
-    else:
-        shifts = [(x.shape[i] + 1) // 2 for i in dims]
-    return torch.roll(x, shifts, dims)
+    # Build B and Ct
+    bin_centers = bin_edges[1:] - bin_edges[1] / 2
+    zk = 0 + 1j * bin_centers
+    tl = np.linspace(0, lseg, lseg) / lseg * T / 1000  # time seg centers
+    # calculate off-resonance phase @ each time seg, for hist bins
+    ch = np.exp(-np.expand_dims(tl, axis=1) @ np.expand_dims(zk, axis=0))
+    w = np.diag(np.sqrt(hist_wt))
+    p = np.linalg.pinv(w @ np.transpose(ch)) @ w
+    b = p @ np.exp(-np.expand_dims(zk, axis=1)
+                   @ np.expand_dims(t, axis=0) / 1000)
+    b = np.transpose(b)
+    b0_v = np.expand_dims(2j * np.pi * np.concatenate(b0), axis=0)
+    ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
+
+    return b, ct
