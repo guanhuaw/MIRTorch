@@ -210,14 +210,13 @@ class Gmri(LinearMap):
     '''
     B0-informed mri reconstruction
     Parameters:
-        smaps: sensitivity maps: [(batch), nx, ny, (nz)]
         Norm: like the Sense cases
-        zmap: relaxation and off-resonance effects: [(batch), nx, ny, (nz)]
+        smaps: sensitivity maps: [batch, nx, ny, (nz)] (must have a batch dimension)
+        zmap: relaxation and off-resonance effects in Hz: [batch, nx, ny, (nz)]
                 ref: DOI: 10.1109/TSP.2005.853152
-                in Hz.
         traj: [(batch), ndim, nshot, npoints]
         or mask: [(batch), nx, ny, (nz)] (name sure that ny is the phase-encoding direction)
-        L: number of segmentations
+        L: number of segmentation
         ti: time points, in ms
         numpoints: length of the Nufft interpolation kernels
     Input/Output:
@@ -234,12 +233,11 @@ class Gmri(LinearMap):
                  L: int = 6,
                  nbins: int = 20,
                  dt: int = 4e-3,
-                 batchmode=True,
                  numpoints: Union[int, Sequence[int]] = 6
                  ):
-        self.smaps = smaps
         self.norm = norm
-        self.batchmode = batchmode
+        self.smaps = smaps
+        self.zmap = zmap
         self.L = L
         self.nbins = nbins
         self.dt = dt
@@ -260,6 +258,7 @@ class Gmri(LinearMap):
         elif traj is not None:
             self.traj = traj
             if batchmode:
+                self.batch, self.ndim, self.nshot, self.npoints = self.zmap.shape
                 self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
                                       numpoints=numpoints).to(smaps)
                 self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
@@ -278,11 +277,11 @@ class Gmri(LinearMap):
 
         super(Gmri, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
         if batchmode:
-            B ,C = mri_exp_approx(zmap, nbins, L, dt, T)
-            self.B = torch.tensor(B).to(smaps)
+            B ,C = mri_exp_approx(zmap, nbins, L, dt, dt*self.npoints)
+            self.B = torch.tensor(B).to(smaps).reshape()
             self.C = torch.tensor(C).to(smaps)
         else:
-            B ,C = mri_exp_approx(zmap, nbins, L, dt, T)
+            B ,C = mri_exp_approx(zmap, nbins, L, dt, dt*self.npoints)
             self.B = torch.tensor(B).to(smaps)
             self.C = torch.tensor(C).to(smaps)
     def _apply(self, x: Tensor) -> Tensor:
@@ -307,7 +306,7 @@ def mri_exp_approx(b0, bins, lseg, dt, T):
     and MIRT: https://web.eecs.umich.edu/~fessler/code/
     Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2*pi*zmap) [M*N]
     Params:
-        b0 (array): inhomogeneity matrix.
+        b0 (array): inhomogeneity matrix. in Hz.
         bins (int): number of histogram bins to use.
         lseg (int): number of time segments.
         dt (float): hardware dwell time (ms).
