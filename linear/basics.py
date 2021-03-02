@@ -43,20 +43,20 @@ class Diff1d(LinearMap):
 class Diff2d(LinearMap):
     def __init__(self,
                  size_in: Sequence[int],
-                 dim: Sequence[int]):
+                 dims: Sequence[int]):
         size_out = copy.copy(size_in)
-        size_out[dim[1]] -= 1
-        size_out[dim[0]] -= 1
+        size_out[dims[1]] -= 1
+        size_out[dims[0]] -= 1
         super(Diff2d, self).__init__(size_in, size_out)
         # TODO: determine size_out by size in
-        self.dim = dim
-        assert len(self.dim) == 2, "Please denote two dimension for a 2D finite difference operator"
+        self.dims = dims
+        assert len(self.dims) == 2, "Please denote two dimension for a 2D finite difference operator"
 
     def _apply(self, x):
-        return DiffFunc.apply(DiffFunc.apply(x, self.dim[0]), self.dim[1])
+        return DiffFunc.apply(DiffFunc.apply(x, self.dims[0]), self.dims[1])
 
     def _apply_adjoint(self, y):
-        return DiffFunc_adj.apply(DiffFunc_adj.apply(y, self.dim[0]), self.dim[1])
+        return DiffFunc_adj.apply(DiffFunc_adj.apply(y, self.dims[0]), self.dims[1])
 
 
 class Diff2dframe(LinearMap):

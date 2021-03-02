@@ -93,11 +93,11 @@ class Sense(LinearMap):
         if batchmode:
             size_in = [smaps.shape[0]] + list(smaps.shape[2:])
             size_out = list(smaps.shape)
-            dims = tuple(np.arange(2, len(smaps.shape)))
+            dims = tuple(np.arange(1, len(smaps.shape) - 1))
         else:
-            size_in = list(smaps.shape[2:])
-            size_out = list(smaps.shape[1:])
-            dims = tuple(np.arange(1, len(smaps.shape)))
+            size_in = list(smaps.shape[1:])
+            size_out = list(smaps.shape)
+            dims = tuple(np.arange(0, len(smaps.shape) - 1))
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
@@ -214,8 +214,8 @@ class Gmri(LinearMap):
         smaps: sensitivity maps: [batch, nx, ny, (nz)] (must have a batch dimension)
         zmap: relaxation and off-resonance effects in Hz: [batch, nx, ny, (nz)]
                 ref: DOI: 10.1109/TSP.2005.853152
-        traj: [(batch), ndim, nshot, npoints]
-        or mask: [(batch), nx, ny, (nz)] (name sure that ny is the phase-encoding direction)
+        traj: [nbatch/1, ndim, nshot, npoints]
+        or mask: [batch, nx, ny, (nz)] (name sure that ny is the phase-encoding direction)
         L: number of segmentation
         ti: time points, in ms
         numpoints: length of the Nufft interpolation kernels
@@ -225,11 +225,11 @@ class Gmri(LinearMap):
     '''
 
     def __init__(self,
-                 norm='ortho',
                  smaps: Tensor = None,
                  zmap: Tensor = None,
                  traj: Tensor = None,
                  mask: Tensor = None,
+                 norm: str = 'ortho',
                  L: int = 6,
                  nbins: int = 20,
                  dt: int = 4e-3,
@@ -242,62 +242,51 @@ class Gmri(LinearMap):
         self.nbins = nbins
         self.dt = dt
         assert (mask is None) != (
-                    traj is None), "Please provide either mask (for cartesian sampling) or Non-cartesian trajectory"
+                traj is None), "Please provide either mask (for cartesian sampling) or Non-cartesian trajectory"
+        self.nbatch = self.smaps.shape[0]
+        self.nc = self.smaps.shape[1]
         if mask is not None:
             self.mask = mask
-            if batchmode:
-                size_in = [smaps.shape[0]] + list(smaps.shape[2:])
-                size_out = list(smaps.shape)
-                dims = tuple(np.arange(2, len(smaps.shape)))
-            else:
-                size_in = list(smaps.shape[2:])
-                size_out = list(smaps.shape[1:])
-                dims = tuple(np.arange(1, len(smaps.shape)))
-            self.A = FFTCn(size_in, size_out, dims=dims)
+            size_in = [self.batch] + list(smaps.shape[2:])
+            size_out = list(smaps.shape)
+            self.A = Sense(smaps, mask, norm)
             self.AT = self.A.H
         elif traj is not None:
             self.traj = traj
-            if batchmode:
-                self.batch, self.ndim, self.nshot, self.npoints = self.zmap.shape
-                self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
-                                      numpoints=numpoints).to(smaps)
-                self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
-                                              grid_size=tuple(np.array(smaps.shape[2:]) * 2),
-                                              numpoints=numpoints).to(smaps)
-                size_in = [smaps.shape[0]] + list(smaps.shape[2:])
-                size_out = list(smaps.shape[0:2]) + [traj.shape[-1]]
-            else:
-                self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[1:]), grid_size=tuple(np.array(smaps.shape[1:]) * 2),
-                                      numpoints=numpoints).to(smaps)
-                self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[1:]),
-                                              grid_size=tuple(np.array(smaps.shape[1:]) * 2),
-                                              numpoints=numpoints).to(smaps)
-                size_in = smaps.shape[1:]
-                size_out = (smaps.shape[0], traj.shape[-1])
-
+            _, self.ndim, self.nshot, self.npoints = self.traj.shape
+            self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
+                                  numpoints=numpoints).to(smaps)
+            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
+                                          grid_size=tuple(np.array(smaps.shape[2:]) * 2),
+                                          numpoints=numpoints).to(smaps)
+            size_in = [self.nbatch] + list(smaps.shape[2:])
+            size_out = (self.nbatch, self.nc, self.nshot, self.npoints)
+            self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(self.smaps.device) * 1j  # [L, batch, coil, shot, points]
+            self.C = torch.zeros((self.L, self.nbatch) + tuple(self.smaps.shape[2:])).to(self.smaps.device) * 1j  # [L, batch, nx, ny ...]
+            for ib in range(self.nbatch):
+                b, c = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, dt, dt * self.npoints)
+                self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
+                self.C[:, ib, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
+                    (self.L,) + tuple(zmap.shape[1:]))
+            self.traj = self.traj.reshape((self.traj.shape[0], self.ndim, self.nshot * self.npoints))
         super(Gmri, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
-        if batchmode:
-            B ,C = mri_exp_approx(zmap, nbins, L, dt, dt*self.npoints)
-            self.B = torch.tensor(B).to(smaps).reshape()
-            self.C = torch.tensor(C).to(smaps)
-        else:
-            B ,C = mri_exp_approx(zmap, nbins, L, dt, dt*self.npoints)
-            self.B = torch.tensor(B).to(smaps)
-            self.C = torch.tensor(C).to(smaps)
-    def _apply(self, x: Tensor) -> Tensor:
-        if self.batchmode:
-            y = torch.zeros(self.size_out)
-            for il in range(self.L):
-                y = y + self.B*self.A*(x*self.C)
 
-        else:
-            return self.A(x.unsqueeze(0), self.traj, smaps=self.smaps, norm=self.norm).squeeze(0)
+    def _apply(self, x: Tensor) -> Tensor:
+        y = torch.zeros(self.size_out).to(self.smaps.device)*1j
+        for il in range(self.L):
+            if self.traj is not None:
+                y = y + self.B[il] * self.A(x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm).reshape(
+                    self.size_out)
+        return y
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
-        if self.batchmode:
-            return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm).squeeze(1)
-        else:
-            return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps, norm=self.norm).squeeze(0).squeeze(0)
+        x = torch.zeros(self.size_in).to(self.smaps.device)*1j
+        for il in range(self.L):
+            if self.traj is not None:
+                x = x + self.C[il].conj() * self.AT(
+                    (y * self.B[il].conj()).reshape(self.nbatch, self.nc, self.nshot * self.npoints), self.traj,
+                    smaps=self.smaps, norm=self.norm).squeeze(1)
+        return x
 
 
 def mri_exp_approx(b0, bins, lseg, dt, T):
