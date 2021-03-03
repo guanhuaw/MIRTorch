@@ -151,7 +151,7 @@ class TestBasic(unittest.TestCase):
 if __name__ == '__main__':
     # if torch.cuda.is_available():
     #     print(torch.cuda.get_device_name(0))
-    # unittest.main()
+    unittest.main()
 
     # x = torch.randn(20, 16, 50)
     # weight = torch.randn(33, 16, 3)
