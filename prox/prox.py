@@ -1,4 +1,10 @@
+"""
+Proximal operators, including soft-thresholding, box-constraint and L2 norm.
+2021-02. Neel Shah and Guanhua Wang, University of Michigan
+"""
+
 import torch
+
 
 class Prox:
     r"""

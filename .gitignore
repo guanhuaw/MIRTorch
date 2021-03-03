@@ -1,5 +1,5 @@
 .vscode
 .idea
-.ipynb_checkpoints3
 *.pyc
+examples/.ipynb_checkpoints
 examples/*.h5
