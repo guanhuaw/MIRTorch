@@ -120,6 +120,9 @@ class Identity(LinearMap):
 #         pass
 
 class Convolve1d(LinearMap):
+    """
+    TODO: add doc
+    """
     def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
         # only weight and input size
         assert len(list(size_in)) == 3, "input must have the shape (minibatch, in_channels, iW)"
