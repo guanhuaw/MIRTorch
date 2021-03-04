@@ -1,5 +1,6 @@
 """
-Linear Operator implementations, based on SigPy(https://github.com/mikgroup/sigpy) and LinearmapAA (https://github.com/JeffFessler/LinearMapsAA.jl):
+Linear Operator implementations, based on SigPy(https://github.com/mikgroup/sigpy)
+ and LinearmapAA (https://github.com/JeffFessler/LinearMapsAA.jl).
 
 2021-02. Guanhua Wang and Keyue Zhu, University of Michigan
 
@@ -59,7 +60,7 @@ class LinearMap:
         self.property = None  # properties like 'unitary', 'Toeplitz', 'frame' ...
 
     def __repr__(self):
-        return '<{oshape}x{ishape}] {repr_str} Linop>'.format(
+        return '<{oshape}x{ishape} {repr_str} Linop>'.format(
             oshape=self.size_out, ishape=self.size_in, repr_str=self.__class__.__name__)
 
     def __call__(self, x) -> Tensor:
