@@ -1,6 +1,4 @@
 import torch
-import numpy as np
-from linear import linearmaps
 
 
 @torch.no_grad()

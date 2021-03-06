@@ -27,8 +27,6 @@ Linear Operator implementations, based on SigPy(https://github.com/mikgroup/sigp
 """
 import torch
 from torch import Tensor
-import abc
-import os
 import numpy as np
 from typing import Union, Sequence, TypeVar
 
@@ -74,6 +72,9 @@ class LinearMap:
         raise NotImplementedError
 
     def _apply_adjoint(self, x) -> Tensor:
+        raise NotImplementedError
+
+    def _apply_frame(self, x:Tensor) -> Tensor:
         raise NotImplementedError
 
     def apply(self, x) -> Tensor:

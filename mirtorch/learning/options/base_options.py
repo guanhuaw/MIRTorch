@@ -1,9 +1,9 @@
 import argparse
 import os
-from learning.util import util
+from mirtorch.learning.util import util
 import torch
-import learning.model
-import learning.data
+from mirtorch import learning
+import mirtorch.learning.data
 
 
 
@@ -120,7 +120,7 @@ class BaseOptions():
 
         # modify dataset-related parser options
         dataset_name = opt.dataset_mode
-        dataset_option_setter = learning.data.get_option_setter(dataset_name)
+        dataset_option_setter = mirtorch.learning.data.get_option_setter(dataset_name)
         parser = dataset_option_setter(parser, self.isTrain)
 
         self.parser = parser
