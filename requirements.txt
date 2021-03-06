@@ -1,0 +1,4 @@
+torch>= 1.7.0
+torchvision>=0.8.1
+dominate>=2.5.1
+visdom>=0.1.8
