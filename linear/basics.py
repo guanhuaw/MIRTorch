@@ -113,7 +113,7 @@ class Identity(LinearMap):
 
 class Convolve1d(LinearMap):
     """
-    TODO: add doc
+        1D cross-correlation linear map.
     """
     def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
         # only weight and input size
@@ -145,8 +145,10 @@ class Convolve1d(LinearMap):
 
 
 class Convolve2d(LinearMap):
+    """
+        2D cross-correlation linear map.
+    """
     def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
-        # TODO: unsqueeze check batch
         assert len(list(size_in)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
         assert len(list(weight.shape)) == 4, "weight must have the shape (out_channels, in_channels, kH, kW)"
         assert device == weight.device, "Tensors should be on the same device"
@@ -185,8 +187,10 @@ class Convolve2d(LinearMap):
 
 
 class Convolve3d(LinearMap):
+    """
+        3D cross-correlation linear map.
+    """
     def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
-        # TODO: unsqueeze check batch
         assert len(list(size_in)) == 5, "input must have the shape (minibatch, in_channels, iD, iH, iW)"
         assert len(list(weight.shape)) == 5, "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
         assert device == weight.device, "Tensors should be on the same device"

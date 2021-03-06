@@ -1,3 +1,7 @@
+"""
+Utility functions for convolution in unit test.
+Reference: numpy-ml(https://github.com/ddbourgin/numpy-ml/blob/master/numpy_ml/neural_nets/utils/utils.py)
+"""
 import numpy as np
 
 #######################################################################
