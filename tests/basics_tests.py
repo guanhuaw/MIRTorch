@@ -3,7 +3,7 @@ import sys, os
 path = os.path.dirname(os.path.abspath(__file__))
 path = path[:path.rfind('/')]
 sys.path.insert(0, path)
-from linear import basics
+from mirtorch.linear import basics
 import torch
 import torch.nn.functional as F
 import utils
