@@ -13,7 +13,6 @@
 !*.rst
 !*.ipynb
 !*.npz
-!*.h5
 
 # and specific files
 !docs/Makefile
@@ -36,4 +35,5 @@
 *prof/
 *build/
 *dist/
+*.pyc
 

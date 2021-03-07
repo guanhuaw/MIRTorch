@@ -1,7 +1,7 @@
 import time
+from learning.model import create_model
 from learning.options.train_options import TrainOptions
 from learning.data import CreateDataLoader
-from learning.model import create_model
 from util.visualizer import Visualizer
 
 
