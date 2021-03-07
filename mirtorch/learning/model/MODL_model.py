@@ -1,61 +1,62 @@
+"""
+Basic MoDL for MRI reconstruction. More general version with LinearMap is being tested.
+"""
+
+
 import torch
 import itertools
-from util.image_pool import ImagePool
+from mirtorch.util.image_pool import ImagePool
 from .base_model import BaseModel
 from . import networks
-from util.metrics import PSNR, roll_2
 import pytorch_msssim
-import time
-from util.util import fft2, ifft2
-import sys
-import os
 
-
-class MODLModel(BaseModel):
+class MODLBASEModel(BaseModel):
     def name(self):
-        return 'MODLModel'
+        return 'MODLBASEModel'
+
+    def gradient_penalty(self, y, x):
+        """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2."""
+        weight = torch.ones(y.size()).to(self.device)
+        dydx = torch.autograd.grad(outputs=y,
+                                   inputs=x,
+                                   grad_outputs=weight,
+                                   retain_graph=True,
+                                   create_graph=True,
+                                   only_inputs=True)[0]
+
+        dydx = dydx.view(dydx.size(0), -1)
+        dydx_l2norm = torch.sqrt(torch.sum(dydx ** 2, dim=1))
+        return torch.mean((dydx_l2norm - 1) ** 2)
 
     # Initialize the model
     def initialize(self, opt):
-        self.stocha_size = opt.stocha_size
-        self.num_shots = opt.num_shots
         BaseModel.initialize(self, opt)  # ATTENTION HERE: NEED TO ALTER THE DEFAULT PLAN
         self.netG_I = networks.define_G(opt, opt.input_nc, opt.output_nc,
                                         opt.ngf, opt.which_model_netG_I, opt.norm, not opt.no_dropout, opt.init_type,
                                         opt.init_gain, self.gpu_ids)
-        self.netDensity = networks.define_G(opt, opt.input_nc, opt.output_nc,
-                                            32, 'density', opt.norm, not opt.no_dropout, opt.init_type,
-                                            opt.init_gain, self.gpu_ids)
-        self.netSampling = networks.define_G(opt, opt.input_nc, opt.output_nc,
-                                             32, 'sampling3D', opt.norm, not opt.no_dropout, opt.init_type,
-                                             opt.init_gain, self.gpu_ids)
 
         if self.isTrain:
             if self.train_phase == 'generator':
-                self.model_names = ['G_I', 'Density', 'Sampling']
-                self.loss_names = ['G_I_L1', 'G_I_L2', 'SSIM', 'PSNR', 'density', 'acc_ratio']
+                self.model_names = ['G_I']
+                self.loss_names = ['G_I_L1', 'G_I_L2', 'SSIM', 'PSNR']
             else:
-                self.model_names = ['G_I', 'D_I', 'Density', 'Sampling']
-                self.loss_names = ['G_GAN_I', 'G_I_L1', 'G_I_L2', 'D_GAN_I', 'SSIM', 'PSNR', 'density', 'acc_ratio']
+                self.model_names = ['G_I', 'D_I']
+                self.loss_names = ['G_GAN_I', 'G_I_L1', 'G_I_L2', 'D_GAN_I', 'SSIM', 'PSNR']
         else:  # during test time, only load Gs
-            self.model_names = ['G_I', 'Density', 'Sampling']
-            self.loss_names = ['SSIM', 'PSNR', 'acc_ratio']
+            self.model_names = ['G_I']
+            self.loss_names = ['SSIM', 'PSNR']
         if self.train_phase == 'generator':
-            self.visual_names = ['Ireal', 'Ifake', 'Preal', 'mask', 'density', 'kreal', 'ksimu', 'Iunder', 'ICG',
-                                 'k_simu_1']
+            self.visual_names = ['kreal', 'Ireal', 'Ifake', 'Iunder', 'mask', 'Preal']
         else:
-            self.visual_names = ['Ireal', 'Ifake', 'Preal', 'mask', 'density', 'kreal', 'ksimu', 'Iunder', 'ICG',
-                                 'k_simu_1']
+            self.visual_names = ['kreal', 'Ireal', 'Ifake', 'Iunder', 'mask', 'Preal']
 
         self.criterionL1 = torch.nn.L1Loss()
         self.criterionMSE = torch.nn.MSELoss()
         self.ssim_loss = pytorch_msssim.SSIM(val_range=2)
         if self.isTrain:
             self.optimizers = []
-            self.optimizer_G = torch.optim.Adam(list(
-                list(self.netG_I.parameters()) + list(self.netDensity.parameters()) + list(
-                    self.netSampling.parameters())),
-                lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_G = torch.optim.Adam(list((self.netG_I.parameters())),
+                                                lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
 
         if self.isTrain and self.train_phase == 'together':
@@ -86,16 +87,38 @@ class MODLModel(BaseModel):
             self.optimizers.append(self.optimizer_D_I)
 
     def set_input(self, input):
-        self.kreal = input['kreal'].to(self.device).repeat(self.stocha_size, 1, 1, 1, 1)
-        self.smap = input['smap'].to(self.device).repeat(self.stocha_size, 1, 1, 1, 1)
+        self.kreal = input['kreal'].to(self.device)
+        self.smap = input['smap'].to(self.device)
+        self.mask = input['mask'].to(self.device)
+
         self.AT = networks.OPAT(self.smap)
         self.A = networks.OPA(self.smap)
-        self.Ireal = self.AT(self.kreal, torch.ones_like(self.kreal)[:, 0, :, :, :])
-        # print('Irealsize', self.Ireal.size())
+        self.Ireal = self.AT(self.kreal, torch.ones_like(self.mask))
+        self.Iunder = self.AT(self.kreal, self.mask)
         self.Preal = torch.atan(self.Ireal[:, 1, :, :] / self.Ireal[:, 0, :, :]).unsqueeze(1)
-        self.single_idx_all = input['single']
-        self.ovlp_idx_all = input['ovlp']
-        self.path = input['path']
+
+    def backward_G(self):
+        # First, G(A) should fake the discriminator
+        if self.isTrain and self.train_phase == 'together':
+            if self.disc_model == 'pix2pix':
+                fake_AB_I = torch.cat((self.Ifake, self.Iunder), 1)
+                pred_fake_I = self.netD_I(fake_AB_I)
+            if self.disc_model == 'traditional':
+                pred_fake_I = self.netD_I(self.Ifake)
+            if self.no_wgan == False:
+                self.loss_G_GAN_I = -pred_fake_I.mean()
+            else:
+                self.loss_G_GAN_I = self.criterionGAN(pred_fake_I, True)
+        else:
+            self.loss_G_GAN_I = 0
+        self.loss_G_GAN_I = self.loss_G_GAN_I * self.opt.loss_GAN_I
+        self.loss_G_GAN = self.loss_G_GAN_I
+        self.loss_G_I_L1 = self.criterionL1(self.Ifake, self.Ireal) * self.opt.loss_content_I_l1
+        self.loss_G_I_L2 = self.criterionMSE(self.Ifake, self.Ireal) * self.opt.loss_content_I_l2
+        self.loss_G_CON_I = self.loss_G_I_L1 + self.loss_G_I_L2
+
+        self.loss_G = self.loss_G_CON_I + self.loss_G_GAN - self.loss_SSIM * self.opt.loss_ssim
+        self.loss_G.backward()
 
     def backward_D(self):
         if self.disc_model == 'pix2pix':
@@ -119,77 +142,22 @@ class MODLModel(BaseModel):
         else:
             self.loss_D_GAN_fake_I = self.criterionGAN(pred_fake_I, False)
             self.loss_D_GAN_real_I = self.criterionGAN(pred_real_I, True)
-        # print('dfake',self.loss_D_GAN_fake_I)
-        # print('dreal',self.loss_D_GAN_real_I)
         self.loss_D_GAN_I = 0.5 * (self.loss_D_GAN_fake_I + self.loss_D_GAN_real_I) * self.opt.loss_GAN_I
-        self.loss_D_GAN = self.loss_D_GAN_I
+        self.loss_D_GAN = self.loss_D_GAN_I * self.opt.beta
         if self.no_wgan_gp == False:
             self.loss_D_GAN = self.loss_D_GAN + self.d_loss_gp_I
 
         self.loss_D_GAN.backward()
 
-    def backward_G(self):
-        # First, G(A) should fake the discriminator
-        if self.isTrain and self.train_phase == 'together':
-            if self.disc_model == 'pix2pix':
-                fake_AB_I = torch.cat((self.Ifake, self.Iunder), 1)
-                pred_fake_I = self.netD_I(fake_AB_I)
-            if self.disc_model == 'traditional':
-                pred_fake_I = self.netD_I(self.Ifake)
-            if self.no_wgan == False:
-                self.loss_G_GAN_I = -pred_fake_I.mean()
-            else:
-                self.loss_G_GAN_I = self.criterionGAN(pred_fake_I, True)
-        else:
-            self.loss_G_GAN_I = 0
-        # print('greal',self.loss_G_GAN_I)
-        self.loss_G_GAN_I = self.loss_G_GAN_I * self.opt.loss_GAN_I
-        self.loss_G_GAN = self.loss_G_GAN_I
-        self.loss_G_I_L1 = self.criterionL1(self.Ifake, self.Ireal) * self.opt.loss_content_I_l1
-        self.k_simu_1 = fft2(torch.abs(self.Ifake - self.Ireal).permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-        self.loss_G_I_L2 = self.criterionMSE(self.Ifake, self.Ireal) * self.opt.loss_content_I_l2
-        self.loss_density = self.criterionMSE(self.density, torch.zeros_like(self.density)) * self.opt.beta
-        self.loss_G_CON_I = self.loss_G_I_L1 + self.loss_G_I_L2
-        # print('con',self.loss_G_CON_I)
-        # print('maxI', torch.max(self.Ireal))
-        # if torch.isnan(self.loss_G_CON_I).data:
-        #     sys.exit()
-        # if (self.loss_G_I_L1>5).data:
-        #     print(self.path)
-        #     if 'Layer15' in self.path[0] or 'Layer1.npz' in self.path[0]:
-        #         os.remove(self.path[0])
-        #     else:
-        #         sys.exit()
-        # if (self.loss_G_I_L1>8).data:
-        #     os.remove(self.path[0])
-        #     print(self.path)
-        #     # sys.exit()
-        self.loss_G = self.loss_G_CON_I + self.loss_G_GAN - self.loss_SSIM * self.opt.loss_ssim + self.loss_density
-        self.loss_G.backward()
-
     def forward(self):
-        self.density = self.netDensity(torch.ones(1, 1, self.opt.nx, self.opt.ny))
-        # print('maxdensity', torch.max(self.density),'mindensity', torch.min(self.density))
-        self.ksimu, self.mask = self.netSampling(self.density, self.kreal, self.single_idx_all.squeeze(0),
-                                                 self.ovlp_idx_all.squeeze(0))
-        self.mask = (self.mask > 0.5).to(dtype=self.mask.dtype)
-        # self.k_simu_1 = self.ksimu-self.kreal*self.mask.repeat(self.smap.size(1), 1, 1, 1, 1).permute(1, 0, 2, 3, 4)
-        self.Iunder = self.AT(self.ksimu, self.mask)
-        # self.Iunder1 = self.AT(self.ksimu, torch.ones_like(self.mask))
-        # self.Iunder2 = self.AT(self.kreal, self.mask)
-        Ifake1 = torch.clone(self.Iunder)
-        CG = networks.CG.apply
-        self.loss_acc_ratio = (torch.sum(self.mask > -1).double()) / torch.sum(self.mask > 0.5)
-        for ii in range(self.opt.num_blocks):
-            Ifake = self.netG_I(Ifake1)
-            Ifake1 = CG(Ifake, self.opt.MODLtol, self.opt.MODLLambda, self.smap, self.mask, self.Iunder)
-            if ii == 0:
-                self.ICG = Ifake
-            # Ifake1 = self.netG_I(Ifake1)
-            # self.ICG = Ifake1
+        Ifake = self.netG_I(self.Iunder)
 
-        self.Ifake = Ifake1
-        self.Pfake = torch.atan(self.Ifake[:, 1, :, :] / self.Ifake[:, 0, :, :]).unsqueeze(1)
+        for ii in range(self.opt.num_blocks):
+            Ifake1 = self.netG_I(Ifake)
+            CG = networks.CG.apply
+            Ifake = CG(Ifake1, self.opt.MODLtol, self.opt.MODLLambda, self.smap, self.mask, self.Iunder)
+        self.Ifake = Ifake
+
         self.loss_PSNR = PSNR(self.Ireal, self.Ifake)
         self.loss_SSIM = self.ssim_loss(self.Ireal, self.Ifake)
 
