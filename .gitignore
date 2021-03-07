@@ -1,0 +1,39 @@
+*
+
+# except
+!.gitignore
+!*.m
+!*.h
+!*.c
+!*.cpp
+!*.txt
+!*.md
+!*.py
+!*.pdf
+!*.rst
+!*.ipynb
+!*.npz
+
+# and specific files
+!docs/Makefile
+!docs/make.bat
+
+# even if in sub-dirs
+!*/
+
+# but never in these folders
+*.egg-info/
+*.ipynb_checkpoints/
+*back/
+*arch/
+*.vscode/
+*.idea/
+*tmp/
+*temp/
+*.vector_cache/
+*data/
+*prof/
+*build/
+*dist/
+*.pyc
+
