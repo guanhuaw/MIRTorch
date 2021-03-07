@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.fft import fftn, ifftn
-from linear import LinearMap
+from mirtorch.linear import LinearMap
 
 def fftshift(x: Tensor, dims=None):
     """
