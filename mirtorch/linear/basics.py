@@ -9,8 +9,9 @@ import torch.nn.functional as F
 import copy
 import numpy as np
 from .linearmaps import LinearMap, check_device
-from typing import Union, Sequence, TypeVar
+from typing import Sequence
 from torch import Tensor
+from mirtorch.util.sig import finitediff, finitediff_adj
 
 
 
@@ -259,50 +260,3 @@ class DiffFunc_adj(torch.autograd.Function):
         return finitediff(dx, ctx.dim), None
 
 
-def finitediff(x, dim=-1):
-    """
-    Apply finite difference operator on a certain dim
-    Args:
-        x: input data
-        dim: dimension to apply the operator
-    Returns:
-        Diff(x)
-    """
-    len_dim = x.shape[dim]
-    return torch.narrow(x, dim, 1, len_dim - 1) - torch.narrow(x, dim, 0, len_dim - 1)
-
-
-def finitediff_adj(y, dim=-1):
-    """
-    Apply finite difference operator on a certain dim
-    Args:
-        y: input data
-        dim: dimension to apply the operator
-    Returns:
-        Diff'(x)
-    """
-    len_dim = y.shape[dim]
-    return torch.cat(
-        (-torch.narrow(y, dim, 0, 1), (torch.narrow(y, dim, 0, len_dim - 1) - torch.narrow(y, dim, 1, len_dim - 1)),
-         torch.narrow(y, dim, len_dim - 1, 1)),
-        dim=dim)
-
-# class Smoothing1d(LinearMap):
-#     def __init__(self, size_in, size_out, device):
-#         super(Smoothing1d, self).__init__(size_in, size_out)
-
-#     def _apply(self, x):
-#         pass
-
-#     def _apply_adjoint(self, x):
-#         pass
-
-# class Smoothing2d(LinearMap):
-#     def __init__(self, size_in, size_out, device):
-#         super(Smoothing2d, self).__init__(size_in, size_out)
-
-#     def _apply(self, x):
-#         pass
-
-#     def _apply_adjoint(self, x):
-#         pass

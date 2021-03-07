@@ -4,7 +4,8 @@ Linear Operator implementations, based on SigPy(https://github.com/mikgroup/sigp
 
 2021-02. Guanhua Wang and Keyue Zhu, University of Michigan
 
-    Recommendation for linear operation:
+    Recommendation for linear operation：
+    (but you do have to do this if the BP is efficient).
      class forward(torch.autograd.Function):
         @staticmethod
         def forward(ctx, data_in):

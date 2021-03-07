@@ -8,39 +8,13 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.fft import fftn, ifftn
-from .linearmaps import LinearMap, check_device
+from .linearmaps import LinearMap
 import torchkbnufft as tkbn
-from typing import Union, Sequence, TypeVar
+from typing import Union, Sequence
+from mirtorch.util.sig import fftshift, ifftshift
 
 
-# To Do: frame operator
 
-def fftshift(x: Tensor, dims=None):
-    """
-    Similar to np.fft.fftshift but applies to PyTorch tensors. From fastMRI code.
-    """
-    if dims is None:
-        dims = tuple(range(x.dim()))
-        shifts = [dim // 2 for dim in x.shape]
-    elif isinstance(dims, int):
-        shifts = x.shape[dims] // 2
-    else:
-        shifts = [x.shape[i] // 2 for i in dims]
-    return torch.roll(x, shifts, dims)
-
-
-def ifftshift(x: Tensor, dims=None):
-    """
-    Similar to np.fft.ifftshift but applies to PyTorch tensors. From fastMRI code.
-    """
-    if dims is None:
-        dims = tuple(range(x.dims()))
-        shifts = [(dim + 1) // 2 for dim in x.shape]
-    elif isinstance(dims, int):
-        shifts = (x.shape[dims] + 1) // 2
-    else:
-        shifts = [(x.shape[i] + 1) // 2 for i in dims]
-    return torch.roll(x, shifts, dims)
 
 
 class FFTCn(LinearMap):

@@ -1,10 +1,9 @@
 import argparse
 import os
-from mirtorch.learning.util import util
+from util import util
 import torch
-from mirtorch import learning
-import mirtorch.learning.data
-
+import models
+import data
 
 
 class BaseOptions():
@@ -97,8 +96,8 @@ class BaseOptions():
         parser.add_argument('--ReconVSTraj', type=int, default=10, help='how many updates of recon against sampling')
         parser.add_argument('--no_global_residual', action='store_true', help='add residual connection for unet/didn')
         parser.add_argument('--padding', type=int, default=40, help='how many padding for the b-spline kernels')
-        parser.add_argument('--gradmax', type=float, default=5, help='maximum gradient')
-        parser.add_argument('--slewmax', type=float, default=20000, help='maximum slewrate')
+        parser.add_argument('--didn_blocks', type=int, default=3, help='')
+
         self.initialized = True
         return parser
 
@@ -114,13 +113,13 @@ class BaseOptions():
 
         # modify model-related parser options
         model_name = opt.model
-        model_option_setter = learning.model.get_option_setter(model_name)
+        model_option_setter = models.get_option_setter(model_name)
         parser = model_option_setter(parser, self.isTrain)
         opt, _ = parser.parse_known_args()  # parse again with the new defaults
 
         # modify dataset-related parser options
         dataset_name = opt.dataset_mode
-        dataset_option_setter = mirtorch.learning.data.get_option_setter(dataset_name)
+        dataset_option_setter = data.get_option_setter(dataset_name)
         parser = dataset_option_setter(parser, self.isTrain)
 
         self.parser = parser
