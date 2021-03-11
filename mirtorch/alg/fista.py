@@ -16,7 +16,7 @@ class FISTA():
     def _update(self, iter):
         step_prev = self.step
         self.step = (1 + np.sqrt(1 + 4*step_prev*step_prev))/2
-        self.momentum = (1-step_prev)/(1+step_prev)
+        self.momentum = (step_prev-1)/self.step
 
     def run_alg(self, x0):
         x_curr = x0
