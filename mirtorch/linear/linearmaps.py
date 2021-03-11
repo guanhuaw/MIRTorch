@@ -79,11 +79,11 @@ class LinearMap:
         raise NotImplementedError
 
     def apply(self, x) -> Tensor:
-        assert list(x.shape) == list(self.size_in), "Shape of input data and forward linear op do not match!"
+        assert list(x.shape) == list(self.size_in), f"Shape of input data {x.shape} and forward linear op {self.size_in} do not match!"
         return self._apply(x)
 
     def adjoint(self, x) -> Tensor:
-        assert list(x.shape) == list(self.size_out), "Shape of input data and adjoint linear op do not match!"
+        assert list(x.shape) == list(self.size_out), f"Shape of input data {x.shape} and adjoint linear op {self.size_in} do not match!"
         return self._apply_adjoint(x)
 
     @property
