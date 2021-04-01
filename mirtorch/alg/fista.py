@@ -21,7 +21,7 @@ class FISTA():
         self.grad = fgrad
         self.Lf = Lf
         self.prox = prox
-        if not restart:
+        if restart:
             raise NotImplementedError
         self.restart = restart
     
