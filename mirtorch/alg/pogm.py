@@ -15,12 +15,16 @@ class POGM():
         self.restart = restart
 
 
-    def update_params(tk_prev, iter):
+    def update_params(self, tk_prev, iter):
+        assert(iter >= 2)
+        tk = None
         if iter >= 2 and iter < self.max_iter:
             mult = 4
         elif iter == self.max_iter:
             mult = 8
-        tk = .5 * (1 + np.sqrt(mult * tk_prev * tk_prev + 1))
+        else:
+            tk = tk_prev
+        tk = tk if tk is not None else .5 * (1 + np.sqrt(mult * tk_prev * tk_prev + 1))
         gk = 1/self.Lf * (2*tk_prev + tk - 1)/tk
         return tk, gk
 
@@ -30,7 +34,7 @@ class POGM():
         w_curr = x0
         z_curr = x0
         tk = 1
-        gk = 1
+        gk = float(1)
         for i in range(self.max_iter):
             tk_prev = tk
             gk_prev = gk
@@ -39,20 +43,20 @@ class POGM():
             #dont need to set x_prev because x is updated last
 
             #update params theta, gamma
-            tk, gk = self.update_params(tk_prev, i+1)
+            tk, gk = self.update_params(tk_prev, i+2)
 
             #update w
             w_curr = x_curr - 1/self.Lf*self.grad(x_curr)
 
             #update z
-            z_curr = w_curr + (tk_prev-1)/tk * (w_curr - w_prev) 
-            z_curr += tk_prev/tk * (w_curr - x_curr) 
+            z_curr = w_curr + (tk_prev-1)/tk * (w_curr - w_prev)
+            z_curr += tk_prev/tk * (w_curr - x_curr)
             z_curr += (tk_prev-1)/(self.Lf*gk_prev*tk) * (z_prev - x_curr)
 
             #update x
-            self.prox.Lambda = gk
+            self.prox.Lambda = gk if type(gk) is float else float(gk.item())
             x_curr = self.prox(z_curr)
-            
+
         return x_curr
 
 
