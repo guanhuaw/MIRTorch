@@ -14,9 +14,6 @@ from typing import Union, Sequence
 from mirtorch.util.sig import fftshift, ifftshift
 
 
-
-
-
 class FFTCn(LinearMap):
     '''
     FFT operators with FFTshift and iFFTshift for multidimensional data.
@@ -235,8 +232,10 @@ class Gmri(LinearMap):
                                           numpoints=numpoints).to(smaps)
             size_in = [self.nbatch] + list(smaps.shape[2:])
             size_out = (self.nbatch, self.nc, self.nshot, self.npoints)
-            self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(self.smaps.device) * 1j  # [L, batch, coil, shot, points]
-            self.C = torch.zeros((self.L, self.nbatch) + tuple(self.smaps.shape[2:])).to(self.smaps.device) * 1j  # [L, batch, nx, ny ...]
+            self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(
+                self.smaps.device) * 1j  # [L, batch, coil, shot, points]
+            self.C = torch.zeros((self.L, self.nbatch) + tuple(self.smaps.shape[2:])).to(
+                self.smaps.device) * 1j  # [L, batch, nx, ny ...]
             for ib in range(self.nbatch):
                 b, c = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, dt, dt * self.npoints)
                 self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
@@ -246,7 +245,7 @@ class Gmri(LinearMap):
         super(Gmri, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
 
     def _apply(self, x: Tensor) -> Tensor:
-        y = torch.zeros(self.size_out).to(self.smaps.device)*1j
+        y = torch.zeros(self.size_out).to(self.smaps.device) * 1j
         for il in range(self.L):
             if self.traj is not None:
                 y = y + self.B[il] * self.A(x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm).reshape(
@@ -254,7 +253,7 @@ class Gmri(LinearMap):
         return y
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
-        x = torch.zeros(self.size_in).to(self.smaps.device)*1j
+        x = torch.zeros(self.size_in).to(self.smaps.device) * 1j
         for il in range(self.L):
             if self.traj is not None:
                 x = x + self.C[il].conj() * self.AT(
