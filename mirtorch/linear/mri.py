@@ -11,7 +11,7 @@ from torch.fft import fftn, ifftn
 from .linearmaps import LinearMap
 import torchkbnufft as tkbn
 from typing import Union, Sequence
-from mirtorch.util.sig import fftshift, ifftshift
+from .util import fftshift, ifftshift
 
 
 class FFTCn(LinearMap):

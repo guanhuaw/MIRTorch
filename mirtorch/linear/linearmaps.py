@@ -5,7 +5,7 @@ Linear Operator implementations, based on SigPy(https://github.com/mikgroup/sigp
 2021-02. Guanhua Wang and Keyue Zhu, University of Michigan
 
     Recommendation for linear operation：
-    (but you do have to do this if the BP is efficient).
+    (but you do not have to do this if the BP is efficient enough).
      class forward(torch.autograd.Function):
         @staticmethod
         def forward(ctx, data_in):
@@ -75,15 +75,17 @@ class LinearMap:
     def _apply_adjoint(self, x) -> Tensor:
         raise NotImplementedError
 
-    def _apply_frame(self, x:Tensor) -> Tensor:
+    def _apply_frame(self, x: Tensor) -> Tensor:
         raise NotImplementedError
 
     def apply(self, x) -> Tensor:
-        assert list(x.shape) == list(self.size_in), f"Shape of input data {x.shape} and forward linear op {self.size_in} do not match!"
+        assert list(x.shape) == list(
+            self.size_in), f"Shape of input data {x.shape} and forward linear op {self.size_in} do not match!"
         return self._apply(x)
 
     def adjoint(self, x) -> Tensor:
-        assert list(x.shape) == list(self.size_out), f"Shape of input data {x.shape} and adjoint linear op {self.size_in} do not match!"
+        assert list(x.shape) == list(
+            self.size_out), f"Shape of input data {x.shape} and adjoint linear op {self.size_in} do not match!"
         return self._apply_adjoint(x)
 
     @property

@@ -8,12 +8,10 @@ import torch
 import torch.nn.functional as F
 import copy
 import numpy as np
-from .linearmaps import LinearMap, check_device
+from .linearmaps import LinearMap
 from typing import Sequence
 from torch import Tensor
-from mirtorch.util.sig import finitediff, finitediff_adj
-
-
+from .util import DiffFunc, DiffFunc_adj, dim_conv
 
 
 class Diff1d(LinearMap):
@@ -41,7 +39,7 @@ class Diff1d(LinearMap):
         return DiffFunc_adj.apply(y, self.dim)
 
 
-# The implementation here is not correct!
+#
 # class Diff2d(LinearMap):
 #     def __init__(self,
 #                  size_in: Sequence[int],
@@ -62,9 +60,13 @@ class Diff1d(LinearMap):
 
 
 class Diff2dframe(LinearMap):
+    """
+    A little more efficient way to implement the frame operator for the Gram of finite difference.
+    Warning: assuming the last two dimensions is of interest.
+    """
+
     def __init__(self,
-                 size_in: Sequence[int],
-                 dim: Sequence[int]):
+                 size_in: Sequence[int]):
         super(Diff2dframe, self).__init__(size_in, size_in)
 
     def RtR(self, x):
@@ -117,11 +119,17 @@ class Convolve1d(LinearMap):
     """
         1D cross-correlation linear map.
     """
-    def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
+
+    def __init__(self,
+                 size_in: Sequence[int],
+                 weight: Tensor,
+                 bias=None,
+                 stride: int = 1,
+                 padding: int = 0,
+                 dilation: int = 1):
         # only weight and input size
         assert len(list(size_in)) == 3, "input must have the shape (minibatch, in_channels, iW)"
         assert len(list(weight.shape)) == 3, "weight must have the shape (out_channels, in_channels, kW)"
-        assert device == weight.device, "Tensors should be on the same device"
         minimatch, _, iW = size_in
         out_channel, _, kW = weight.shape
         assert iW >= kW, "Kernel size can't be greater than actual input size"
@@ -133,15 +141,12 @@ class Convolve1d(LinearMap):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.device = device
 
     def _apply(self, x):
-        check_device(self, x)
         return F.conv1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
                         dilation=self.dilation)
 
     def _apply_adjoint(self, x):
-        check_device(self, x)
         return F.conv_transpose1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
                                   dilation=self.dilation)
 
@@ -150,10 +155,16 @@ class Convolve2d(LinearMap):
     """
         2D cross-correlation linear map.
     """
-    def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
+
+    def __init__(self,
+                 size_in: Sequence[int],
+                 weight: Tensor,
+                 bias=None,
+                 stride: int = 1,
+                 padding: int = 0,
+                 dilation: int = 1):
         assert len(list(size_in)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
         assert len(list(weight.shape)) == 4, "weight must have the shape (out_channels, in_channels, kH, kW)"
-        assert device == weight.device, "Tensors should be on the same device"
         minimatch, _, iH, iW = size_in
         out_channel, _, kH, kW = weight.shape
         assert iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
@@ -175,15 +186,12 @@ class Convolve2d(LinearMap):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.device = device
 
     def _apply(self, x):
-        check_device(self, x)
         return F.conv2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
                         dilation=self.dilation)
 
     def _apply_adjoint(self, x):
-        check_device(self, x)
         return F.conv_transpose2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
                                   dilation=self.dilation)
 
@@ -192,10 +200,16 @@ class Convolve3d(LinearMap):
     """
         3D cross-correlation linear map.
     """
-    def __init__(self, size_in, weight, bias=None, stride=1, padding=0, dilation=1, device='cuda:0'):
+
+    def __init__(self,
+                 size_in: Sequence[int],
+                 weight: Tensor,
+                 bias=None,
+                 stride: int = 1,
+                 padding: int = 0,
+                 dilation: int = 1):
         assert len(list(size_in)) == 5, "input must have the shape (minibatch, in_channels, iD, iH, iW)"
         assert len(list(weight.shape)) == 5, "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
-        assert device == weight.device, "Tensors should be on the same device"
         minimatch, _, iD, iH, iW = size_in
         out_channel, _, kD, kH, kW = weight.shape
         assert iD >= kD and iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
@@ -218,46 +232,95 @@ class Convolve3d(LinearMap):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.device = device
 
     def _apply(self, x):
-        check_device(self, x)
         return F.conv3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
                         dilation=self.dilation)
 
     def _apply_adjoint(self, x):
-        check_device(self, x)
         return F.conv_transpose3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
                                   dilation=self.dilation)
 
 
-class DiffFunc(torch.autograd.Function):
-    '''
-        autograd.Function for the 1st-order finite difference operators
-    '''
+class Patch2D(LinearMap):
+    """
+        Patch operator to decompose image into blocks
+        Parameters:
+            kernel_size: int, isotropic kernel size
+            stride: int, size of stride
+        Input:
+            x: [nbatch, nchannel, nx, ny]
+        Return:
+            y: [nbatch, nchannel, npatchx, npatchy, kernel_size, kernel_size]
+    """
 
-    @staticmethod
-    def forward(ctx, x, dim):
-        ctx.dim = dim
-        return finitediff(x, dim)
+    def __init__(self,
+                 size_in: Sequence[int],
+                 size_kernel: int,
+                 stride: int = 1):
+        self.size_in = size_in
+        self.size_kernel = size_kernel
+        self.stride = stride
+        self.npatchx = dim_conv(size_in[2], size_kernel, stride)
+        self.npatchy = dim_conv(size_in[3], size_kernel, stride)
+        self.size_out = (size_in[0], size_in[1], self.npatchx, self.npatchy, size_kernel, size_kernel)
+        super(Patch2D, self).__init__(self.size_in, self.size_out)
 
-    @staticmethod
-    def backward(ctx, dx):
-        return finitediff_adj(dx, ctx.dim), None
+    def _apply(self, x) -> Tensor:
+        return x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).contiguous()
+
+    def _apply_adjoint(self, x) -> Tensor:
+        # Permute to [nbatch, nchannel, kernel_size, kernel_size, npatchx, npatchy]
+        x = x.permute(0, 1, 4, 5, 2, 3)
+        # reshape
+        x = x.reshape(self.size_in[0], self.size_in[1] * self.size_kernel * self.size_kernel,
+                      self.npatchx * self.npatchy)
+        x = F.fold(x, output_size=self.size_in[2:], kernel_size=self.size_kernel, stride=self.stride)
+        return x
 
 
-class DiffFunc_adj(torch.autograd.Function):
-    '''
-        autograd.Function for the 1st-order finite difference operators
-    '''
+class Patch3D(LinearMap):
+    """
+        Patch operator to decompose 3D image into patches.
+        Parameters:
+            kernel_size: isotropic kernel size
+            stride: size of stride
+        Input:
+            x: [nbatch, nchannel, nx, ny, nz]
+        Return:
+            y: [nbatch, nchannel, npatchx, npatchy, npatchz, kernel_size, kernel_size, kernel_size]
+    """
 
-    @staticmethod
-    def forward(ctx, x, dim):
-        ctx.dim = dim
-        return finitediff_adj(x, dim)
+    def __init__(self,
+                 size_in: Sequence[int],
+                 size_kernel: int,
+                 stride: int = 1):
+        self.size_in = size_in
+        self.size_kernel = size_kernel
+        self.stride = stride
+        self.npatchx = dim_conv(size_in[2], size_kernel, stride)
+        self.npatchy = dim_conv(size_in[3], size_kernel, stride)
+        self.npatchz = dim_conv(size_in[4], size_kernel, stride)
+        self.size_out = (
+        size_in[0], size_in[1], self.npatchx, self.npatchy, self.npatchz, size_kernel, size_kernel,
+        size_kernel)
+        super(Patch3D, self).__init__(self.size_in, self.size_out)
 
-    @staticmethod
-    def backward(ctx, dx):
-        return finitediff(dx, ctx.dim), None
-
-
+    def _apply(self, x) -> Tensor:
+        return x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).unfold(4,
+                                                                                                          self.size_kernel,
+                                                                                                          self.stride).contiguous()
+    def _apply_adjoint(self, x) -> Tensor:
+        # This code is following https://discuss.pytorch.org/t/how-to-extract-smaller-image-patches-3d/16837/71
+        # Pytorch's fold only supports 2d, though it actually has vol2im function ...
+        # First, do the fold on the last two dimensions
+        # Permute to [nbatch, nchannel, kernel_size, npatchx, kernel_size, kernel_size, npatchy, npatchz]
+        x = x.permute(0, 1, 5, 2, 6, 7, 3, 4).reshape(self.size_in[0],self.size_in[1]*self.npatchx*self.size_kernel**3, self.npatchy*self.npatchz)
+        x = F.fold(x, output_size=self.size_in[3:], kernel_size=self.size_kernel, stride=self.stride)
+        # New shape: [nbatch, nchannel. kernel_size*npatchx, ny, nz]
+        # Now let's move on to the first dimension
+        x = x.reshape(self.size_in[0],self.size_in[1]*self.size_kernel, -1)
+        # [nbatch, nchannel*kernel_size, npatchx*ny*nz]
+        x = F.fold(x, output_size=(self.size_in[2], self.size_in[3]*self.size_in[4]), kernel_size=(self.size_kernel,1), stride=(self.stride,1))
+        x = x.reshape(self.size_in)
+        return x
