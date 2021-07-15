@@ -90,6 +90,45 @@ class L1Regularizer(Prox):
             x = self._softshrink(v, self.Lambda.to(v.device))
         return x
 
+class L0Regularizer(Prox):
+    r"""
+    Proximal operator for L0 regularizer, using hard thresholding
+
+    .. math::
+        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \lambda \| PTx \|_0
+
+    Args:
+        Lambda (float): regularization parameter.
+        P (LinearMap): optional, diagonal LinearMap
+        T (LinearMap): optional, unitary LinearMap
+    """
+
+
+    def __init__(self, Lambda, T = None, P = None):
+        super().__init__(T, P)
+        self.Lambda = float(Lambda)
+        if P is not None:
+            # Should this be v.shape instead of P.size_in? TODO: Verify this through test
+            self.Lambda = P(Lambda*torch.ones(P.size_in))
+
+    def _hardshrink(x, lambd):
+        mask1 = x > lambd
+        mask2 = x < -lambd
+        out = torch.zeros_like(x)
+        out += mask1.float() * x
+        out += mask2.float() * x
+        return out
+
+    def _apply(self, v):
+        if type(self.Lambda) is not torch.Tensor:
+            # The hardthreshold function do not support tensor as Lambda.
+            thresh = torch.nn.Hardshrink(self.Lambda)
+            x = thresh(v)
+        else:
+            x = self._hardshrink(v, self.Lambda.to(v.device))
+        return x
+
+
 class L2Regularizer(Prox):
     r"""
     Proximal operator for L2 regularizer
