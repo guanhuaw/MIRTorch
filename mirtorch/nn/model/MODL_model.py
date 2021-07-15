@@ -4,8 +4,7 @@ Basic MoDL for MRI reconstruction. More general version with LinearMap is being 
 
 
 import torch
-import itertools
-from mirtorch.util.image_pool import ImagePool
+from mirtorch.nn.util import ImagePool
 from .base_model import BaseModel
 from . import networks
 import pytorch_msssim

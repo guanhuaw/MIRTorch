@@ -4,7 +4,6 @@ import ntpath
 import time
 from . import util
 from . import html
-from . import metrics
 from PIL import Image
 
 # save image to the disk

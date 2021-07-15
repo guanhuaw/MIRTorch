@@ -38,25 +38,7 @@ def SSIM(img1, img2,device):
 
 	ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2))/((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
 	return ssim_map.mean()
-	
-# def PSNR(img1, img2):
-# 	img1 = util.tensor2im(img1)
-# 	img2 = util.tensor2im(img2)
-# 	mse = np.mean( (img1/255. - img2/255.) ** 2 )
-# 	if mse == 0:
-# 		return 100
-# 	# Should be changed afterward
-# 	PIXEL_MAX = 1
-# 	return 20 * math.log10(PIXEL_MAX / math.sqrt(mse))
 
 def PSNR(img1, img2):
 	mse = torch.mean(torch.pow(img1 - img2, 2))*2
 	return 10*torch.log10(torch.pow(torch.max(absolute(img1,1)),2)/mse).clone().cpu().detach().numpy().item()
-
-# def PSNR(img1, img2):
-# 	mse = torch.mean(torch.pow(img1 - img2, 2))
-# 	return 10*torch.log10(torch.pow(torch.max(torch.abs(img1)),2)/mse).clone().cpu().detach().numpy().item()
-
-def roll_2(im, n):
-    x = torch.cat((im[:,:,-n:,:], im[:,:,:-n,:]), dim=2)
-    return torch.cat((x[:,:,:, -n:], x[:,:,:,:-n]), dim=3)

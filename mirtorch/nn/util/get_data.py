@@ -20,7 +20,7 @@ class GetData(object):
             If True, print additional information.
 
     Examples:
-        >>> from util.get_data import GetData
+        >>> from get_data import GetData
         >>> gd = GetData(technique='cyclegan')
         >>> new_data_path = gd.get(save_path='./datasets')  # options will be displayed.
 

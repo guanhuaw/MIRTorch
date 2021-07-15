@@ -2,7 +2,6 @@ import torch
 from torch import Tensor
 from typing import Union, Sequence
 
-
 def finitediff(x: Tensor, dim: int = -1):
     """
     Apply finite difference operator on a certain dim
