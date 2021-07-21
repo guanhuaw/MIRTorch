@@ -5,4 +5,4 @@
 from .soup import SOUPDIL
 from .omp import OMP
 
-__all__ = ["SOUPDIL", "OMP"]
+__all__ = ["soupdil.py", "omp.py"]

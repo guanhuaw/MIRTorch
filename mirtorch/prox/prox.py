@@ -203,8 +203,8 @@ class BoxConstraint(Prox):
         self.Lambda = float(Lambda)
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
-            self.l = l / self.Lambda
-            self.u = u / self.Lambda
+            self.l = self.l / self.Lambda
+            self.u = self.u / self.Lambda
 
 
     def _apply(self, v):
