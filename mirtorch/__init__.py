@@ -1,6 +1,5 @@
 from mirtorch import prox
 from mirtorch import linear
-from mirtorch import learning
-from mirtorch import util
+from mirtorch import nn
 
-__all__ = ['linear', 'prox', 'linear', 'util']
+__all__ = ['linear', 'prox', 'alg', 'nn', 'dic']

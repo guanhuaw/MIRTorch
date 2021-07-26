@@ -20,12 +20,12 @@ class TestBasic(unittest.TestCase):
         assert(torch.allclose(out, exp, rtol=1e-3))
 
     def test_conv1d_apply_simple(self):
-        x = torch.randn(20, 16, 50)
+        x = torch.randn(1, 16, 50)
         weight = torch.randn(33, 16, 3)
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         x, weight = x.to(device), weight.to(device)
 
-        conv = basics.Convolve1d(x.shape, weight, device=device)
+        conv = basics.Convolve1d(x.shape, weight)
         out = conv.apply(x)
 
         # exp = F.conv1d(x, weight)
@@ -41,7 +41,7 @@ class TestBasic(unittest.TestCase):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         x, weight = x.to(device), weight.to(device)
 
-        conv = basics.Convolve2d(x.shape, weight, device=device)
+        conv = basics.Convolve2d(x.shape, weight)
         out = conv.apply(x)
 
         # exp = F.conv2d(x, weight)
@@ -57,7 +57,7 @@ class TestBasic(unittest.TestCase):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         x, weight = x.to(device), weight.to(device)
 
-        conv = basics.Convolve3d(x.shape, weight, device=device)
+        conv = basics.Convolve3d(x.shape, weight)
         out = conv.apply(x)
 
         exp = F.conv3d(x, weight)
@@ -70,7 +70,7 @@ class TestBasic(unittest.TestCase):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         x, weight, bias = x.to(device), weight.to(device), bias.to(device)
 
-        conv = basics.Convolve1d(x.shape, weight, bias=bias, stride=2, padding=1, dilation=2, device=device)
+        conv = basics.Convolve1d(x.shape, weight, bias=bias, stride=2, padding=1, dilation=2)
         out = conv.apply(x)
 
         exp = F.conv1d(x, weight, bias=bias, stride=2, padding=1, dilation=2)
@@ -83,7 +83,7 @@ class TestBasic(unittest.TestCase):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         x, weight, bias = x.to(device), weight.to(device), bias.to(device)
 
-        conv = basics.Convolve2d(x.shape, weight, bias=bias, stride=3, padding=2, dilation=2, device=device)
+        conv = basics.Convolve2d(x.shape, weight, bias=bias, stride=3, padding=2, dilation=2)
         out = conv.apply(x)
 
         exp = F.conv2d(x, weight, bias=bias, stride=3, padding=2, dilation=2)
@@ -96,7 +96,7 @@ class TestBasic(unittest.TestCase):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         x, weight, bias = x.to(device), weight.to(device), bias.to(device)
 
-        conv = basics.Convolve3d(x.shape, weight, bias=bias, stride=3, padding=3, dilation=4, device=device)
+        conv = basics.Convolve3d(x.shape, weight, bias=bias, stride=3, padding=3, dilation=4)
         out = conv.apply(x)
 
         exp = F.conv3d(x, weight, bias=bias, stride=3, padding=3, dilation=4)
@@ -109,7 +109,7 @@ class TestBasic(unittest.TestCase):
         x, weight = x.to(device), weight.to(device)
 
         Ax = F.conv1d(x, weight)
-        conv = basics.Convolve1d(x.shape, weight, device=device)
+        conv = basics.Convolve1d(x.shape, weight)
         out = conv.adjoint(Ax)
 
         exp = F.conv_transpose1d(Ax, weight)
@@ -122,7 +122,7 @@ class TestBasic(unittest.TestCase):
         x, weight = x.to(device), weight.to(device)
 
         Ax = F.conv2d(x, weight)
-        conv = basics.Convolve2d(x.shape, weight, device=device)
+        conv = basics.Convolve2d(x.shape, weight)
         out = conv.adjoint(Ax)
 
         exp = F.conv_transpose2d(Ax, weight)
@@ -135,7 +135,7 @@ class TestBasic(unittest.TestCase):
         x, weight = x.to(device), weight.to(device)
 
         Ax = F.conv3d(x, weight)
-        conv = basics.Convolve3d(x.shape, weight, device=device)
+        conv = basics.Convolve3d(x.shape, weight)
         out = conv.adjoint(Ax)
 
         exp = F.conv_transpose3d(Ax, weight)
@@ -149,12 +149,59 @@ class TestBasic(unittest.TestCase):
         x, weight, bias = x.to(device), weight.to(device), bias.to(device)
 
         Ax = F.conv1d(x, weight, stride=2, padding=1, dilation=2)
-        conv = basics.Convolve1d(x.shape, weight, bias=bias, stride=2, padding=1, dilation=2, device=device)
+        conv = basics.Convolve1d(x.shape, weight, bias=bias, stride=2, padding=1, dilation=2)
         out = conv.adjoint(Ax)
 
         exp = F.conv_transpose1d(Ax, weight, bias=bias, stride=2, padding=1, dilation=2)
         assert(torch.allclose(out, exp, rtol=1e-3))
 
+    def test_patch2d_forward(self):
+        x = torch.randn(2,3,10,10)
+        kernel_size = 2
+        stride = 1
+        exp = torch.zeros(2,3,9,9,2,2)
+        for ix in range (9):
+            for iy in range(9):
+                exp[:,:,ix,iy,:,:] = x[:,:,ix:ix+2,iy:iy+2]
+        P = basics.Patch2D(x.shape, kernel_size, stride)
+        out = P*x
+        assert (torch.allclose(out, exp, rtol=1e-3))
+
+    def test_patch2d_adjoint(self):
+        x = torch.randn(2,3,9,9,2,2)
+        kernel_size = 2
+        stride = 1
+        exp = torch.zeros(2,3,10,10)
+        for ix in range(9):
+            for iy in range(9):
+                exp[:,:,ix:ix+2,iy:iy+2] = exp[:,:,ix:ix+2,iy:iy+2] + x[:,:,ix,iy,:,:]
+        P = basics.Patch2D(exp.shape, kernel_size, stride)
+        out = P.H * x
+
+    def test_patch3d_forward(self):
+        x = torch.randn(2,3,10,10,10)
+        kernel_size = 2
+        stride = 1
+        exp = torch.zeros(2,3,9,9,9,2,2,2)
+        for ix in range (9):
+            for iy in range(9):
+                for iz in range(9):
+                    exp[:,:,ix,iy,iz,:,:,:] = x[:,:,ix:ix+2,iy:iy+2,iz:iz+2]
+        P = basics.Patch3D(x.shape, kernel_size, stride)
+        out = P*x
+        assert (torch.allclose(out, exp, rtol=1e-3))
+
+    def test_patch3d_adjoint(self):
+        x = torch.randn(2,3,9,9,9,2,2,2)
+        kernel_size = 2
+        stride = 1
+        exp = torch.zeros(2,3,10,10,10)
+        for ix in range(9):
+            for iy in range(9):
+                for iz in range(9):
+                    exp[:,:,ix:ix+2,iy:iy+2,iz:iz+2] = exp[:,:,ix:ix+2,iy:iy+2,iz:iz+2] + x[:,:,ix,iy,iz,:,:,:]
+        P = basics.Patch3D(exp.shape, kernel_size, stride)
+        out = P.H * x
 
 if __name__ == '__main__':
     # if torch.cuda.is_available():

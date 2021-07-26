@@ -1,14 +1,14 @@
 from setuptools import setup, find_packages
 
 REQUIRED_PACKAGES = ['torch>=1.7', 'numpy', 'scipy', 'torchvision>=0.8', 'dominate>=2.5.1', 'visdom>=0.1.8', 'numpy',
-                     'torchkbnufft >= 1.1.0']
+                     'torchkbnufft >= 1.1.0', 'scipy>=1.6.0']
 
 with open("README.md", "r") as h:
     long_description = h.read()
 
 setup(
     name="mirtorch",
-    version="0.0.1",
+    version="0.0.2",
     author="Keyue Zhu, Neel Shah and Guanhua Wang",
     author_email="guanhuaw@umich.edu",
     description="a Pytorch-empowered imaging reconstruction toolbox",

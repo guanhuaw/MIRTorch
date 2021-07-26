@@ -53,6 +53,17 @@ class TestProx(unittest.TestCase):
         exp = np.clip(a.numpy(),lower,upper)
         npt.assert_allclose(out, exp, rtol=1e-3)
 
+    def test_l0_complex(self):
+        lambd = np.random.random()
+        prox = mirtorch.prox.L0Regularizer(lambd)
+        a = torch.rand(2,2, dtype=torch.cfloat, requires_grad=True)
+        out = prox(a)
+        torch.sum(out).backward()
+        a.requires_grad=False
+        an = a.numpy()
+        exp = torch.from_numpy(an*(np.abs(an)>lambd)).to(out)
+        npt.assert_allclose(out.detach(), exp, rtol=1e-3)
+
     def test_l1_complex(self):
         lambd = np.random.random()
         prox = mirtorch.prox.L1Regularizer(lambd)
