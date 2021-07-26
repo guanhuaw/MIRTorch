@@ -4,7 +4,8 @@ import scipy.sparse as sp
 import numpy.random as random
 import torch
 
-def SOUPDIL(Y, D0, X0, lambd, numiter, rnd=True, only_sp=False):
+
+def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False):
     '''
     Efficient patch-based dictionary learning algorithm according to:
     Ravishankar, S., Nadakuditi, R. R., & Fessler, J. A. (2017). Efficient sum of outer products dictionary learning (SOUP-DIL)
@@ -28,16 +29,17 @@ def SOUPDIL(Y, D0, X0, lambd, numiter, rnd=True, only_sp=False):
     Migrate back to torch when its CSR/CSC gets better.
     The algorithm involves frequent update of sparse data; using GPU may not necessarily accelerate it.
     '''
+    assert Y.dtype == X0.dtype == D0.dtype, 'datatype (complex/real) between dictionary and sparse code should stay the same!'
     D = D0
     [len_atom, num_atom] = D0.shape
 
-    # Z is a basic element
+    # Z is a unit element
     Z = np.zeros(len_atom).astype(D.dtype)
     Z[0] = 1
 
     # [num_patch, num_atom], each column is the sparse code for a atom (across patches)
     # Note the Hermitian here
-    # CSR is more efficient for matrix-vector product
+    # CSR is more efficient for matrix-vector product, but less efficient for slicing
     C = sp.csr_matrix(X0.T.conj())
 
     # Outer loop: iterations
@@ -55,13 +57,15 @@ def SOUPDIL(Y, D0, X0, lambd, numiter, rnd=True, only_sp=False):
             # Update of the sparse code: hard-thresholding
             # TODO: add soft-thresholding
             Ytdj = YtD[:, iatom]
-            # cj = C[:, iatom] # slicing w/ CSR is inefficient
-            b = Ytdj - C.dot((D.T.conj()).dot(D[:, iatom]))
 
+            b = Ytdj - C.tocsr().dot((D.T.conj()).dot(D[:, iatom]))
+
+            # cj = C[:, iatom] # slicing w/ CSR is inefficient
             # avoid column slicing, see https://stackoverflow.com/a/50860352
             idx_col_j = idx_col[idx_col == iatom]
             idx_row_j = idx_row[idx_col == iatom]
-            b[idx_row_j] += C[idx_row_j, idx_col_j]
+            if idx_row_j.size is not 0:
+                b[idx_row_j] += np.squeeze(np.asarray(C[idx_row_j, idx_col_j]))
 
             # hard-thresholding
             cj_new = b * (np.abs(b) > lambd)
@@ -69,19 +73,22 @@ def SOUPDIL(Y, D0, X0, lambd, numiter, rnd=True, only_sp=False):
 
             # Update of the dictionary
             if ~only_sp:
-                if cj_new.abs().sum() == 0:
+                if np.abs(cj_new).sum() == 0:
                     if rnd:
                         h = random.randn(len_atom).astype(D.dtype)
                     else:
                         h = Z
                 else:
                     h = np.zeros(len_atom).astype(D.dtype)
-                    h[idx_row_new] = Y[:, idx_row_new].dot(cj_new[idx_row_new])
-                    h += -D.dot(C[idx_row_new, :].T.dot(cj_new[idx_row_new]))
-                    [idx_ovlp, idx_ovlp_new, idx_ovlp_j] = np.intersect1d(idx_row_new, idx_row_j)
-                    h += D[:, iatom] * (C[idx_row_j, idx_col_j][idx_ovlp_j].conj().dot(cj_new[idx_ovlp_new]))
+
+                    h = Y[:, idx_row_new].dot(cj_new[idx_row_new])
+
                     # h += -D.dot(X.dot(cj_new)) + D[:, iatom] * ((cj.conj()).dot(cj_new)) # inefficient manner
-                    h = h / np.linalg.norm(h, 2)
+                    h = h - D.dot(C[idx_row_new, :].T.conj().dot(cj_new[idx_row_new]))
+                    idx_ovlp, idx_ovlp_new, idx_ovlp_j = np.intersect1d(idx_row_new, idx_row_j, return_indices=True)
+                    if idx_ovlp.size is not 0:
+                        h += D[:, iatom] * (cj_new[idx_ovlp] * (C[idx_ovlp, iatom].conj())).item()
+                h = h / np.linalg.norm(h, 2)
                 D[:, iatom] = h
 
             # avoid column slicing, again

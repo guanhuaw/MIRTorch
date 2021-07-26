@@ -105,7 +105,8 @@ class Diag(LinearMap):
 
 
 class Identity(LinearMap):
-    def __init__(self, size_in, size_out):
+    def __init__(self, size_in):
+        size_out = size_in
         super(Identity, self).__init__(size_in, size_out)
 
     def _apply(self, x):
@@ -251,32 +252,45 @@ class Patch2D(LinearMap):
         Input:
             x: [nbatch, nchannel, nx, ny]
         Return:
-            y: [nbatch, nchannel, npatchx, npatchy, kernel_size, kernel_size]
+            y: [nbatch, nchannel, npatchx, npatchy, kernel_size, kernel_size] (normal)
+               [nbatch, nchannel, kernel_size*kernel_size, npatchx*npatchy] (padded)
     """
 
     def __init__(self,
                  size_in: Sequence[int],
                  size_kernel: int,
-                 stride: int = 1):
+                 stride: int = 1,
+                 padded: bool = False):
         self.size_in = size_in
         self.size_kernel = size_kernel
         self.stride = stride
         self.npatchx = dim_conv(size_in[2], size_kernel, stride)
         self.npatchy = dim_conv(size_in[3], size_kernel, stride)
-        self.size_out = (size_in[0], size_in[1], self.npatchx, self.npatchy, size_kernel, size_kernel)
+        self.padded = padded
+        if padded:
+            self.size_out = (size_in[0], size_in[1], size_kernel * size_kernel, self.npatchx * self.npatchy)
+        else:
+            self.size_out = (size_in[0], size_in[1], self.npatchx, self.npatchy, size_kernel, size_kernel)
         super(Patch2D, self).__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
-        return x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).contiguous()
+        x = x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).contiguous()
+        if self.padded:
+            x = x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3], x.shape[4] * x.shape[5]).permute(
+                0, 1, 3, 2)
+        return x
 
     def _apply_adjoint(self, x) -> Tensor:
-        # Permute to [nbatch, nchannel, kernel_size, kernel_size, npatchx, npatchy]
-        x = x.permute(0, 1, 4, 5, 2, 3)
-        # reshape
-        x = x.reshape(self.size_in[0], self.size_in[1] * self.size_kernel * self.size_kernel,
-                      self.npatchx * self.npatchy)
-        x = F.fold(x, output_size=self.size_in[2:], kernel_size=self.size_kernel, stride=self.stride)
-        return x
+        if self.padded:
+            # to [nbatch, nchannel*kernel_size*kernel_size, npatchx*npatchy]
+            x = x.reshape(self.size_out[0], self.size_out[1] * self.size_out[2], self.size_out[3])
+        else:
+            # Permute to [nbatch, nchannel, kernel_size, kernel_size, npatchx, npatchy]
+            x = x.permute(0, 1, 4, 5, 2, 3)
+            # reshape
+            x = x.reshape(self.size_in[0], self.size_in[1] * self.size_kernel * self.size_kernel,
+                          self.npatchx * self.npatchy)
+        return F.fold(x, output_size=self.size_in[2:], kernel_size=self.size_kernel, stride=self.stride)
 
 
 class Patch3D(LinearMap):
@@ -289,38 +303,58 @@ class Patch3D(LinearMap):
             x: [nbatch, nchannel, nx, ny, nz]
         Return:
             y: [nbatch, nchannel, npatchx, npatchy, npatchz, kernel_size, kernel_size, kernel_size]
+             : [nbatch, nchannel,kernel_size**3, npatchx, npatchy, npatchz]
     """
 
     def __init__(self,
                  size_in: Sequence[int],
                  size_kernel: int,
-                 stride: int = 1):
+                 stride: int = 1,
+                 padded: bool = False):
         self.size_in = size_in
         self.size_kernel = size_kernel
         self.stride = stride
         self.npatchx = dim_conv(size_in[2], size_kernel, stride)
         self.npatchy = dim_conv(size_in[3], size_kernel, stride)
         self.npatchz = dim_conv(size_in[4], size_kernel, stride)
-        self.size_out = (
-        size_in[0], size_in[1], self.npatchx, self.npatchy, self.npatchz, size_kernel, size_kernel,
-        size_kernel)
+        self.padded = padded
+        if padded:
+            self.size_out = (
+                size_in[0], size_in[1], size_kernel ** 3, self.npatchx * self.npatchy * self.npatchz)
+        else:
+            self.size_out = (
+                size_in[0], size_in[1], self.npatchx, self.npatchy, self.npatchz, size_kernel, size_kernel,
+                size_kernel)
         super(Patch3D, self).__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
-        return x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).unfold(4,
-                                                                                                          self.size_kernel,
-                                                                                                          self.stride).contiguous()
+        x = x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).unfold(4,
+                                                                                                       self.size_kernel,
+                                                                                                       self.stride).contiguous()
+        if self.padded:
+            return x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3] * x.shape[4],
+                             x.shape[5] * x.shape[6] * x.shape[7]).permute(0, 1, 3, 2)
+        else:
+            return x
+
     def _apply_adjoint(self, x) -> Tensor:
         # This code is following https://discuss.pytorch.org/t/how-to-extract-smaller-image-patches-3d/16837/71
         # Pytorch's fold only supports 2d, though it actually has vol2im function ...
         # First, do the fold on the last two dimensions
         # Permute to [nbatch, nchannel, kernel_size, npatchx, kernel_size, kernel_size, npatchy, npatchz]
-        x = x.permute(0, 1, 5, 2, 6, 7, 3, 4).reshape(self.size_in[0],self.size_in[1]*self.npatchx*self.size_kernel**3, self.npatchy*self.npatchz)
+        if self.padded:
+            x = x.permute(0, 1, 3, 2).reshape(self.size_in[0], self.size_in[1], self.npatchx, self.npatchy,
+                                              self.npatchz, self.size_kernel, self.size_kernel,
+                                              self.size_kernel)
+        x = x.permute(0, 1, 5, 2, 6, 7, 3, 4).reshape(self.size_in[0],
+                                                      self.size_in[1] * self.npatchx * self.size_kernel ** 3,
+                                                      self.npatchy * self.npatchz)
         x = F.fold(x, output_size=self.size_in[3:], kernel_size=self.size_kernel, stride=self.stride)
         # New shape: [nbatch, nchannel. kernel_size*npatchx, ny, nz]
         # Now let's move on to the first dimension
-        x = x.reshape(self.size_in[0],self.size_in[1]*self.size_kernel, -1)
+        x = x.reshape(self.size_in[0], self.size_in[1] * self.size_kernel, -1)
         # [nbatch, nchannel*kernel_size, npatchx*ny*nz]
-        x = F.fold(x, output_size=(self.size_in[2], self.size_in[3]*self.size_in[4]), kernel_size=(self.size_kernel,1), stride=(self.stride,1))
+        x = F.fold(x, output_size=(self.size_in[2], self.size_in[3] * self.size_in[4]),
+                   kernel_size=(self.size_kernel, 1), stride=(self.stride, 1))
         x = x.reshape(self.size_in)
         return x

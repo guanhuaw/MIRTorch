@@ -1,6 +1,5 @@
 import torch
 
-
 @torch.no_grad()
 def power_iter(A, x0, max_iter=100, tol=1e-6):
     '''

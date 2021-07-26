@@ -56,6 +56,7 @@ class CG():
         b = RHS
         Tol: exiting tolerance
         max_iter: max number of iterations
+    # TODO: check if A is PSD
     '''
 
     def __init__(self, A, max_iter=20, tol=1e-2, alert=False):
