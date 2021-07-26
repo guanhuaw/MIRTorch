@@ -2,7 +2,8 @@
 # the iterative algorithms.
 # The reason is about auto-differentiation, etc.
 # Doing it case by cases seems to be more convenient.
-from .soup import SOUPDIL
-from .omp import OMP
+from .soup import soup
+from .util import idct_basis_2d, idct_basis_3d
+# from .omp import OMP
 
-__all__ = ["soupdil.py", "omp.py"]
+__all__ = ["soup", "idct_basis_2d", "idct_basis_3d"]
