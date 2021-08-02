@@ -2,10 +2,10 @@ import numpy as np
 import scipy as sc
 import scipy.sparse as sp
 import numpy.random as random
-import torch
+import time
 
 
-def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False):
+def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
     '''
     Efficient patch-based dictionary learning algorithm according to:
     Ravishankar, S., Nadakuditi, R. R., & Fessler, J. A. (2017). Efficient sum of outer products dictionary learning (SOUP-DIL)
@@ -26,12 +26,16 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False):
         DX: estimated results
     Since torch.sparse is still very basic, we chose SciPy as the ad-hoc backend.
     Use Tensor.cpu().numpy() and torch.from_numpy to avoid memory relocation
-    Migrate back to torch when its CSR/CSC gets better.
+    TODO: Migrate back to torch when its CSR/CSC gets better.
     The algorithm involves frequent update of sparse data; using GPU may not necessarily accelerate it.
+    2021-06. Guanhua Wang, University of Michigan
+"""
+
     '''
     assert Y.dtype == X0.dtype == D0.dtype, 'datatype (complex/real) between dictionary and sparse code should stay the same!'
     D = D0
     [len_atom, num_atom] = D0.shape
+    [_, num_patch] = X0.shape
 
     # Z is a unit element
     Z = np.zeros(len_atom).astype(D.dtype)
@@ -53,7 +57,7 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False):
 
         # Inner loop: atoms
         for iatom in range(num_atom):
-
+            start = time.time()
             # Update of the sparse code: hard-thresholding
             # TODO: add soft-thresholding
             Ytdj = YtD[:, iatom]
@@ -64,7 +68,7 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False):
             # avoid column slicing, see https://stackoverflow.com/a/50860352
             idx_col_j = idx_col[idx_col == iatom]
             idx_row_j = idx_row[idx_col == iatom]
-            if idx_row_j.size is not 0:
+            if idx_row_j.size != 0:
                 b[idx_row_j] += np.squeeze(np.asarray(C[idx_row_j, idx_col_j]))
 
             # hard-thresholding
@@ -86,7 +90,7 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False):
                     # h += -D.dot(X.dot(cj_new)) + D[:, iatom] * ((cj.conj()).dot(cj_new)) # inefficient manner
                     h = h - D.dot(C[idx_row_new, :].T.conj().dot(cj_new[idx_row_new]))
                     idx_ovlp, idx_ovlp_new, idx_ovlp_j = np.intersect1d(idx_row_new, idx_row_j, return_indices=True)
-                    if idx_ovlp.size is not 0:
+                    if idx_ovlp.size != 0:
                         h += D[:, iatom] * (cj_new[idx_ovlp] * (C[idx_ovlp, iatom].conj())).item()
                 h = h / np.linalg.norm(h, 2)
                 D[:, iatom] = h
@@ -95,5 +99,8 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False):
             # remember to eliminate untracked zeros in the end
             C[idx_row_j, iatom] = 0
             C[idx_row_new, iatom] = cj_new[idx_row_new]
+            if alert:
+                print('Update of %dth atom costs %4f s,' % (iatom, time.time() - start),
+                      'sparse ratio from %5f to %5f' % (len(idx_row_j) / num_patch, len(idx_row_new) / num_patch))
         C.eliminate_zeros()
     return D, C.T.conj(), (C.dot(D.T.conj())).T.conj()

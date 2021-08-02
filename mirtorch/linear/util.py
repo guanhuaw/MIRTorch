@@ -61,7 +61,7 @@ class DiffFunc_adj(torch.autograd.Function):
         return finitediff(dx, ctx.dim), None
 
 
-def fftshift(x: Tensor, dims: Sequence[int] = None):
+def fftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
     """
     Similar to np.fft.fftshift but applies to PyTorch tensors. From fastMRI code.
     """
@@ -75,7 +75,7 @@ def fftshift(x: Tensor, dims: Sequence[int] = None):
     return torch.roll(x, shifts, dims)
 
 
-def ifftshift(x: Tensor, dims: Sequence[int] = None):
+def ifftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
     """
     Similar to np.fft.ifftshift but applies to PyTorch tensors. From fastMRI code.
     """
@@ -91,3 +91,4 @@ def ifftshift(x: Tensor, dims: Sequence[int] = None):
 def dim_conv(dim_in, dim_kernel_size, dim_stride = 1, dim_padding = 0, dim_dilation = 1):
     dim_out = (dim_in + 2 * dim_padding - dim_dilation * (dim_kernel_size - 1) - 1) // dim_stride + 1
     return dim_out
+

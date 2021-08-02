@@ -6,7 +6,7 @@ sys.path.insert(0, path)
 from mirtorch.linear import basics
 import torch
 import torch.nn.functional as F
-import utils
+from .utils import conv1D, conv2D
 class TestBasic(unittest.TestCase):
 
     def test_diag(self):
@@ -31,7 +31,7 @@ class TestBasic(unittest.TestCase):
         # exp = F.conv1d(x, weight)
         x = x.permute(0,2,1).detach().cpu().numpy()
         weight = weight.permute(2,1,0).detach().cpu().numpy()
-        exp = utils.conv1D(x, weight, stride=1, pad=0, dilation=0)
+        exp = conv1D(x, weight, stride=1, pad=0, dilation=0)
         exp = torch.from_numpy(exp).to(device).permute(0,2,1)
         assert(torch.allclose(out, exp, rtol=1.5e-3))
 
@@ -47,7 +47,7 @@ class TestBasic(unittest.TestCase):
         # exp = F.conv2d(x, weight)
         x = x.permute(0,2,3,1).detach().cpu().numpy()
         weight = weight.permute(2,3,1,0).detach().cpu().numpy()
-        exp = utils.conv2D(x, weight, stride=1, pad=0, dilation=0)
+        exp = conv2D(x, weight, stride=1, pad=0, dilation=0)
         exp = torch.from_numpy(exp).to(device).permute(0,3,1,2)
         assert(torch.allclose(out, exp, rtol=1e-3))
 

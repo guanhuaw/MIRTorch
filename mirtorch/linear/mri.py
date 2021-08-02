@@ -300,3 +300,23 @@ def mri_exp_approx(b0, bins, lseg, dt, T):
     ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
 
     return b, ct
+
+
+def tukey_filer(LinearMap):
+    '''
+    A Tukey filter to counteract Gibbs ringing artifacts
+    Parameters:
+        size_in: the signal size [nbatch, nchannel, nx (ny, nz ...)]
+        width: the window length [wdx (wdy, wdz) ...]
+        alpha(s): control parameters of the tukey window
+    Returns:
+
+    '''
+    def __init__(self,
+                 size_in: Sequence[int],
+                 width: Sequence[int],
+                 alpha: Sequence[int]
+                 ):
+        self.width = width
+        self.alpha = alpha
+        super(tukey_filer, self).__init__(tuple(size_in), tuple(size_in))
