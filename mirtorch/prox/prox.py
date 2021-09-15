@@ -88,7 +88,7 @@ class L1Regularizer(Prox):
             thresh = torch.nn.Softshrink(self.Lambda)
             x = thresh(v)
         else:
-            print(type(self.Lambda))
+            #print(type(self.Lambda))
             x = self._softshrink(v, self.Lambda.to(v.device))
         return x
 
@@ -205,8 +205,8 @@ class BoxConstraint(Prox):
         self.Lambda = float(Lambda)
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
-            self.l = self.l / self.Lambda
-            self.u = self.u / self.Lambda
+            self.l = lower / self.Lambda
+            self.u = upper / self.Lambda
 
 
     def _apply(self, v):

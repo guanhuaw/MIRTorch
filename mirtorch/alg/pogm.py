@@ -1,63 +1,69 @@
 import numpy as np
+from typing import Callable
+
+import torch
+from mirtorch.prox import Prox
 
 class POGM():
     r'''
-    TODO: docstring here
+    Optimized Proximal Gradient Method (POGM) 
+
+    .. math::
+        \arg \min_x f(x) + g(x)
+     where grad(f(x)) is L-Lipschitz continuous and g is proximal operator
+    Args:
+        max_iter (int): number of iterations to run
+        f_grad (Callable): gradient of f
+        f_L (float): L-Lipschitz value of f_grad
+        g_prox (Prox): proximal operator g
+        restart (Union[...]): restart strategy, not yet implemented
     '''
 
-    def __init__(self, max_iter, fgrad, Lf, prox, restart = False):
+    def __init__(self, f_grad: Callable, f_L: float, g_prox: Prox, max_iter: int = 10, restart = False):
         self.max_iter = max_iter
-        self.grad = fgrad
-        self.Lf = Lf
-        self.prox = prox
+        self.f_grad = f_grad
+        self.f_L = f_L
+        self.prox = g_prox
+        self._alpha = 1/self.f_L # value for 1/L
         if restart:
             raise NotImplementedError
-        self.restart = restart
+        self.restart = restart 
 
+    def run_alg(self, x0: torch.Tensor, save_values: bool = False):
+        told = 1
+        sig = 1
+        zetaold = 1
+        xold = x0
+        uold = x0
+        zold = x0
+        saved = []
+        for i in range(1, self.max_iter+1):
+            fgrad = self.f_grad(xold)
+            unew = xold - self._alpha * fgrad
+            if i == self.max_iter:
+                tnew = 0.5 * (1 + np.sqrt(1 + 8 * told**2))
+            else:
+                tnew = 0.5 * (1 + np.sqrt(1 + 4 * told**2))
+            beta = (told - 1) / tnew
+            gamma = sig * told / tnew
 
-    def update_params(self, tk_prev, iter):
-        assert(iter >= 2)
-        tk = None
-        if iter >= 2 and iter < self.max_iter:
-            mult = 4
-        elif iter == self.max_iter:
-            mult = 8
-        else:
-            tk = tk_prev
-        tk = tk if tk is not None else .5 * (1 + np.sqrt(mult * tk_prev * tk_prev + 1))
-        gk = 1/self.Lf * (2*tk_prev + tk - 1)/tk
-        return tk, gk
+            znew = (unew + beta * (unew - uold) + gamma * (unew - xold) - beta * self._alpha / zetaold * (xold - zold))
+            zetanew = self._alpha * (1 + beta + gamma)
 
+            self.prox.Lambda = zetanew
+            xnew = self.prox(znew)
 
-    def run_alg(self, x0):
-        x_curr = x0
-        w_curr = x0
-        z_curr = x0
-        tk = 1
-        gk = float(1)
-        for i in range(self.max_iter):
-            tk_prev = tk
-            gk_prev = gk
-            w_prev = w_curr
-            z_prev = z_curr
-            #dont need to set x_prev because x is updated last
+            uold = unew
+            zold = znew
+            zetaold = zetanew
+            xold = xnew
 
-            #update params theta, gamma
-            tk, gk = self.update_params(tk_prev, i+2)
-
-            #update w
-            w_curr = x_curr - 1/self.Lf*self.grad(x_curr)
-
-            #update z
-            z_curr = w_curr + (tk_prev-1)/tk * (w_curr - w_prev)
-            z_curr += tk_prev/tk * (w_curr - x_curr)
-            z_curr += (tk_prev-1)/(self.Lf*gk_prev*tk) * (z_prev - x_curr)
-
-            #update x
-            self.prox.Lambda = gk if type(gk) is float else float(gk.item())
-            x_curr = self.prox(z_curr)
-
-        return x_curr
+            if save_values:
+                saved.append(xold)
+        
+        if save_values:
+            return saved
+        return xold
 
 
 

@@ -4,10 +4,8 @@ import torch
 from typing import Callable
 
 class FISTA():
-    pass
-    # def __init__(self, max_iter, step, fval, grad, prox, momentum = 1, restart = False):
-    # def _update(self):
-    # def run_alg(self):
+    r'''
+    Fast Iterative Soft Thresholding Algorithm (FISTA) / Fast Proximal Gradient Method (FPGM)
 
     .. math::
         \arg \min_x f(x) + g(x)
@@ -21,7 +19,6 @@ class FISTA():
     '''
     def __init__(self, f_grad: Callable, f_L: float, g_prox: Prox, max_iter: int = 10, restart = False):
         self.max_iter = max_iter
-        self.step = 1
         self.f_grad = f_grad
         self.f_L = f_L
         self.prox = g_prox
@@ -44,7 +41,7 @@ class FISTA():
         told = 1.0
         beta = 0.0
         saved = []
-        for i in range(1, self.max_iter):
+        for i in range(1, self.max_iter+1):
             fgrad = self.f_grad(xold)
             ynew = self.prox(xold - self._alpha * fgrad)
 
@@ -59,3 +56,5 @@ class FISTA():
         if save_values:
             return saved
         return xold
+
+FPGM = FISTA
