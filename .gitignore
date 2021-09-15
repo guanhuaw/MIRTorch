@@ -36,4 +36,5 @@
 *build/
 *dist/
 *.pyc
+*tests/dev
 

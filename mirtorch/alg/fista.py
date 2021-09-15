@@ -1,4 +1,7 @@
+from mirtorch.prox import Prox
 import numpy as np
+import torch
+from typing import Callable
 
 class FISTA():
     pass
@@ -11,37 +14,48 @@ class FISTA():
      where grad(f(x)) is L-Lipschitz continuous and g is proximal operator
     Args:
         max_iter (int): number of iterations to run
-        fgrad (Callable): gradient of f
-        Lf (float): L-Lipschitz value of fgrad
-        prox (Prox): proximal operator g
+        f_grad (Callable): gradient of f
+        f_L (float): L-Lipschitz value of f_grad
+        g_prox (Prox): proximal operator g
         restart (Union[...]): restart strategy, not yet implemented
     '''
-    def __init__(self, max_iter, fgrad, Lf, prox, restart = False):
+    def __init__(self, f_grad: Callable, f_L: float, g_prox: Prox, max_iter: int = 10, restart = False):
         self.max_iter = max_iter
         self.step = 1
-        self.grad = fgrad
-        self.Lf = Lf
-        self.prox = prox
+        self.f_grad = f_grad
+        self.f_L = f_L
+        self.prox = g_prox
+        self._alpha = 1/self.f_L # value for 1/L
+        if hasattr(self.prox, 'Lambda'):
+            assert abs(self._alpha - self.prox.Lambda) < .01, "FISTA requires proximal operator lambda=1/f_L"
         if restart:
             raise NotImplementedError
         self.restart = restart
-    
 
-    def _update(self):
-        step_prev = self.step
-        self.step = (1 + np.sqrt(1 + 4*step_prev*step_prev))/2
-        self.momentum = (step_prev-1)/self.step
+    def run_alg(self, x0: torch.Tensor, save_values: bool = False):
+        def _update_momentum():
+            nonlocal told, beta
+            tnew = .5 * (1 + np.sqrt(1 + 4 * told**2))
+            beta = (told - 1) / tnew
+            told = tnew
+        # initalize parameters
+        xold= x0
+        yold = x0
+        told = 1.0
+        beta = 0.0
+        saved = []
+        for i in range(1, self.max_iter):
+            fgrad = self.f_grad(xold)
+            ynew = self.prox(xold - self._alpha * fgrad)
 
+            _update_momentum()
 
-    def run_alg(self, x0):
-        x_curr = x0
-        z_curr = x0
-        for i in range(self.max_iter):
-            #update momentum parameters
-            self._update()
-            x_prev = x_curr
-            z_prev = z_curr
-            #compute new z_k and x_k
-            z_curr = self.prox(x_prev - 1/self.Lf*self.grad(x_prev))
-            x_curr = z_curr + self.momentum * (z_curr - z_prev)
-        return x_curr
+            xnew = ynew + beta * (ynew - yold)
+            xold = xnew
+            yold = ynew   
+
+            if save_values:
+                saved.append(xold)
+        if save_values:
+            return saved
+        return xold
