@@ -73,7 +73,7 @@ class L1Regularizer(Prox):
             # Should this be v.shape instead of P.size_in? TODO: Verify this through test
             self.Lambda = P(Lambda*torch.ones(P.size_in))
 
-    def _softshrink(x, lambd):
+    def _softshrink(self, x, lambd):
         mask1 = x > lambd
         mask2 = x < -lambd
         out = torch.zeros_like(x)
@@ -82,11 +82,13 @@ class L1Regularizer(Prox):
         return out
 
     def _apply(self, v):
+        
         if type(self.Lambda) is not torch.Tensor:
             # The softshrink function do not support tensor as Lambda.
             thresh = torch.nn.Softshrink(self.Lambda)
             x = thresh(v)
         else:
+            #print(type(self.Lambda))
             x = self._softshrink(v, self.Lambda.to(v.device))
         return x
 
@@ -203,8 +205,8 @@ class BoxConstraint(Prox):
         self.Lambda = float(Lambda)
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
-            self.l = self.l / self.Lambda
-            self.u = self.u / self.Lambda
+            self.l = lower / self.Lambda
+            self.u = upper / self.Lambda
 
 
     def _apply(self, v):
