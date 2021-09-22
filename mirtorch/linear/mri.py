@@ -25,7 +25,7 @@ class FFTCn(LinearMap):
                  size_in: Sequence[int],
                  size_out: Sequence[int],
                  dims: Union[int, Sequence[int]],
-                 norm='ortho'):
+                 norm: str ='ortho'):
         super(FFTCn, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
