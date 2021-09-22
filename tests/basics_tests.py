@@ -4,6 +4,7 @@ path = os.path.dirname(os.path.abspath(__file__))
 path = path[:path.rfind('/')]
 sys.path.insert(0, path)
 from mirtorch.linear import basics
+from mirtorch.linear import wavelets
 import torch
 import torch.nn.functional as F
 from .utils import conv1D, conv2D
@@ -202,6 +203,11 @@ class TestBasic(unittest.TestCase):
                     exp[:,:,ix:ix+2,iy:iy+2,iz:iz+2] = exp[:,:,ix:ix+2,iy:iy+2,iz:iz+2] + x[:,:,ix,iy,iz,:,:,:]
         P = basics.Patch3D(exp.shape, kernel_size, stride)
         out = P.H * x
+
+    def test_wavelet2D(self):
+        x = torch.randn(1,2,101,167)
+        W = wavelets.Wavelet2D([1,2,101,167])
+        assert (torch.allclose(W.H*W*x, x, rtol=1e-3))
 
 if __name__ == '__main__':
     # if torch.cuda.is_available():
