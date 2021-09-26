@@ -17,7 +17,6 @@ def power_iter(A, x0, max_iter=100, tol=1e-6):
     for iter in range(max_iter):
         Ax = A * x
         ratio = torch.norm(Ax.abs()) / torch.norm(x.abs())
-        print(ratio)
         if torch.abs(ratio - ratio_old) / ratio < tol:
             print('calculation of max singular value accomplished at %d iterations' % (iter + 1))
             break

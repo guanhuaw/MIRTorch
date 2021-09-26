@@ -18,6 +18,7 @@ class POGM():
         g_prox (Prox): proximal operator g
         restart (Union[...]): restart strategy, not yet implemented
     '''
+    # TODO: add a user-defined eval() for each iteration to save intermediate metrics (see jeff's mirt.jl implementation)
 
     def __init__(self, f_grad: Callable, f_L: float, g_prox: Prox, max_iter: int = 10, restart = False):
         self.max_iter = max_iter
@@ -38,8 +39,13 @@ class POGM():
         zold = x0
         saved = []
         for i in range(1, self.max_iter+1):
+            print(torch.sum(torch.abs(xold)))
             fgrad = self.f_grad(xold)
+            print(torch.sum(torch.abs(fgrad)))
+
             unew = xold - self._alpha * fgrad
+            print(torch.sum(torch.abs(unew)))
+
             if i == self.max_iter:
                 tnew = 0.5 * (1 + np.sqrt(1 + 8 * told**2))
             else:
@@ -49,9 +55,12 @@ class POGM():
 
             znew = (unew + beta * (unew - uold) + gamma * (unew - xold) - beta * self._alpha / zetaold * (xold - zold))
             zetanew = self._alpha * (1 + beta + gamma)
-
+            print(torch.sum(torch.abs(znew)))
+            print(zetanew)
             self.prox.Lambda = zetanew
             xnew = self.prox(znew)
+            print(torch.sum(torch.abs(xnew)))
+
 
             uold = unew
             zold = znew

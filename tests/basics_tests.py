@@ -205,8 +205,10 @@ class TestBasic(unittest.TestCase):
         out = P.H * x
 
     def test_wavelet2D(self):
-        x = torch.randn(1,2,101,167)
-        W = wavelets.Wavelet2D([1,2,101,167])
+        x = torch.randn(1,2,101,167)*(1+1j)
+        W = wavelets.Wavelet2D([1,2,101,167],padding='periodization')
+        x = torch.randn(101,167)*(1+1j)
+        W = wavelets.Wavelet2D([101,167])
         assert (torch.allclose(W.H*W*x, x, rtol=1e-3))
 
 if __name__ == '__main__':
