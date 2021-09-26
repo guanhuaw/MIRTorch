@@ -17,19 +17,28 @@ class FISTA():
         g_prox (Prox): proximal operator g
         restart (Union[...]): restart strategy, not yet implemented
     '''
-    def __init__(self, f_grad: Callable, f_L: float, g_prox: Prox, max_iter: int = 10, restart = False):
+    # TODO: add a user-defined eval() for each iteration to save intermediate metrics (see jeff's mirt.jl implementation)
+
+    def __init__(self,
+                 f_grad: Callable,
+                 f_L: float,
+                 g_prox: Prox,
+                 max_iter: int = 10,
+                 restart = False):
         self.max_iter = max_iter
         self.f_grad = f_grad
         self.f_L = f_L
         self.prox = g_prox
         self._alpha = 1/self.f_L # value for 1/L
-        if hasattr(self.prox, 'Lambda'):
-            assert abs(self._alpha - self.prox.Lambda) < .01, "FISTA requires proximal operator lambda=1/f_L"
+        # if hasattr(self.prox, 'Lambda'):
+        #     assert abs(self._alpha - self.prox.Lambda) < .01, "FISTA requires proximal operator lambda=1/f_L"
         if restart:
             raise NotImplementedError
         self.restart = restart
 
-    def run_alg(self, x0: torch.Tensor, save_values: bool = False):
+    def run_alg(self,
+                x0: torch.Tensor,
+                save_values: bool = False):
         def _update_momentum():
             nonlocal told, beta
             tnew = .5 * (1 + np.sqrt(1 + 4 * told**2))
@@ -37,17 +46,21 @@ class FISTA():
             told = tnew
         # initalize parameters
         xold= x0
+        print(torch.sum(torch.abs(x0)))
         yold = x0
         told = 1.0
         beta = 0.0
         saved = []
         for i in range(1, self.max_iter+1):
             fgrad = self.f_grad(xold)
-            ynew = self.prox(xold - self._alpha * fgrad)
+            print(torch.sum(torch.abs(fgrad)))
+            ynew = self.prox(xold - self._alpha * fgrad, self._alpha)
+            print(torch.sum(torch.abs(ynew)))
 
             _update_momentum()
 
             xnew = ynew + beta * (ynew - yold)
+            print(torch.sum(torch.abs(xnew)))
             xold = xnew
             yold = ynew   
 

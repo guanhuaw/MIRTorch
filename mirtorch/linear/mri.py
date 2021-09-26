@@ -25,7 +25,7 @@ class FFTCn(LinearMap):
                  size_in: Sequence[int],
                  size_out: Sequence[int],
                  dims: Union[int, Sequence[int]],
-                 norm: str ='ortho'):
+                 norm: str = 'ortho'):
         super(FFTCn, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
@@ -50,10 +50,20 @@ class FFTCn(LinearMap):
 
 class Sense(LinearMap):
     '''
-    Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
+    Cartesian sense operator, following "SENSE: Sensitivity encoding for fast MRI"
     Parameters:
         mask: [(batch), nx, ny, (nz)]
         sensitivity maps: [(batch), ncoil, nx, ny, (nz)]
+    Inputs:
+        If batchmode:
+            x in size [batch, 1, nx, ny, (nz)]
+        else:
+            x in size [nx, ny, (nz)]
+    Outputs:
+        If batchmode:
+            y in size [batch, ncoil, nx, ny, (nz)]
+        else:
+            y in size [ncoil, nx, ny, nz]
     '''
 
     def __init__(self,
@@ -62,57 +72,47 @@ class Sense(LinearMap):
                  norm: str = 'ortho',
                  batchmode: bool = True):
         if batchmode:
-            size_in = [smaps.shape[0]] + list(smaps.shape[2:])
+            # comform to [nbatch, 1, nx, ny, nz]
+            size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
             size_out = list(smaps.shape)
-            dims = tuple(np.arange(1, len(smaps.shape) - 1))
+            dims = tuple(np.arange(2, len(smaps.shape)))
+            self.masks = masks.unsqueeze(1)
         else:
             size_in = list(smaps.shape[1:])
             size_out = list(smaps.shape)
-            dims = tuple(np.arange(0, len(smaps.shape) - 1))
+            dims = tuple(np.arange(1, len(smaps.shape)))
+            self.masks = masks
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
-        # TODO: check the size match between smaps and masks. (try-catch)
+        assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
         self.smaps = smaps
-        self.masks = masks
         self.batchmode = batchmode
 
     def _apply(self, x: Tensor) -> Tensor:
-        '''
-            x in size [batch, nx, ny, (nz)]
-        '''
         assert x.shape == self.masks.shape, "mask and image's shape mismatch"
-        if self.batchmode:
-            x = x.unsqueeze(1)
-            masks = self.masks.unsqueeze(1)
-        else:
-            x = x.unsqueeze(0)
-            masks = self.masks.unsqueeze(0)
-        dims = tuple([x + 1 for x in self.dims])
+        # if not self.batchmode:
+        #     x = x.unsqueeze(0)
         x = x * self.smaps
-        x = ifftshift(x, dims)
-        k = fftn(x, dim=dims, norm=self.norm)
-        k = fftshift(k, dims) * masks
+        x = ifftshift(x, self.dims)
+        k = fftn(x, dim=self.dims, norm=self.norm)
+        k = fftshift(k, self.dims) * self.masks
         return k
 
     def _apply_adjoint(self, k: Tensor) -> Tensor:
         assert k.shape == self.smaps.shape, "sensitivity maps and signal's shape mismatch"
-        if self.batchmode:
-            masks = self.masks.unsqueeze(1)
-        else:
-            masks = self.masks.unsqueeze(0)
-        dims = tuple([x + 1 for x in self.dims])
-        k = k * masks
-        k = ifftshift(k, dims)
+
+        k = k * self.masks
+        k = ifftshift(k, self.dims)
         if self.norm == 'ortho':
-            x = ifftn(k, dim=dims, norm='ortho')
+            x = ifftn(k, dim=self.dims, norm='ortho')
         elif self.norm == 'forward':
-            x = ifftn(k, dim=dims, norm='backward')
+            x = ifftn(k, dim=self.dims, norm='backward')
         else:
-            x = ifftn(k, dim=dims, norm='forward')
-        x = fftshift(x, dims)
+            x = ifftn(k, dim=self.dims, norm='forward')
+        x = fftshift(x, self.dims)
         if self.batchmode:
-            x = (x * torch.conj(self.smaps)).sum(1)
+            x = (x * torch.conj(self.smaps)).sum(1).unsqueeze(1)
         else:
             x = (x * torch.conj(self.smaps)).sum(0)
         return x
@@ -129,7 +129,7 @@ class NuSense(LinearMap):
         # Attention: Traj can have no batch dimension even x have. ref: https://github.com/mmuckley/torchkbnufft/pull/24
         sensitivity maps: [(batch), ncoil, nx, ny, (nz)]
     Input/Output:
-        x(complex-valued images): [(batch), nx, ny, (nz)]
+        x(complex-valued images): [nx, ny, (nz)] or [nbatch, 1, nx, ny (nz)]
         k(k-space data): [(batch), ncoil, nshot*npoints]
 
     The device follow smaps. So make sure that smaps and image stay on the same device.
@@ -151,7 +151,7 @@ class NuSense(LinearMap):
             self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
                                           grid_size=tuple(np.array(smaps.shape[2:]) * 2),
                                           numpoints=numpoints).to(smaps)
-            size_in = [smaps.shape[0]] + list(smaps.shape[2:])
+            size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
             size_out = list(smaps.shape[0:2]) + [traj.shape[-1]]
             super(NuSense, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
         else:
@@ -172,7 +172,7 @@ class NuSense(LinearMap):
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
         if self.batchmode:
-            return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm).squeeze(1)
+            return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm)
         else:
             return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps, norm=self.norm).squeeze(0).squeeze(0)
 
@@ -312,6 +312,7 @@ def tukey_filer(LinearMap):
     Returns:
 
     '''
+
     def __init__(self,
                  size_in: Sequence[int],
                  width: Sequence[int],

@@ -198,3 +198,9 @@ class ConjTranspose(LinearMap):
 
     def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         return self.A.apply(x)
+
+class Vstack(LinearMap):
+    pass
+
+class Hstack(LinearMap):
+    pass

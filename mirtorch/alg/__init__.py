@@ -4,5 +4,7 @@
 # Doing it case by cases seems to be more convenient.
 from .cg import CG
 from .spectral import power_iter
+from .pogm import POGM
+from .fista import FISTA
 
-__all__ = ["CG", "power_iter"]
+__all__ = ["CG", "power_iter", "POGM", "FISTA"]
