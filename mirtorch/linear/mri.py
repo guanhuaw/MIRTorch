@@ -101,8 +101,8 @@ class Sense(LinearMap):
 
     def _apply_adjoint(self, k: Tensor) -> Tensor:
         assert k.shape == self.smaps.shape, "sensitivity maps and signal's shape mismatch"
-
         k = k * self.masks
+
         k = ifftshift(k, self.dims)
         if self.norm == 'ortho':
             x = ifftn(k, dim=self.dims, norm='ortho')

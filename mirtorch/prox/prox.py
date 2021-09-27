@@ -22,8 +22,8 @@ class Prox:
     """
 
     def __init__(self, T = None, P = None):
-        if T is not None:
-            assert('unitary' in T.property)
+        # if T is not None:
+        #     assert('unitary' in T.property)
         self.T = T
 
         if P is not None:
@@ -36,11 +36,13 @@ class Prox:
 
     def __call__(self, v, alpha):
         #sigpy also has alpha value, maybe add that here after implementing basic functionality
-        if v.dtype == torch.cfloat or v.dtype == torch.cdouble:
-            return self._complex(v) * self._apply(v.abs(), alpha)
+
         if self.T is not None:
             v = self.T(v)
-        out = self._apply(v, alpha)
+        if v.dtype == torch.cfloat or v.dtype == torch.cdouble:
+            out = self._complex(v) * self._apply(v.abs(), alpha)
+        else:
+            out = self._apply(v, alpha)
         if self.T is not None:
             out = self.T.H(out)
         return out
