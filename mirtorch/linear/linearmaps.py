@@ -56,7 +56,7 @@ class LinearMap:
         self.size_in = list(size_in)  # size_in: input data dimension
         self.size_out = list(size_out)  # size_out: output data dimension
         self.device = device  # some linear operators do not depend on devices, like FFT.
-        self.property = None  # properties like 'unitary', 'Toeplitz', 'frame' ...
+        # self.property = property  # properties like 'unitary', 'Toeplitz', 'frame' ...
 
     def __repr__(self):
         return '<{oshape}x{ishape} {repr_str} Linop>'.format(

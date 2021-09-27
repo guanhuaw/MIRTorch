@@ -38,7 +38,7 @@ class FISTA():
 
     def run_alg(self,
                 x0: torch.Tensor,
-                save_values: bool = False):
+                eval_func:Callable = None):
         def _update_momentum():
             nonlocal told, beta
             tnew = .5 * (1 + np.sqrt(1 + 4 * told**2))
@@ -46,28 +46,24 @@ class FISTA():
             told = tnew
         # initalize parameters
         xold= x0
-        print(torch.sum(torch.abs(x0)))
         yold = x0
         told = 1.0
         beta = 0.0
-        saved = []
+        if eval_func is not None:
+            saved = []
         for i in range(1, self.max_iter+1):
             fgrad = self.f_grad(xold)
-            print(torch.sum(torch.abs(fgrad)))
             ynew = self.prox(xold - self._alpha * fgrad, self._alpha)
-            print(torch.sum(torch.abs(ynew)))
-
             _update_momentum()
-
             xnew = ynew + beta * (ynew - yold)
-            print(torch.sum(torch.abs(xnew)))
             xold = xnew
-            yold = ynew   
+            yold = ynew
+            if eval_func is not None:
+                saved.append(eval_func(xold, yold))
 
-            if save_values:
-                saved.append(xold)
-        if save_values:
-            return saved
-        return xold
+        if eval_func is not None:
+            return xold, saved
+        else:
+            return xold
 
 FPGM = FISTA
