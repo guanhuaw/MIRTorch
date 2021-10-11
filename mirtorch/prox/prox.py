@@ -59,6 +59,10 @@ class Prox:
         exp = torch.complex(torch.cos(angle), torch.sin(angle))
         return exp
 
+class NoOp(Prox):
+    def _apply(self, v: torch.Tensor, alpha: FloatLike = None):
+        return v
+
 class L1Regularizer(Prox):
     r"""
     Proximal operator for L1 regularizer, using soft thresholding
@@ -246,5 +250,21 @@ class Stack(Prox):
     r"""
     Stack proximal operators.
 
-
+    Args:
+        proxs: list of proximal operators, required to have equal input and output shapes
     """
+    def __init__(self, proxs):
+        self.proxs = proxs
+        super().__init__()
+    
+    def __call__(self, v, alphas, sizes = None):
+        return self._apply(v,alphas,sizes)
+        
+    def _apply(self, v,  alphas, sizes = None):
+        if sizes is None:
+            sizes = len(self.proxs)
+        splits = torch.split(v, sizes)
+        if not isinstance(alphas, torch.Tensor):
+            alphas = [alphas]*sizes
+        seq = [self.proxs[i](splits[i],alphas[i]) for i in range(len(self.proxs))]
+        return torch.cat(seq)
