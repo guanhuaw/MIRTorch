@@ -30,8 +30,6 @@ class FISTA():
         self.f_L = f_L
         self.prox = g_prox
         self._alpha = 1/self.f_L # value for 1/L
-        # if hasattr(self.prox, 'Lambda'):
-        #     assert abs(self._alpha - self.prox.Lambda) < .01, "FISTA requires proximal operator lambda=1/f_L"
         if restart:
             raise NotImplementedError
         self.restart = restart
@@ -60,7 +58,6 @@ class FISTA():
             yold = ynew
             if eval_func is not None:
                 saved.append(eval_func(xold, yold))
-
         if eval_func is not None:
             return xold, saved
         else:

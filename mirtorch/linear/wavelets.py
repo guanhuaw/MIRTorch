@@ -24,7 +24,7 @@ def coeffs_to_tensor(yl: Tensor,
         size_x += yh[ilevel].shape[-2]
         size_y += yh[ilevel].shape[-1]
         dic_size.append(list(yh[ilevel].shape[-2:]))
-    wl_cat = torch.zeros(list(yl.shape[:-2]) + [size_x, size_y])
+    wl_cat = torch.zeros(list(yl.shape[:-2]) + [size_x, size_y]).to(yl.device, yl.dtype)
     wl_cat[..., :yl.shape[-2], :yl.shape[-1]] = yl
     for ilevel in range(nlevel):
         start_x = 0
@@ -79,7 +79,8 @@ class Wavelet2D(LinearMap):
                  size_in: Sequence[int],
                  wave_type: str = 'db4',
                  padding: str = 'zero',
-                 J: int = 3):
+                 J: int = 3,
+                 device = 'cpu'):
         self.J = J
         self.wave_type = wave_type
         self.padding = padding
@@ -90,14 +91,14 @@ class Wavelet2D(LinearMap):
         else:
             sys.exit("Input size should be of 2D wavelets should be [nbatch, nchannel, nx, ny] or [nx, ny]")
 
-        self.Fop = DWTForward(J=self.J, mode=self.padding, wave=self.wave_type)
-        self.Aop = DWTInverse(mode=self.padding, wave=self.wave_type)
+        self.Fop = DWTForward(J=self.J, mode=self.padding, wave=self.wave_type).to(device)
+        self.Aop = DWTInverse(mode=self.padding, wave=self.wave_type).to(device)
         if self.batchmode:
-            Yl, Yh = self.Fop(torch.zeros(size_in))
+            Yl, Yh = self.Fop(torch.zeros(size_in).to(device))
             wl_cat, self.dic_size = coeffs_to_tensor(Yl, Yh)
             size_out = wl_cat.shape
         else:
-            Yl, Yh = self.Fop(torch.zeros(size_in).unsqueeze(0).unsqueeze(0))
+            Yl, Yh = self.Fop(torch.zeros(size_in).to(device).unsqueeze(0).unsqueeze(0))
             wl_cat, self.dic_size = coeffs_to_tensor(Yl, Yh)
             size_out = wl_cat.shape[2:]
         super(Wavelet2D, self).__init__(size_in, size_out)

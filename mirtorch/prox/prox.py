@@ -50,10 +50,15 @@ class Prox:
     def __repr__(self):
         return f'<{self.__class__.__name__} Prox'
 
-    def _complex(self, v):
-        angle = torch.atan2(v.imag, v.real)
-        exp = torch.complex(torch.cos(angle), torch.sin(angle))
-        return exp
+    def _complex(self,v):
+        # To avoid the influence of noise
+        # Without thresholding, numerical issues may happen for some unitary transform (wavelets)
+        eps = 1e-10
+        angle = torch.zeros_like(v)
+        msk = torch.abs(v) > eps
+        angle[msk] = v[msk] / torch.abs(v)[msk]
+        angle[~msk] = v[~msk]/eps
+        return angle
 
 class L1Regularizer(Prox):
     r"""
@@ -72,7 +77,7 @@ class L1Regularizer(Prox):
     def __init__(self, Lambda, T = None, P = None):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
-        assert self.Lambda > 0, "alpha should be greater than 0"
+        # assert self.Lambda > 0, "alpha should be greater than 0"
         if P is not None:
             # Should this be v.shape instead of P.size_in? TODO: Verify this through test
             self.Lambda = P(Lambda*torch.ones(P.size_in))
@@ -80,20 +85,24 @@ class L1Regularizer(Prox):
     def _softshrink(self, x, lambd):
         mask1 = x > lambd
         mask2 = x < -lambd
-        out = torch.zeros_like(x)
-        out += mask1.float() * -lambd + mask1.float() * x
-        out += mask2.float() * lambd + mask2.float() * x
-        return out
+        # out = torch.zeros_like(x)
+        # out += mask1.float() * -lambd + mask1.float() * x
+        # out += mask2.float() * lambd + mask2.float() * x
+        # return out
+
+        return mask1.float() * (-lambd) + mask1.float() * x + mask2.float() * lambd + mask2.float() * x
+
+
 
     def _apply(self, v, alpha):
-        assert alpha > 0, "alpha should be greater than 0"
+        # assert alpha > 0, "alpha should be greater than 0"
         if type(self.Lambda) is not torch.Tensor and type(alpha) is not torch.Tensor:
             # The softshrink function do not support tensor as Lambda.
             thresh = torch.nn.Softshrink(self.Lambda*alpha)
             x = thresh(v)
         else:
-            #print(type(self.Lambda))
-            x = self._softshrink(v, (self.Lambda*alpha).to(v.device))
+            print("new prox 2")
+            x = self._softshrink(v, (self.Lambda*alpha))
         return x
 
 class L0Regularizer(Prox):
@@ -120,10 +129,11 @@ class L0Regularizer(Prox):
     def _hardshrink(x, lambd):
         mask1 = x > lambd
         mask2 = x < -lambd
-        out = torch.zeros_like(x)
-        out += mask1.float() * x
-        out += mask2.float() * x
-        return out
+        # out = torch.zeros_like(x)
+        # out += mask1.float() * x
+        # out += mask2.float() * x
+        # return out
+        return mask1*x + mask2*x
 
     def _apply(self, v, alpha):
         assert alpha > 0, "alpha should be greater than 0"
