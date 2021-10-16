@@ -64,17 +64,16 @@ class Wavelet2D(LinearMap):
     Inputs:
         size_in: Input size.
                  If batchmode:
-                 [nbatch, nchannel, nx, ny],
-                 else: [nx, ny] (real)
-
+                    [nbatch, nchannel, nx, ny],
+                 else:
+                    [nx, ny] (real)
         wave_type: all that pywt supports
         padding: 'zero', 'symmetric', 'reflect' or 'periodization'
+        When using periodization, it should be a unitary transform
         Alert: x should be single precision float ...
-
+    TODO: 3D version of it
     """
 
-    # TODO: consider complex
-    # TODO: compare autograd
     def __init__(self,
                  size_in: Sequence[int],
                  wave_type: str = 'db4',
