@@ -109,7 +109,9 @@ class L1Regularizer(Prox):
             thresh = torch.nn.Softshrink(self.Lambda*alpha)
             x = thresh(v)
         else:
-            print("new prox 2")
+            # print("new prox 2")
+            # print(type(self.Lambda), self.Lambda)
+            # print(type(alpha), alpha)
             x = self._softshrink(v, (self.Lambda*alpha))
         return x
 
