@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 REQUIRED_PACKAGES = ['torch>=1.7', 'numpy', 'scipy', 'torchvision>=0.8', 'dominate>=2.5.1', 'visdom>=0.1.8', 'numpy',
-                     'torchkbnufft >= 1.1.0', 'pytorch_wavelets>=1.3.0', 'scipy>=1.6.0', 'PyWavelets>=1.1.0', 'antspyx>0.2.9']
+                     'torchkbnufft >= 1.1.0', 'pytorch_wavelets>=1.3.0', 'scipy>=1.6.0', 'PyWavelets>=1.1.0', 'antspyx>=0.2.9']
 
 with open("README.md", "r") as h:
     long_description = h.read()
