@@ -102,7 +102,6 @@ class Sense(LinearMap):
     def _apply_adjoint(self, k: Tensor) -> Tensor:
         assert k.shape == self.smaps.shape, "sensitivity maps and signal's shape mismatch"
         k = k * self.masks
-
         k = ifftshift(k, self.dims)
         if self.norm == 'ortho':
             x = ifftn(k, dim=self.dims, norm='ortho')
@@ -249,20 +248,18 @@ class Gmri(LinearMap):
         zmap: relaxation and off-resonance effects in Hz: [batch, nx, ny, (nz)]
                 ref: DOI: 10.1109/TSP.2005.853152
         traj: [nbatch/1, ndim, nshot, npoints]
-        or mask: [batch, nx, ny, (nz)] (name sure that ny is the phase-encoding direction)
         L: number of segmentation
         ti: time points, in ms
         numpoints: length of the Nufft interpolation kernels
     Input/Output:
-        x(complex-valued images): [(batch), nx, ny, (nz)]
+        x(complex-valued images): [batch, 1, nx, ny, (nz)]
         k(k-space data): [(batch), ncoil, nshot*npoints] or [(batch), ncoil, nx, ny, (nz)]
     '''
 
     def __init__(self,
-                 smaps: Tensor = None,
-                 zmap: Tensor = None,
-                 traj: Tensor = None,
-                 mask: Tensor = None,
+                 smaps: Tensor,
+                 zmap: Tensor,
+                 traj: Tensor,
                  norm: str = 'ortho',
                  L: int = 6,
                  nbins: int = 20,
@@ -275,53 +272,42 @@ class Gmri(LinearMap):
         self.L = L
         self.nbins = nbins
         self.dt = dt
-        assert (mask is None) != (
-                traj is None), "Please provide either mask (for cartesian sampling) or Non-cartesian trajectory"
         self.nbatch = self.smaps.shape[0]
         self.nc = self.smaps.shape[1]
-        if mask is not None:
-            self.mask = mask
-            size_in = [self.batch] + list(smaps.shape[2:])
-            size_out = list(smaps.shape)
-            self.A = Sense(smaps, mask, norm)
-            self.AT = self.A.H
-        elif traj is not None:
-            self.traj = traj
-            _, self.ndim, self.nshot, self.npoints = self.traj.shape
-            self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
-                                  numpoints=numpoints).to(smaps)
-            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
-                                          grid_size=tuple(np.array(smaps.shape[2:]) * 2),
-                                          numpoints=numpoints).to(smaps)
-            size_in = [self.nbatch] + list(smaps.shape[2:])
-            size_out = (self.nbatch, self.nc, self.nshot, self.npoints)
-            self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(
-                self.smaps.device) * 1j  # [L, batch, coil, shot, points]
-            self.C = torch.zeros((self.L, self.nbatch) + tuple(self.smaps.shape[2:])).to(
-                self.smaps.device) * 1j  # [L, batch, nx, ny ...]
-            for ib in range(self.nbatch):
-                b, c = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, dt, dt * self.npoints)
-                self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
-                self.C[:, ib, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
-                    (self.L,) + tuple(zmap.shape[1:]))
-            self.traj = self.traj.reshape((self.traj.shape[0], self.ndim, self.nshot * self.npoints))
+        self.traj = traj
+        _, self.ndim, self.nshot, self.npoints = self.traj.shape
+        self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=tuple(np.array(smaps.shape[2:]) * 2),
+                              numpoints=numpoints).to(smaps)
+        self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
+                                      grid_size=tuple(np.array(smaps.shape[2:]) * 2),
+                                      numpoints=numpoints).to(smaps)
+        size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
+        size_out = (self.nbatch, self.nc, self.nshot, self.npoints)
+        self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(
+            self.smaps.device) * 1j  # [L, batch, coil, shot, points]
+        self.C = torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
+            self.smaps.device) * 1j  # [L, batch, 1, nx, ny ...]
+        for ib in range(self.nbatch):
+            b, c = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, dt, dt * self.npoints)
+            self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
+            self.C[:, ib, 0, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
+                (self.L,) + tuple(zmap.shape[1:]))
+        self.traj = self.traj.reshape((self.traj.shape[0], self.ndim, self.nshot * self.npoints))
         super(Gmri, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
 
     def _apply(self, x: Tensor) -> Tensor:
-        y = torch.zeros(self.size_out).to(self.smaps.device) * 1j
+        y = torch.zeros(self.size_out).to(self.smaps)
         for il in range(self.L):
-            if self.traj is not None:
-                y = y + self.B[il] * self.A(x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm).reshape(
-                    self.size_out)
+            y = y + self.B[il] * self.A(x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm).reshape(
+                self.size_out)
         return y
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
-        x = torch.zeros(self.size_in).to(self.smaps.device) * 1j
+        x = torch.zeros(self.size_in).to(self.smaps)
         for il in range(self.L):
-            if self.traj is not None:
-                x = x + self.C[il].conj() * self.AT(
-                    (y * self.B[il].conj()).reshape(self.nbatch, self.nc, self.nshot * self.npoints), self.traj,
-                    smaps=self.smaps, norm=self.norm).squeeze(1)
+            x = x + self.C[il].conj() * self.AT(
+                (y * self.B[il].conj()).reshape(self.nbatch, self.nc, self.nshot * self.npoints), self.traj,
+                smaps=self.smaps, norm=self.norm).squeeze(1)
         return x
 
 
@@ -365,22 +351,22 @@ def mri_exp_approx(b0, bins, lseg, dt, T):
     return b, ct
 
 
-def tukey_filer(LinearMap):
-    '''
-    A Tukey filter to counteract Gibbs ringing artifacts
-    Parameters:
-        size_in: the signal size [nbatch, nchannel, nx (ny, nz ...)]
-        width: the window length [wdx (wdy, wdz) ...]
-        alpha(s): control parameters of the tukey window
-    Returns:
-
-    '''
-
-    def __init__(self,
-                 size_in: Sequence[int],
-                 width: Sequence[int],
-                 alpha: Sequence[int]
-                 ):
-        self.width = width
-        self.alpha = alpha
-        super(tukey_filer, self).__init__(tuple(size_in), tuple(size_in))
+# def tukey_filer(LinearMap):
+#     '''
+#     A Tukey filter to counteract Gibbs ringing artifacts
+#     Parameters:
+#         size_in: the signal size [nbatch, nchannel, nx (ny, nz ...)]
+#         width: the window length [wdx (wdy, wdz) ...]
+#         alpha(s): control parameters of the tukey window
+#     Returns:
+#
+#     '''
+#
+#     def __init__(self,
+#                  size_in: Sequence[int],
+#                  width: Sequence[int],
+#                  alpha: Sequence[int]
+#                  ):
+#         self.width = width
+#         self.alpha = alpha
+#         super(tukey_filer, self).__init__(tuple(size_in), tuple(size_in))

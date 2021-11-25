@@ -8,7 +8,7 @@ import sys
 def coeffs_to_tensor(yl: Tensor,
                      yh: Sequence[Tensor]):
     """
-    Array 2D DFT array into a tensor
+    Array 2D DWT array into a tensor
     Args:
         yl:
         yh:

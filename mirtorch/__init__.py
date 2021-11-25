@@ -1,5 +1,6 @@
 from mirtorch import prox
 from mirtorch import linear
-from mirtorch import nn
+from mirtorch import alg
+from mirtorch import dic
 
-__all__ = ['linear', 'prox', 'alg', 'nn', 'dic']
+__all__ = ['linear', 'prox', 'alg','dic']

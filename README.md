@@ -2,7 +2,7 @@
 
 ### Intro
 
-A PyTorch-based differentiable ***I***mage ***R***econstruction ***T***oolbox, with emphasis on algorithm unrolling/unfolding, developed in University of ***M***ichigan.
+A Py***Torch***-based differentiable ***I***mage ***R***econstruction ***T***oolbox, with emphasis on algorithm unrolling/unfolding, developed at the University of ***M***ichigan.
 
 <u>This project is still in a active re-building mode. We plan to release a stable API with docs later this year.</u>
 
@@ -10,33 +10,27 @@ Main features include:
 
 ### Linear maps
 
-The LinearMap class overloads common matrix operations, such as `+, - , *`. It also supports an efficient backpropagation.
+The LinearMap class overloads common matrix operations, such as `+, - , *`. It also supports an efficient back-propagation.
 
 Instances include basic linear operations (like convolution), classical imaging processing and MRI system matrix. More is on the way...
 
 ### Proximal operators
 
-Supports unitary transformation and majorization.
+Supports the multiplication with diagonal and unitary transformations.
 
-### Iterative Reconstruction (IR) algorithms
+### Iterative reconstruction (IR) algorithms
 
-Currently includes conjugate gradients (CG) methods. More first-order methods, like FISTA and POGM is being implemented.
-
-### Algorithm unrolling/unrolled networks
-
-Currently supports MoDL. Currently, we are testing memory-efficient (MELD) and other unrolled networks.
+Currently the first-order methods include CG, FISTA and POGM.
 
 ### Applications/demos
 
 #### MRI reconstruction: 
 
-example/demo_mri.ipynb includes SENSE, Non-Cartesian SENSE and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*) methods.
-
-Blind compressed sensing (dictionary learning) is in demo_dl.ipynb.
+/example includes SENSE, Non-Cartesian SENSE and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*), compressed sensing (CS) and dictionary learning (DL) methods
 
 #### MRI sampling pattern optimization:
 
-example/demo_mri_traj.demo contains MRI sampling pattern optimization examples. The reconstruction loss is utilized to jointly optimize reconstruction algorithms and sampling pattern.
+example/demo_mri_traj.demo contains MRI sampling pattern optimization examples. One may use the reconstruction loss as objective function to jointly optimize reconstruction algorithms and the sampling pattern.
 
 ### Credit
 

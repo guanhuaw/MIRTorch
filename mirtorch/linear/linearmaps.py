@@ -124,9 +124,11 @@ class LinearMap:
     def __neg__(self: T) -> T:
         return -1 * self
 
-    # def __matmul__(self, other):
-    #     pass
-
+    def to(self:T, *args, **kwargs):
+    # Copy to different devices
+        for prop in self.__dict__.keys():
+            if(isinstance(self.__dict__[prop], torch.Tensor) or isinstance(self.__dict__[prop], torch.nn.Module)):
+                self.__dict__[prop] = self.__dict__[prop].to(*args, **kwargs)
 
 class Add(LinearMap):
     '''

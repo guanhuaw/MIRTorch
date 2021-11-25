@@ -1,6 +1,5 @@
 import torch
 
-
 class CG_func(torch.autograd.Function):
     @staticmethod
     def forward(ctx, b, A, max_iter, tol, alert, x0):
@@ -32,7 +31,7 @@ def cg_block(x0, b, A, tol, max_iter, alert):
         alpha = rktrk / pktapk
         xk1 = xk + alpha * pk
         rk1 = rk - alpha * A * pk
-        rk1trk1 = torch.sum(rk1.conj() * rk1).abs()
+        rk1trk1 = torch.square(torch.norm(rk1))
         beta = rk1trk1 / rktrk
         pk1 = rk1 + beta * pk
         del xk
@@ -41,10 +40,10 @@ def cg_block(x0, b, A, tol, max_iter, alert):
         xk = xk1
         rk = rk1
         pk = pk1
-        num_loop = num_loop + 1
         rktrk = rk1trk1
-        if alert:
-            print(f'residual at {num_loop}th iter: {rktrk}')
+        num_loop = num_loop + 1
+    if alert:
+        print(f'residual at {num_loop}th iter: {rktrk}')
     return xk
 
 
