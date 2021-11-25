@@ -1,3 +1,4 @@
+from numpy import save
 import torch
 
 
@@ -18,7 +19,7 @@ class CG_func(torch.autograd.Function):
         return cg_block(b, dx, ctx.A, ctx.tol, ctx.max_iter, ctx.alert), None, None, None, None, None
 
 
-def cg_block(x0, b, A, tol, max_iter, alert):
+def cg_block(x0, b, A, tol, max_iter, alert, save_values: bool = False):
     # solver for PSD Ax = b
     r0 = b - A * x0
     p0 = r0
@@ -27,6 +28,7 @@ def cg_block(x0, b, A, tol, max_iter, alert):
     xk = x0
     rktrk = torch.sum(rk.conj() * rk).abs()
     num_loop = 0
+    saved = []
     while torch.norm(rk.abs()).item() > tol and num_loop < max_iter:
         pktapk = torch.sum(pk.conj() * (A * pk)).abs()
         alpha = rktrk / pktapk
@@ -43,8 +45,12 @@ def cg_block(x0, b, A, tol, max_iter, alert):
         pk = pk1
         num_loop = num_loop + 1
         rktrk = rk1trk1
+        if save_values:
+            saved.append(xk)
         if alert:
             print(f'residual at {num_loop}th iter: {rktrk}')
+    if save_values:
+        return saved
     return xk
 
 
