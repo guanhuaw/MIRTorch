@@ -38,7 +38,7 @@ class POGM():
 
     def run_alg(self,
                 x0: torch.Tensor,
-                save_values: bool = False):
+                eval_func: Callable = None):
         told = 1
         gamma_old = 1
         xold = x0

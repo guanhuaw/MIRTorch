@@ -17,7 +17,6 @@ class FISTA():
         g_prox (Prox): proximal operator g
         restart (Union[...]): restart strategy, not yet implemented
     '''
-    # TODO: add a user-defined eval() for each iteration to save intermediate metrics (see jeff's mirt.jl implementation)
 
     def __init__(self,
                  f_grad: Callable,
@@ -36,7 +35,7 @@ class FISTA():
 
     def run_alg(self,
                 x0: torch.Tensor,
-                save_values: bool = False):
+                eval_func: Callable = None):
         def _update_momentum():
             nonlocal told, beta
             tnew = .5 * (1 + np.sqrt(1 + 4 * told**2))

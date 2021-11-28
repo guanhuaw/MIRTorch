@@ -13,7 +13,6 @@ from typing import Sequence
 from torch import Tensor
 from .util import DiffFunc, DiffFunc_adj, dim_conv
 
-
 class Diff1d(LinearMap):
     '''
         1st order finite difference.
@@ -75,6 +74,31 @@ class Diff2dframe(LinearMap):
                           (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2)), dim=-2) + torch.cat(((x[..., 0] - x[
             ..., 1]).unsqueeze(-1), (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]), (x[..., -1] - x[..., -2]).unsqueeze(
             -1)), dim=-1)
+
+    def _apply(self, x):
+        return self.RtR(x)
+
+    def _apply_adjoint(self, x):
+        return self.RtR(x)
+
+
+class Diff3dframe(LinearMap):
+    """
+    A little more efficient way to implement the frame operator for the Gram of finite difference.
+    Warning: assuming the last two dimensions is of interest.
+    """
+
+    def __init__(self,
+                 size_in: Sequence[int]):
+        super(Diff3dframe, self).__init__(size_in, size_in)
+
+    def RtR(self, x):
+        return torch.cat(((x[..., 0, :, :] - x[..., 1, :, :]).unsqueeze(-3),
+                          (2 * x[..., 1:-1, :, :] - x[..., :-2, :, :] - x[..., 2:, :, :]),
+                          (x[..., -1, :, :] - x[..., -2, :, :]).unsqueeze(-3)), dim=-3) + torch.cat(((x[..., 0, :] - x[..., 1, :])
+            .unsqueeze(-2), (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]), (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2)), dim=-2) + torch.cat(
+            ((x[..., 0] - x[..., 1]).unsqueeze(-1), (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]),
+             (x[..., -1] - x[..., -2]).unsqueeze(-1)), dim=-1)
 
     def _apply(self, x):
         return self.RtR(x)
