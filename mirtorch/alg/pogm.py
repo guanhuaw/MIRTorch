@@ -38,15 +38,13 @@ class POGM():
 
     def run_alg(self,
                 x0: torch.Tensor,
-                save_values: bool = False,
-                eval_func: Callable = None):
+                save_values: bool = False):
         told = 1
         gamma_old = 1
         xold = x0
         omold = x0
         zold = x0
-        if eval_func is not None:
-            saved = []
+        saved = []
         for i in range(1, self.max_iter + 1):
             fgrad = self.f_grad(xold)
             omnew = xold - self._alpha * fgrad
@@ -64,10 +62,8 @@ class POGM():
             xold = xnew
             gamma_old = gamma_new
 
-            if eval_func is not None:
+            if save_values:
                 saved.append(xold)
-
-        if eval_func is not None:
-            return xold, saved
-        else:
-            return xold
+        if save_values:
+            return saved 
+        return xold
