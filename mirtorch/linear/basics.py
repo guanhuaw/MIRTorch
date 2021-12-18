@@ -13,13 +13,14 @@ from typing import Sequence
 from torch import Tensor
 from .util import DiffFunc, DiffFunc_adj, dim_conv
 
+
 class Diff1d(LinearMap):
-    '''
-        1st order finite difference.
-        Params:
-            size_in: size of the input x
-            dim: assign the dimension to apply operation
-    '''
+    """
+    A 1st order finite difference operator.
+
+    Attributes:
+        dim: assign the dimension to apply operation
+    """
 
     def __init__(self,
                  size_in: Sequence[int],
@@ -38,30 +39,10 @@ class Diff1d(LinearMap):
         return DiffFunc_adj.apply(y, self.dim)
 
 
-#
-# class Diff2d(LinearMap):
-#     def __init__(self,
-#                  size_in: Sequence[int],
-#                  dims: Sequence[int]):
-#         size_out = copy.copy(size_in)
-#         size_out[dims[1]] -= 1
-#         size_out[dims[0]] -= 1
-#         super(Diff2d, self).__init__(size_in, size_out)
-#         # TODO: determine size_out by size in
-#         self.dims = dims
-#         assert len(self.dims) == 2, "Please denote two dimension for a 2D finite difference operator"
-#
-#     def _apply(self, x):
-#         return torch.cat((DiffFunc.apply(self.dims[1]), DiffFunc.apply(x, self.dims[0])),dim=0)
-#
-#     def _apply_adjoint(self, y):
-#         return DiffFunc_adj.apply(y[1])+DiffFunc_adj.apply(y[0])
-
-
 class Diff2dframe(LinearMap):
     """
     A little more efficient way to implement the frame operator for the Gram of finite difference.
-    Warning: assuming the last two dimensions is of interest.
+    Apply to last two dimensions.
     """
 
     def __init__(self,
@@ -85,7 +66,7 @@ class Diff2dframe(LinearMap):
 class Diff3dframe(LinearMap):
     """
     A little more efficient way to implement the frame operator for the Gram of finite difference.
-    Warning: assuming the last two dimensions is of interest.
+    Apply to last three dimensions.
     """
 
     def __init__(self,
@@ -95,8 +76,10 @@ class Diff3dframe(LinearMap):
     def RtR(self, x):
         return torch.cat(((x[..., 0, :, :] - x[..., 1, :, :]).unsqueeze(-3),
                           (2 * x[..., 1:-1, :, :] - x[..., :-2, :, :] - x[..., 2:, :, :]),
-                          (x[..., -1, :, :] - x[..., -2, :, :]).unsqueeze(-3)), dim=-3) + torch.cat(((x[..., 0, :] - x[..., 1, :])
-            .unsqueeze(-2), (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]), (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2)), dim=-2) + torch.cat(
+                          (x[..., -1, :, :] - x[..., -2, :, :]).unsqueeze(-3)), dim=-3) + torch.cat(
+            ((x[..., 0, :] - x[..., 1, :])
+             .unsqueeze(-2), (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]),
+             (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2)), dim=-2) + torch.cat(
             ((x[..., 0] - x[..., 1]).unsqueeze(-1), (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]),
              (x[..., -1] - x[..., -2]).unsqueeze(-1)), dim=-1)
 
@@ -108,12 +91,15 @@ class Diff3dframe(LinearMap):
 
 
 class Diag(LinearMap):
-    '''
-        Expand an input vector into a diagonal matrix.
-        For example, x is an 5*5 image.
-        So P should be also a 5*5 weight vector.
-        P*x (pytorch multiplication here) = Diag{vec(P)}*vec(x)
-    '''
+    """
+    Expand an input vector into a diagonal matrix.
+    For example, x is an 5*5 image.
+    So P should be also a 5*5 weight vector.
+    P*x (pytorch multiplication here) = Diag{vec(P)}*vec(x)
+
+    Attributes:
+        P: the diagonal matrix
+    """
 
     def __init__(self,
                  P: Tensor):
@@ -129,6 +115,10 @@ class Diag(LinearMap):
 
 
 class Identity(LinearMap):
+    """
+    Identity mapping.
+    """
+
     def __init__(self, size_in):
         size_out = size_in
         super(Identity, self).__init__(size_in, size_out)
@@ -142,7 +132,8 @@ class Identity(LinearMap):
 
 class Convolve1d(LinearMap):
     """
-        1D cross-correlation linear map.
+    1D cross-correlation linear map.
+    The attributes follow the definition of torch.nn.Functional.conv1d
     """
 
     def __init__(self,
@@ -178,7 +169,8 @@ class Convolve1d(LinearMap):
 
 class Convolve2d(LinearMap):
     """
-        2D cross-correlation linear map.
+    2D cross-correlation linear map.
+    The attributes follow the definition of torch.nn.Functional.conv2d
     """
 
     def __init__(self,
@@ -223,7 +215,8 @@ class Convolve2d(LinearMap):
 
 class Convolve3d(LinearMap):
     """
-        3D cross-correlation linear map.
+    3D cross-correlation linear map.
+    The attributes follow the definition of torch.nn.Functional.conv3d
     """
 
     def __init__(self,
@@ -269,15 +262,11 @@ class Convolve3d(LinearMap):
 
 class Patch2D(LinearMap):
     """
-        Patch operator to decompose image into blocks
-        Parameters:
-            kernel_size: int, isotropic kernel size
-            stride: int, size of stride
-        Input:
-            x: [nbatch, nchannel, nx, ny]
-        Return:
-            y: [nbatch, nchannel, npatchx, npatchy, kernel_size, kernel_size] (normal)
-               [nbatch, nchannel, kernel_size*kernel_size, npatchx*npatchy] (padded)
+    Patch operator to decompose image into blocks
+
+    Attributes:
+        kernel_size: int, isotropic kernel size
+        stride: int, size of stride
     """
 
     def __init__(self,
@@ -298,6 +287,14 @@ class Patch2D(LinearMap):
         super(Patch2D, self).__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
+        """
+        Args:
+            x: [nbatch, nchannel, nx, ny]
+
+        Returns:
+            y: [nbatch, nchannel, npatchx, npatchy, kernel_size, kernel_size] (normal)
+                [nbatch, nchannel, kernel_size*kernel_size, npatchx*npatchy] (padded)
+        """
         x = x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).contiguous()
         if self.padded:
             x = x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3], x.shape[4] * x.shape[5]).permute(
@@ -319,15 +316,10 @@ class Patch2D(LinearMap):
 
 class Patch3D(LinearMap):
     """
-        Patch operator to decompose 3D image into patches.
-        Parameters:
-            kernel_size: isotropic kernel size
-            stride: size of stride
-        Input:
-            x: [nbatch, nchannel, nx, ny, nz]
-        Return:
-            y: [nbatch, nchannel, npatchx, npatchy, npatchz, kernel_size, kernel_size, kernel_size]
-             : [nbatch, nchannel,kernel_size**3, npatchx, npatchy, npatchz]
+    Patch operator to decompose 3D image into patches.
+    Attributes:
+        kernel_size: isotropic kernel size
+        stride: size of stride
     """
 
     def __init__(self,
@@ -352,6 +344,16 @@ class Patch3D(LinearMap):
         super(Patch3D, self).__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
+        """
+        Args:
+            x: [nbatch, nchannel, nx, ny, nz]
+
+        Returns:
+            y: [nbatch, nchannel, npatchx, npatchy, npatchz, kernel_size, kernel_size, kernel_size] (normal)
+             : [nbatch, nchannel,kernel_size**3, npatchx, npatchy, npatchz] (padded)
+
+
+        """
         x = x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).unfold(4,
                                                                                                        self.size_kernel,
                                                                                                        self.stride).contiguous()

@@ -6,26 +6,29 @@ from mirtorch.prox import Prox
 
 
 class POGM():
-    r'''
-    Optimized Proximal Gradient Method (POGM) 
+    """
+    Optimized Proximal Gradient Method (POGM)
 
     .. math::
         \arg \min_x f(x) + g(x)
      where grad(f(x)) is L-Lipschitz continuous and g is proximal operator
-    Args:
+
+    Attributes:
         max_iter (int): number of iterations to run
         f_grad (Callable): gradient of f
         f_L (float): L-Lipschitz value of f_grad
         g_prox (Prox): proximal operator g
         restart (Union[...]): restart strategy, not yet implemented
-    '''
+        eval_func: user-defined function to calculate the loss at each iteration.
+    """
 
     def __init__(self,
                  f_grad: Callable,
                  f_L: float,
                  g_prox: Prox,
                  max_iter: int = 10,
-                 restart=False):
+                 restart=False,
+                 eval_func: Callable = None):
 
         self.max_iter = max_iter
         self.f_grad = f_grad
@@ -35,16 +38,25 @@ class POGM():
         if restart:
             raise NotImplementedError
         self.restart = restart
+        self.eval_func = eval_func
 
     def run_alg(self,
-                x0: torch.Tensor,
-                eval_func: Callable = None):
+                x0: torch.Tensor):
+        """
+        Run the algorithm
+        Args:
+            x0: initialization
+        Returns:
+            xk: results
+            saved: (optional) a list of intermediate results, calcuated by the eval_func.
+        """
         told = 1
         gamma_old = 1
         xold = x0
         omold = x0
         zold = x0
-        saved = []
+        if self.eval_func is not None:
+            saved = []
         for i in range(1, self.max_iter + 1):
             fgrad = self.f_grad(xold)
             omnew = xold - self._alpha * fgrad
@@ -62,8 +74,10 @@ class POGM():
             xold = xnew
             gamma_old = gamma_new
 
-            if save_values:
+            if self.eval_func is not None:
                 saved.append(xold)
-        if save_values:
-            return saved 
-        return xold
+
+        if self.eval_func is not None:
+            return xold, saved
+        else:
+            return xold

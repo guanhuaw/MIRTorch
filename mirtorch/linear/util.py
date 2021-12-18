@@ -2,6 +2,7 @@ import torch
 from torch import Tensor
 from typing import Union, Sequence
 
+
 def finitediff(x: Tensor, dim: int = -1):
     """
     Apply finite difference operator on a certain dim
@@ -32,9 +33,9 @@ def finitediff_adj(y: Tensor, dim: int = -1):
 
 
 class DiffFunc(torch.autograd.Function):
-    '''
+    """
         autograd.Function for the 1st-order finite difference operators
-    '''
+    """
 
     @staticmethod
     def forward(ctx, x, dim):
@@ -47,9 +48,9 @@ class DiffFunc(torch.autograd.Function):
 
 
 class DiffFunc_adj(torch.autograd.Function):
-    '''
-        autograd.Function for the 1st-order finite difference operators
-    '''
+    """
+    autograd.Function for the 1st-order finite difference operators
+    """
 
     @staticmethod
     def forward(ctx, x, dim):
@@ -88,7 +89,7 @@ def ifftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
         shifts = [(x.shape[i] + 1) // 2 for i in dims]
     return torch.roll(x, shifts, dims)
 
-def dim_conv(dim_in, dim_kernel_size, dim_stride = 1, dim_padding = 0, dim_dilation = 1):
+
+def dim_conv(dim_in, dim_kernel_size, dim_stride=1, dim_padding=0, dim_dilation=1):
     dim_out = (dim_in + 2 * dim_padding - dim_dilation * (dim_kernel_size - 1) - 1) // dim_stride + 1
     return dim_out
-

@@ -5,15 +5,19 @@ from pytorch_wavelets import DWTForward, DWTInverse
 from typing import Union, Sequence
 import sys
 
+
+# TODO: 3d wavelets
+
 def coeffs_to_tensor(yl: Tensor,
                      yh: Sequence[Tensor]):
     """
-    Array 2D DWT array into a tensor
+    Assemble 2D DWT array into a tensor
     Args:
-        yl:
-        yh:
+        yl: coefficients of the lowest level
+        yh: multi-level coefficients
     Returns:
-
+        wl_cat: pieced-together tensors
+        dic_size: recorded size of the dictionary
     """
     nlevel = len(yh)
     dic_size = []
@@ -40,6 +44,13 @@ def coeffs_to_tensor(yl: Tensor,
 
 def tensor_to_coeffs(wl_cat: Tensor,
                      dic_size: Sequence[int]):
+    """
+    Args:
+        wl_cat:
+        dic_size:
+    Returns:
+
+    """
     yl = wl_cat[..., :dic_size[0][0], :dic_size[0][1]]
     yh = []
     for ilevel in range(len(dic_size) - 1):
@@ -61,7 +72,7 @@ class Wavelet2D(LinearMap):
     Implementation based on Pytorch_wavelets toolboxes:
     https://pytorch-wavelets.readthedocs.io/en/latest/dwt.html
     It should support all wave types available in PyWavelets
-    Inputs:
+    Attributes:
         size_in: Input size.
                  If batchmode:
                     [nbatch, nchannel, nx, ny],
@@ -70,7 +81,7 @@ class Wavelet2D(LinearMap):
         wave_type: all that pywt supports
         padding: 'zero', 'symmetric', 'reflect' or 'periodization'
         When using periodization, it should be a unitary transform
-        Alert: x should be single precision float ...
+    NB: x should be single precision float ...
     TODO: 3D version of it
     """
 
@@ -79,11 +90,11 @@ class Wavelet2D(LinearMap):
                  wave_type: str = 'db4',
                  padding: str = 'zero',
                  J: int = 3,
-                 device = 'cpu'):
+                 device='cpu'):
         self.J = J
         self.wave_type = wave_type
         self.padding = padding
-        if len(size_in)==4:
+        if len(size_in) == 4:
             self.batchmode = True
         elif len(size_in) == 2:
             self.batchmode = False

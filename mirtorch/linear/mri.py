@@ -1,7 +1,6 @@
 """
 Discrete-to-discreate system matrices for MRI.
 2021-02. Guanhua Wang, University of Michigan
-To Do: toeplitz embedding, field inhomogeneity, frame operator
 """
 
 import numpy as np
@@ -9,17 +8,21 @@ import torch
 from torch import Tensor
 from torch.fft import fftn, ifftn
 from .linearmaps import LinearMap
-import torchkbnufft as tkbn
 from typing import Union, Sequence
+import torchkbnufft as tkbn
 from .util import fftshift, ifftshift
 
 
 class FFTCn(LinearMap):
-    '''
+    """
     FFT operators with FFTshift and iFFTshift for multidimensional data.
     Pytorch provides three modes in FFT: 'ortho', 'forward', 'backward'.
     Each pair of FFT and iFFT with same mode is the inverse, but not necessarily the adjoint to each other.
-    '''
+
+    Attributes:
+        norm: normalization of the fft ('ortho', 'forward' or 'backward')
+        dims: the dimensions to apply the fft
+    """
 
     def __init__(self,
                  size_in: Sequence[int],
@@ -49,22 +52,12 @@ class FFTCn(LinearMap):
 
 
 class Sense(LinearMap):
-    '''
+    """
     Cartesian sense operator, following "SENSE: Sensitivity encoding for fast MRI"
-    Parameters:
-        mask: [(batch), nx, ny, (nz)]
+    Attributes:
+        masks: [(batch), nx, ny, (nz)]
         sensitivity maps: [(batch), ncoil, nx, ny, (nz)]
-    Inputs:
-        If batchmode:
-            x in size [batch, 1, nx, ny, (nz)]
-        else:
-            x in size [nx, ny, (nz)]
-    Outputs:
-        If batchmode:
-            y in size [batch, ncoil, nx, ny, (nz)]
-        else:
-            y in size [ncoil, nx, ny, nz]
-    '''
+    """
 
     def __init__(self,
                  smaps: Tensor,
@@ -85,12 +78,24 @@ class Sense(LinearMap):
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
-        assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
+        # assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
         self.smaps = smaps
         self.batchmode = batchmode
 
     def _apply(self, x: Tensor) -> Tensor:
-        assert x.shape == self.masks.shape, "mask and image's shape mismatch"
+        """
+        Args:
+            x:  If batchmode:
+                    [batch, 1, nx, ny, (nz)]
+                else:
+                    [nx, ny, (nz)]
+        Returns:
+            y:  If batchmode:
+                    [batch, ncoil, nx, ny, (nz)]
+                else:
+                    [ncoil, nx, ny, nz]
+        """
+        # assert x.shape == self.masks.shape, "mask and image's shape mismatch"
         # if not self.batchmode:
         #     x = x.unsqueeze(0)
         x = x * self.smaps
@@ -100,6 +105,19 @@ class Sense(LinearMap):
         return k
 
     def _apply_adjoint(self, k: Tensor) -> Tensor:
+        """
+        Args:
+            y:  If batchmode:
+                    [batch, ncoil, nx, ny, (nz)]
+                else:
+                    [ncoil, nx, ny, nz]
+        Returns:
+            x:  If batchmode:
+                    [batch, 1, nx, ny, (nz)]
+                else:
+                    [nx, ny, (nz)]
+        """
+        # asser
         assert k.shape == self.smaps.shape, "sensitivity maps and signal's shape mismatch"
         k = k * self.masks
         k = ifftshift(k, self.dims)
@@ -123,15 +141,13 @@ class NuSense(LinearMap):
     The implementation calls Matthew Muckley's Torchkbnufft toolbox:
     https://github.com/mmuckley/torchkbnufft
 
-    Parameters:
+    Attributes:
         traj: [(batch), ndim, nshot*npoints]
         # Attention: Traj can have no batch dimension even x have. ref: https://github.com/mmuckley/torchkbnufft/pull/24
         sensitivity maps: [(batch), ncoil, nx, ny, (nz)]
-    Input/Output:
-        x(complex-valued images): [nx, ny, (nz)] or [nbatch, 1, nx, ny (nz)]
-        k(k-space data): [(batch), ncoil, nshot*npoints]
-
-    The device follow smaps. So make sure that smaps and image stay on the same device.
+        sequential: memory saving mode
+        batch mode: to preserve the batch dimension
+    The device follows smaps. Smaps and image should be on the same device.
     '''
 
     def __init__(self,
@@ -140,11 +156,13 @@ class NuSense(LinearMap):
                  norm='ortho',
                  batchmode=True,
                  numpoints: Union[int, Sequence[int]] = 6,
-                 grid_size: float = 2):
+                 grid_size: float = 2,
+                 sequential: bool = False):
         self.smaps = smaps
         self.norm = norm
         self.traj = traj
         self.batchmode = batchmode
+        self.sequential = sequential
         assert grid_size >= 1, "grid size should be greater than 1"
         if batchmode:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int))
@@ -168,17 +186,69 @@ class NuSense(LinearMap):
             super(NuSense, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
 
     def _apply(self, x: Tensor) -> Tensor:
-        if self.batchmode:
-            return self.A(x, self.traj, smaps=self.smaps, norm=self.norm)
+        """
+        Args:
+            x:  if batchmode:
+                    [nbatch, 1, nx, ny (nz)]
+                else:
+                    [nx, ny, (nz)]
+        Returns:
+            k： if batchmode:
+                    [batch, ncoil, nshot*npoints]
+                else:
+                    [ncoil, nshot*npoints]
+        """
+        if self.sequential:
+            k = torch.zeros(self.size_out).to(self.smaps)
+            if self.batchmode:
+                for i in range(self.smaps.shape[1]):
+                    k[:, i, ...] = self.A(x, self.traj, smaps=self.smaps[:, i, ...].unsqueeze(1),
+                                          norm=self.norm).squeeze(1)
+                return k
+            else:
+                for i in range(self.smaps.shape[0]):
+                    k[i, ...] = self.A(x.unsqueeze(0).unsqueeze(0), self.traj,
+                                       smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0), norm=self.norm).squeeze(
+                        0).squeeze(0)
+                return k
         else:
-            return self.A(x.unsqueeze(0).unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0),
-                          norm=self.norm).squeeze(0).squeeze(0)
+            if self.batchmode:
+                return self.A(x, self.traj, smaps=self.smaps, norm=self.norm)
+            else:
+                return self.A(x.unsqueeze(0).unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0),
+                              norm=self.norm).squeeze(0).squeeze(0)
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
-        if self.batchmode:
-            return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm)
+        """
+        Args:
+            y： if batchmode:
+                    [batch, ncoil, nshot*npoints]
+                else:
+                    [ncoil, nshot*npoints]
+        Returns:
+            x:  if batchmode:
+                    [nbatch, 1, nx, ny (nz)]
+                else:
+                    [nx, ny, (nz)]
+        """
+        if self.sequential:
+            x = torch.zeros(self.size_in).to(self.smaps)
+            if self.batchmode:
+                for i in range(self.smaps.shape[1]):
+                    x += self.AT(y[:, i, ...].unsqueeze(1), self.traj, smaps=self.smaps[:, i, ...].unsqueeze(1),
+                                 norm=self.norm)
+                return x
+            else:
+                for i in range(self.smaps.shape[0]):
+                    x += self.AT(y[i, ...].unsqueeze(0).unsqueeze(0), self.traj,
+                                 smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0), norm=self.norm).squeeze(0).squeeze(
+                        0)
+                return x
         else:
-            return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(0)
+            if self.batchmode:
+                return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm)
+            else:
+                return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(0)
 
 
 class NuSenseFrame(LinearMap):
@@ -187,15 +257,12 @@ class NuSenseFrame(LinearMap):
     The implementation calls Matthew Muckley's Torchkbnufft toolbox:
     https://github.com/mmuckley/torchkbnufft
 
-    Parameters:
+    Attributes:
         traj: [(batch), ndim, nshot*npoints]
         # Attention: Traj can have no batch dimension even x have. ref: https://github.com/mmuckley/torchkbnufft/pull/24
         sensitivity maps: [(batch), ncoil, nx, ny, (nz)]
-    Input/Output:
-        x(complex-valued images): [nx, ny, (nz)] or [nbatch, 1, nx, ny (nz)]
-        k(k-space data): [(batch), ncoil, nshot*npoints]
 
-    The device follow smaps. So make sure that smaps and image stay on the same device.
+    The device follows smaps. Smaps and image should be on the same device.
     '''
 
     def __init__(self,
@@ -214,17 +281,29 @@ class NuSenseFrame(LinearMap):
         if batchmode:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int))
             self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[2:]),
-                                                    grid_size=self.grid_size, numpoints=numpoints, norm = self.norm)
+                                                    grid_size=self.grid_size, numpoints=numpoints, norm=self.norm)
             size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
             super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in), device=smaps.device)
         else:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
             self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_size=self.grid_size,
-                                                    numpoints=numpoints, norm = self.norm)
+                                                    numpoints=numpoints, norm=self.norm)
             size_in = list(smaps.shape[1:])
             super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in), device=smaps.device)
 
     def _apply(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x:  if batchmode:
+                    [nbatch, 1, nx, ny (nz)]
+                else:
+                    [nx, ny, (nz)]
+        Returns:
+            x:  if batchmode:
+                    [nbatch, 1, nx, ny (nz)]
+                else:
+                    [nx, ny, (nz)]
+        """
         if self.batchmode:
             return self.toep_op(x, self.kernel, smaps=self.smaps)
         else:
@@ -240,9 +319,9 @@ class NuSenseFrame(LinearMap):
 
 
 class Gmri(LinearMap):
-    '''
+    """
     B0-informed mri reconstruction
-    Parameters:
+    Attributes:
         Norm: like the Sense cases
         smaps: sensitivity maps: [batch, nx, ny, (nz)] (must have a batch dimension)
         zmap: relaxation and off-resonance effects in Hz: [batch, nx, ny, (nz)]
@@ -251,10 +330,7 @@ class Gmri(LinearMap):
         L: number of segmentation
         ti: time points, in ms
         numpoints: length of the Nufft interpolation kernels
-    Input/Output:
-        x(complex-valued images): [batch, 1, nx, ny, (nz)]
-        k(k-space data): [(batch), ncoil, nshot*npoints] or [(batch), ncoil, nx, ny, (nz)]
-    '''
+    """
 
     def __init__(self,
                  smaps: Tensor,
@@ -296,6 +372,13 @@ class Gmri(LinearMap):
         super(Gmri, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
 
     def _apply(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: complex-valued images, [nx, ny, (nz)] or [nbatch, 1, nx, ny (nz)]
+
+        Returns:
+            k: k-space data, [(batch), ncoil, nshot*npoints]
+        """
         y = torch.zeros(self.size_out).to(self.smaps)
         for il in range(self.L):
             y = y + self.B[il] * self.A(x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm).reshape(
@@ -316,17 +399,17 @@ def mri_exp_approx(b0, bins, lseg, dt, T):
     From Sigpy: https://github.com/mikgroup/sigpy
     and MIRT: https://web.eecs.umich.edu/~fessler/code/
     Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2*pi*zmap) [M*N]
-    Params:
+    Args:
         b0 (array): inhomogeneity matrix. in Hz.
         bins (int): number of histogram bins to use.
         lseg (int): number of time segments.
         dt (float): hardware dwell time (ms).
         T (float): length of pulse (ms).
-    Input/output:
+    Returns:
         2-element tuple containing
-        - **B** (*array*): temporal interpolator.
-        - **Ct** (*array*): off-resonance phase at each time segment center.
-    TODO: The SVD approach.
+        b: temporal interpolator.
+        ct: off-resonance phase at each time segment center.
+    TODO(guahuaw@umich.edu): The SVD approach.
     """
 
     # create time vector
@@ -349,7 +432,6 @@ def mri_exp_approx(b0, bins, lseg, dt, T):
     ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
 
     return b, ct
-
 
 # def tukey_filer(LinearMap):
 #     '''
