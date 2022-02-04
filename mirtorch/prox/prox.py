@@ -11,17 +11,17 @@ FloatLike = Union[float, torch.FloatTensor]
 
 
 class Prox:
-    r"""
+    """
     Proximal operator base class
     Prox is currently supported to be called on a torch.Tensor
 
     .. math::
        Prox_f(v) = \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(PTx)
 
-    Args:
+    Attributes:
         T (LinearMap): optional, unitary LinearMap
         P (LinearMap): optional, diagonal matrix
-        TODO: manually check if it is unitary or diagonal (maybe not so fast ...)
+        TODO: manually check if it is unitary or diagonal (maybe not so easy ...)
     """
 
     def __init__(self, T: LinearMap = None, P: LinearMap = None):
@@ -51,9 +51,16 @@ class Prox:
         return f'<{self.__class__.__name__} Prox'
 
     def _complex(self, v):
+        """
+        Args:
+            v: input tensor
+
+        Returns:
+            x: output proximal results
+        """
         # To avoid the influence of noise
         # Without thresholding, numerical issues may happen for some unitary transform (wavelets)
-        eps = 1e-10
+        eps = 1e-15
         angle = torch.zeros_like(v)
         msk = torch.abs(v) > eps
         angle[msk] = v[msk] / torch.abs(v)[msk]
@@ -61,19 +68,14 @@ class Prox:
         return angle
 
 
-class NoOp(Prox):
-    def _apply(self, v: torch.Tensor, alpha: FloatLike = None):
-        return v
-
-
 class L1Regularizer(Prox):
-    r"""
+    """
     Proximal operator for L1 regularizer, using soft thresholding
 
     .. math::
         \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_1
 
-    Args:
+    Attributes:
         Lambda (float): regularization parameter.
         P (LinearMap): optional, diagonal LinearMap
         T (LinearMap): optional, unitary LinearMap
@@ -82,10 +84,8 @@ class L1Regularizer(Prox):
     def __init__(self, Lambda, T: LinearMap = None, P: LinearMap = None):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
-        # assert self.Lambda > 0, "alpha should be greater than 0"
+        assert self.Lambda > 0, "alpha should be greater than 0"
         if P is not None:
-            # Should this be v.shape instead of P.size_in?
-            # TODO: Verify this through test
             self.Lambda = P(Lambda * torch.ones(P.size_in))
 
     def _softshrink(self, x, lambd):
@@ -100,18 +100,18 @@ class L1Regularizer(Prox):
             thresh = torch.nn.Softshrink(self.Lambda * alpha)
             x = thresh(v)
         else:
-            x = self._softshrink(v, (self.Lambda * alpha))
+            x = self._softshrink(v, (self.Lambda * alpha).to(v.device))
         return x
 
 
 class L0Regularizer(Prox):
-    r"""
+    """
     Proximal operator for L0 regularizer, using hard thresholding
 
     .. math::
         \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_0
 
-    Args:
+    Attributes:
         Lambda (float): regularization parameter.
         P (LinearMap): optional, diagonal LinearMap
         T (LinearMap): optional, unitary LinearMap
@@ -121,18 +121,13 @@ class L0Regularizer(Prox):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
         if P is not None:
-            # Should this be v.shape instead of P.size_in? TODO: Verify this through test
             self.Lambda = P(Lambda * torch.ones(P.size_in))
 
     def _hardshrink(self,
                     x: torch.Tensor,
-                    lambd:FloatLike):
+                    lambd: FloatLike):
         mask1 = x > lambd
         mask2 = x < -lambd
-        # out = torch.zeros_like(x)
-        # out += mask1.float() * x
-        # out += mask2.float() * x
-        # return out
         return mask1 * x + mask2 * x
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike):
@@ -147,14 +142,15 @@ class L0Regularizer(Prox):
 
 
 class L2Regularizer(Prox):
-    r"""
+    """
     Proximal operator for L2 regularizer
 
     .. math::
         \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| Tx \|_2
 
-    Args:
+    Attributes:
         Lambda (float): regularization parameter.
+        P (LinearMap): optional, diagonal LinearMap
         T (LinearMap): optional, unitary LinearMap
     """
 
@@ -169,7 +165,6 @@ class L2Regularizer(Prox):
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
         if self.P is None:
             scale = 1.0 - self.Lambda * alpha / torch.max(torch.Tensor([self.Lambda * alpha]), torch.linalg.norm(v))
-            # x = torch.mul(scale, v)
         else:
             scale = torch.ones_like(v) - self.Lambda * alpha / torch.max(torch.Tensor(self.Lambda * alpha),
                                                                          torch.linalg.norm(v))
@@ -177,14 +172,15 @@ class L2Regularizer(Prox):
 
 
 class SquaredL2Regularizer(Prox):
-    r"""
+    """
     Proximal operator for Squared L2 regularizer
 
     .. math::
         \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| Tx \|_2^2
 
-    Args:
+    Attributes:
         Lambda (float): regularization parameter.
+        P (LinearMap): optional, diagonal LinearMap
         T (LinearMap): optional, unitary LinearMap
     """
 
@@ -203,13 +199,13 @@ class SquaredL2Regularizer(Prox):
 
 
 class BoxConstraint(Prox):
-    r"""
+    """
     Proximal operator for Box Constraint
 
     .. math::
         \arg \min_{x} \in [lower, upper]} \frac{1}{2} \| x - v \|_2^2
 
-    Args:
+    Attributes:
         Lambda (float): regularization parameter.
         lower (scalar): minimum value
         upper (scalar): maximum value
@@ -234,29 +230,30 @@ class BoxConstraint(Prox):
 
 
 class Conj(Prox):
-    r"""
+    """
     Proximal operator for convex conjugate function.
 
     ..math::
         Prox_{\alpha f^*}(v) = v - \alpha Prox_{frac{1}{\alpha} f}(\frac{1}{\alpha} v)
     
-    Args:
+    Attributes:
         prox (Prox): Proximal operator function
     """
 
     def __init__(self, prox: Prox):
         self.prox = prox
+        super().__init__()
 
     def _apply(self, v, alpha):
-        assert alpha > 0, "alpha should be greater than 0"
+        assert alpha >= 0, "alpha should be greater than 0"
         return v - alpha * self.prox(v, 1 / alpha)
 
 
 class Stack(Prox):
-    r"""
+    """
     Stack proximal operators.
 
-    Args:
+    Attributes:
         proxs: list of proximal operators, required to have equal input and output shapes
     """
 
@@ -275,3 +272,7 @@ class Stack(Prox):
             alphas = [alphas] * sizes
         seq = [self.proxs[i](splits[i], alphas[i]) for i in range(len(self.proxs))]
         return torch.cat(seq)
+
+class NoOp(Prox):
+    def _apply(self, v: torch.Tensor, alpha: FloatLike = None):
+        return v

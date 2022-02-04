@@ -13,10 +13,9 @@
 !*.rst
 !*.ipynb
 !*.npz
+!*.yml
+!*.yaml
 
-# and specific files
-!docs/Makefile
-!docs/make.bat
 
 # even if in sub-dirs
 !*/
@@ -38,3 +37,7 @@
 *.pyc
 *tests/dev
 mrt/
+docs/_build
+docs/_static
+docs/_templates
+

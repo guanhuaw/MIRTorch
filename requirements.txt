@@ -1,8 +1,7 @@
-torch>= 1.8.0
+torch>= 1.10.0
 torchvision>=0.8.1
-torchkbnufft >= 1.1.0
+torchkbnufft >= 1.3.0
 dominate>=2.5.1
-visdom>=0.1.8
 scipy >= 1.6.0
 PyWavelets >= 1.1.1
-antspyx >= 0.2.9
+git+https://github.com/fbcotter/pytorch_wavelets.git@8d2e3b4289beaea9aa89f7b1dbb290e448331197

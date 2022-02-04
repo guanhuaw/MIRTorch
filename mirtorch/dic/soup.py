@@ -6,13 +6,16 @@ import time
 
 
 def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
-    '''
+    """
     Efficient patch-based dictionary learning algorithm according to:
     Ravishankar, S., Nadakuditi, R. R., & Fessler, J. A. (2017). Efficient sum of outer products dictionary learning (SOUP-DIL)
     and its application to inverse problems. IEEE transactions on computational imaging, 3(4), 694-709.
-    Generally, we are trying to solve this problem:
-        \argmin{D, X} \|Y-DX\|_2^2 + \lambda \|X\|_0 (the '0-norm' means the number of non-zero elements across the whole matrix)
-    Inputs:
+
+    Generally, the algorithm solves the following problem:
+        .. math:: \argmin{D, X} \|Y-DX\|_2^2 + \lambda \|X\|_0.
+    (the '0-norm' means the number of non-zero elements across the whole matrix)
+
+    Args:
         Y: [len_atom, num_patch] data matrix with (self-)training signal as columns (real/complex, numpy matrix)
         D0: [len_atom, num_atom] initial dictionary (real/complex, numpy matrix)
         X0: [num_atom, num_patch] initial sparse code (real/complex, should be numpy (sparse) matrix)
@@ -20,18 +23,19 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
         lambd: the sparsity weight
         numiter: number of iterations
         only_sp: only update sparse code
+
     Returns:
         D: learned dictionary
         X: sparse code
         DX: estimated results
+
     Since torch.sparse is still very basic, we chose SciPy as the ad-hoc backend.
     Use Tensor.cpu().numpy() and torch.from_numpy to avoid memory relocation
-    TODO: Migrate back to torch when its CSR/CSC gets better.
+    TODO(guanhuaw@umich.edu): Migrate back to torch when its CSR/CSC gets better.
     The algorithm involves frequent update of sparse data; using GPU may not necessarily accelerate it.
     2021-06. Guanhua Wang, University of Michigan
-"""
+    """
 
-    '''
     assert Y.dtype == X0.dtype == D0.dtype, 'datatype (complex/real) between dictionary and sparse code should stay the same!'
     D = D0
     [len_atom, num_atom] = D0.shape

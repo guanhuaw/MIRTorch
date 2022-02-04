@@ -24,15 +24,22 @@ Linear Operator implementations, based on SigPy(https://github.com/mikgroup/sigp
             return adjoint_func(grad_data_in)
      adjoint_op = adjoint.apply
 
- To Do: extended assignments, unary operators
+ TODO: extended assignments, unary operators
 """
 import torch
 from torch import Tensor
 import numpy as np
 from typing import Union, Sequence, TypeVar
 
+FloatLike = Union[float, torch.FloatTensor]
+
 
 def check_device(x, y):
+    """
+    check if two tensors are on the same device
+    Returns:
+
+    """
     assert x.device == y.device, "Tensors should be on the same device"
 
 
@@ -40,19 +47,21 @@ T = TypeVar('T', bound='LinearMap')
 
 
 class LinearMap:
-    '''
-        Linear Operator: y = A*x
-    '''
+    """
+        Linear Operator: :math: `y = A*x`
+
+        Attributes:
+            size_in: the size of the input of the linear map (a list)
+            size_out: the size of the output of the linear map (a list)
+
+        TODO: size_in and size_out could also be a tuple of list (consider wavelets)
+
+    """
 
     def __init__(self,
                  size_in: Sequence[int],
                  size_out: Sequence[int],
                  device='cpu'):
-        '''
-            Initilization requires:
-            size_in: the size of the input of the linear map (a list)
-            size_out: the size of the output of the linear map (a list)
-        '''
         self.size_in = list(size_in)  # size_in: input data dimension
         self.size_out = list(size_out)  # size_out: output data dimension
         self.device = device  # some linear operators do not depend on devices, like FFT.
@@ -93,9 +102,15 @@ class LinearMap:
         return ConjTranspose(self)
 
     def __add__(self: T, other: T) -> T:
+        """
+        Reload the + symbol.
+        """
         return Add(self, other)
 
     def __mul__(self: T, other) -> T:
+        """
+        Reload the * symbol.
+        """
         if np.isscalar(other):
             return Multiply(self, other)
         elif isinstance(other, LinearMap):
@@ -111,6 +126,9 @@ class LinearMap:
                 f"Only scalers, Linearmaps or Tensors, rather than '{type(other)}' are allowed as arguments for this function.")
 
     def __rmul__(self: T, other) -> T:
+        """
+        Reload the * symbol.
+        """
         if np.isscalar(other):
             return Multiply(self, other)
         elif isinstance(other, torch.Tensor) and not other.shape:
@@ -119,22 +137,35 @@ class LinearMap:
             return NotImplemented
 
     def __sub__(self: T, other: T) -> T:
+        """
+        Reload the - symbol.
+        """
         return self.__add__(-other)
 
     def __neg__(self: T) -> T:
+        """
+        Reload the - symbol.
+        """
         return -1 * self
 
-    def to(self:T, *args, **kwargs):
-    # Copy to different devices
+    def to(self: T, *args, **kwargs):
+        """
+        Copy to different devices
+        """
         for prop in self.__dict__.keys():
-            if(isinstance(self.__dict__[prop], torch.Tensor) or isinstance(self.__dict__[prop], torch.nn.Module)):
+            if (isinstance(self.__dict__[prop], torch.Tensor) or isinstance(self.__dict__[prop], torch.nn.Module)):
                 self.__dict__[prop] = self.__dict__[prop].to(*args, **kwargs)
 
+
 class Add(LinearMap):
-    '''
+    """
     Addition of linear operators.
+    .. math::
     (A+B)*x = A(x) + B(x)
-    '''
+    Attributes:
+        A: the LHS LinearMap
+        B: the RHS LinearMap
+    """
 
     def __init__(self, A: LinearMap, B: LinearMap):
         assert list(A.size_in) == list(B.size_in), "The input dimentions of two combined ops are not the same."
@@ -151,12 +182,16 @@ class Add(LinearMap):
 
 
 class Multiply(LinearMap):
-    '''
-    Scaling linear operators
+    """
+    Scaling linear operators.
+    .. math::
     a*A*x = A(ax)
-    '''
+    Attributes:
+        a: scaling factor
+        A: LinearMap
+    """
 
-    def __init__(self, A, a):
+    def __init__(self, A: LinearMap, a: FloatLike):
         self.a = a
         self.A = A
         super().__init__(self.A.size_in, self.A.size_out)
@@ -171,12 +206,13 @@ class Multiply(LinearMap):
 
 
 class Matmul(LinearMap):
-    '''
+    """
     Matrix multiplication of linear operators.
+    .. math::
     A*B*x = A(B(x))
-    '''
+    """
 
-    def __init__(self, A, B):
+    def __init__(self, A: LinearMap, B: LinearMap):
         self.A = A
         self.B = B
         assert list(self.B.size_out) == list(self.A.size_in), "Shapes do not match"
@@ -191,7 +227,7 @@ class Matmul(LinearMap):
 
 
 class ConjTranspose(LinearMap):
-    def __init__(self, A):
+    def __init__(self, A: LinearMap):
         self.A = A
         super().__init__(A.size_out, A.size_in)
 
@@ -201,8 +237,12 @@ class ConjTranspose(LinearMap):
     def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         return self.A.apply(x)
 
+
 class Vstack(LinearMap):
+    # TODO
     pass
 
+
 class Hstack(LinearMap):
+    # TODO
     pass
