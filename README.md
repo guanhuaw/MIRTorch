@@ -1,6 +1,5 @@
 # MIRTorch
 
-![GitHub](https://img.shields.io/github/license/guanhuaw/mirtorch) 
 ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/guanhuaw/mirtorch?include_prereleases)
 ![Read the Docs](https://img.shields.io/readthedocs/mirtorch)
 
@@ -60,3 +59,7 @@ SigPy: https://github.com/mikgroup/sigpy
 MIRT/MIRT.jl: https://web.eecs.umich.edu/~fessler/code/index.html
 
 PyLops: https://github.com/PyLops/pylops
+
+### License
+
+The MIRTorch uses the BSD3 license. 
