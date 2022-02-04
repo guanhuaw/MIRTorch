@@ -1,6 +1,5 @@
 # MIRTorch
 
-![GitHub](https://img.shields.io/github/license/guanhuaw/mirtorch) 
 ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/guanhuaw/mirtorch?include_prereleases)
 ![Read the Docs](https://img.shields.io/readthedocs/mirtorch)
 
@@ -10,7 +9,7 @@ The work is inspired by [MIRT](https://github.com/JeffFessler/mirt), a well-accl
 
 The overarching goal is to provide fast iterative and data-driven image reconstruction across CPUs and GPUs. Researchers can rapidly develop new model-based and learning-based methods (i.e., unrolled neural networks) with its convenient abstraction layers. With the full support of auto-differentiation, one may optimize imaging protocols and image reconstruction parameters with gradient methods.
 
-Documentation: https://readthedocs.org/projects/mirtorch/
+Documentation: https://mirtorch.readthedocs.io/en/latest/
 
 ### Installation
 
@@ -60,3 +59,7 @@ SigPy: https://github.com/mikgroup/sigpy
 MIRT/MIRT.jl: https://web.eecs.umich.edu/~fessler/code/index.html
 
 PyLops: https://github.com/PyLops/pylops
+
+### License
+
+The MIRTorch uses the BSD3 license. 
