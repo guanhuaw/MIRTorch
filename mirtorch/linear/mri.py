@@ -70,15 +70,16 @@ class Sense(LinearMap):
             size_out = list(smaps.shape)
             dims = tuple(np.arange(2, len(smaps.shape)))
             self.masks = masks.unsqueeze(1)
+            assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
         else:
             size_in = list(smaps.shape[1:])
             size_out = list(smaps.shape)
             dims = tuple(np.arange(1, len(smaps.shape)))
             self.masks = masks
+            assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
-        # assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
         self.smaps = smaps
         self.batchmode = batchmode
 
@@ -95,9 +96,6 @@ class Sense(LinearMap):
                 else:
                     [ncoil, nx, ny, nz]
         """
-        # assert x.shape == self.masks.shape, "mask and image's shape mismatch"
-        # if not self.batchmode:
-        #     x = x.unsqueeze(0)
         x = x * self.smaps
         x = ifftshift(x, self.dims)
         k = fftn(x, dim=self.dims, norm=self.norm)
