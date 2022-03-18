@@ -3,33 +3,46 @@ from torch import Tensor
 from typing import Union, Sequence
 
 
-def finitediff(x: Tensor, dim: int = -1):
+def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
     """
     Apply finite difference operator on a certain dim
     Args:
         x: input data
         dim: dimension to apply the operator
+        mode: 'reflexive' or 'periodic'
     Returns:
         Diff(x)
     """
-    len_dim = x.shape[dim]
-    return torch.narrow(x, dim, 1, len_dim - 1) - torch.narrow(x, dim, 0, len_dim - 1)
+    if mode == 'reflexibe':
+        len_dim = x.shape[dim]
+        return torch.narrow(x, dim, 1, len_dim - 1) - torch.narrow(x, dim, 0, len_dim - 1)
+    elif mode == 'periodic':
+        return torch.roll(x, 1, dims=dim) - x
+    else:
+        raise ValueError("mode should be either 'reflexive' or 'periodic'")
 
 
-def finitediff_adj(y: Tensor, dim: int = -1):
+def finitediff_adj(y: Tensor, dim: int = -1, mode='reflexive'):
     """
     Apply finite difference operator on a certain dim
     Args:
         y: input data
         dim: dimension to apply the operator
+        mode: 'reflexive' or 'periodic'
+
     Returns:
         Diff'(x)
     """
-    len_dim = y.shape[dim]
-    return torch.cat(
-        (-torch.narrow(y, dim, 0, 1), (torch.narrow(y, dim, 0, len_dim - 1) - torch.narrow(y, dim, 1, len_dim - 1)),
-         torch.narrow(y, dim, len_dim - 1, 1)),
-        dim=dim)
+    if mode == 'reflexibe':
+        len_dim = y.shape[dim]
+        return torch.cat(
+            (-torch.narrow(y, dim, 0, 1), (torch.narrow(y, dim, 0, len_dim - 1) - torch.narrow(y, dim, 1, len_dim - 1)),
+             torch.narrow(y, dim, len_dim - 1, 1)),
+            dim=dim)
+    elif mode == 'periodic':
+        return torch.roll(y, -1, dims=dim) - y
+    else:
+        raise ValueError("mode should be either 'reflexive' or 'periodic'")
 
 
 class DiffFunc(torch.autograd.Function):
@@ -38,13 +51,14 @@ class DiffFunc(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, x, dim):
+    def forward(ctx, x, dim, mode):
         ctx.dim = dim
-        return finitediff(x, dim)
+        ctx.mode = mode
+        return finitediff(x, dim, mode)
 
     @staticmethod
-    def backward(ctx, dx):
-        return finitediff_adj(dx, ctx.dim), None
+    def backward(ctx, dx, mode):
+        return finitediff_adj(dx, ctx.dim, ctx.mode), None, None
 
 
 class DiffFunc_adj(torch.autograd.Function):
@@ -53,13 +67,14 @@ class DiffFunc_adj(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, x, dim):
+    def forward(ctx, x, dim, mode):
         ctx.dim = dim
-        return finitediff_adj(x, dim)
+        ctx.mode = mode
+        return finitediff_adj(x, dim, mode)
 
     @staticmethod
     def backward(ctx, dx):
-        return finitediff(dx, ctx.dim), None
+        return finitediff(dx, ctx.dim, ctx.mode), None, None
 
 
 def fftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
