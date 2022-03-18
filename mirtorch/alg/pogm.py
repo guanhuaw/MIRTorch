@@ -40,7 +40,7 @@ class POGM():
         self.restart = restart
         self.eval_func = eval_func
 
-    def run_alg(self,
+    def run(self,
                 x0: torch.Tensor):
         """
         Run the algorithm

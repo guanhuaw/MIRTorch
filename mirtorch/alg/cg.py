@@ -74,10 +74,8 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
             num_loop = num_loop + 1
             if eval_func is not None:
                 saved.append(eval_func(rk))
-            print("Residual at %dth iter: %10.3e." % (num_loop, rktrk))
+            print("Residual at %dth iter: %10.3e." % (num_loop, rktzk))
 
-    if alert:
-        print("Residual at %dth iter: %10.3e." % (num_loop, rktrk))
     if eval_func is not None:
         return xk, saved
     else:

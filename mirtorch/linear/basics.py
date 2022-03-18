@@ -24,25 +24,57 @@ class Diff1d(LinearMap):
 
     def __init__(self,
                  size_in: Sequence[int],
-                 dim: int):
+                 dim: int,
+                 mode='reflexive'):
         # TODO: determine size_out by size in
         size_out = copy.copy(size_in)
         size_out[dim] -= 1
         super(Diff1d, self).__init__(size_in, size_out)
         self.dim = dim
+        self.mode = mode
         assert np.isscalar(dim), "Please denote 1 dimension for a 1D finite difference operator"
 
     def _apply(self, x):
-        return DiffFunc.apply(x, self.dim)
+        return DiffFunc.apply(x, self.dim, self.mode)
 
     def _apply_adjoint(self, y):
-        return DiffFunc_adj.apply(y, self.dim)
+        return DiffFunc_adj.apply(y, self.dim, self.mode)
+
+
+class Diffnd(LinearMap):
+    """
+    A multidimensional finite difference operator, with the periodic boundary condition.
+
+    Attributes:
+        dims: assign the dimension to apply operation
+    """
+
+    def __init__(self,
+                 size_in: Sequence[int],
+                 dims: Sequence[int]):
+        self.dims = dims
+        size_out = copy.copy(list(size_in))
+        size_out[self.dims[0]] = size_out[self.dims[0]] * 2
+        super(Diffnd, self).__init__(size_in, size_out)
+
+    def _apply(self, x):
+        diff = []
+        for i in range(len(self.dims)):
+            diff.append(DiffFunc.apply(x, self.dims[i], 'periodic'))
+        return torch.cat(diff, dim=self.dims[0])
+
+    def _apply_adjoint(self, y):
+        x = torch.zeros(self.size_in).to(y)
+        for i in range(len(self.dims)):
+            x += DiffFunc_adj.apply(torch.narrow(y, self.dims[0], i*self.size_in[self.dims[0]],
+                                                 self.size_in[self.dims[0]]), self.dims[i], 'periodic')
+        return x
 
 
 class Diff2dframe(LinearMap):
     """
     A little more efficient way to implement the frame operator for the Gram of finite difference.
-    Apply to last two dimensions.
+    Apply to last two dimensions, with the reflexive boundary condition.
     """
 
     def __init__(self,
@@ -65,7 +97,7 @@ class Diff2dframe(LinearMap):
 
 class Diff3dframe(LinearMap):
     """
-    A little more efficient way to implement the frame operator for the Gram of finite difference.
+    A little more efficient way to implement the frame operator for the Gram of finite difference, with the reflexive boundary condition.
     Apply to last three dimensions.
     """
 

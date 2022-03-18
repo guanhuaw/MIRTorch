@@ -84,9 +84,6 @@ class LinearMap:
     def _apply_adjoint(self, x) -> Tensor:
         raise NotImplementedError
 
-    def _apply_frame(self, x: Tensor) -> Tensor:
-        raise NotImplementedError
-
     def apply(self, x) -> Tensor:
         assert list(x.shape) == list(
             self.size_in), f"Shape of input data {x.shape} and forward linear op {self.size_in} do not match!"

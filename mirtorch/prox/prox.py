@@ -229,24 +229,6 @@ class BoxConstraint(Prox):
         return x
 
 
-class Conj(Prox):
-    """
-    Proximal operator for convex conjugate function.
-
-    ..math::
-        Prox_{\alpha f^*}(v) = v - \alpha Prox_{frac{1}{\alpha} f}(\frac{1}{\alpha} v)
-    
-    Attributes:
-        prox (Prox): Proximal operator function
-    """
-
-    def __init__(self, prox: Prox):
-        self.prox = prox
-        super().__init__()
-
-    def _apply(self, v, alpha):
-        assert alpha >= 0, "alpha should be greater than 0"
-        return v - alpha * self.prox(v, 1 / alpha)
 
 
 class Stack(Prox):
@@ -273,6 +255,41 @@ class Stack(Prox):
         seq = [self.proxs[i](splits[i], alphas[i]) for i in range(len(self.proxs))]
         return torch.cat(seq)
 
-class NoOp(Prox):
-    def _apply(self, v: torch.Tensor, alpha: FloatLike = None):
+class Const(Prox):
+    """
+    Proximal operator a constant function, identical to an identity mapping
+
+    .. math::
+        \arg \min_{x}  \frac{1}{2} \| x - v \|_2^2 + C
+    Attributes:
+        Lambda (float): regularization parameter.
+        T (LinearMap): optional, unitary LinearMap
+    """
+
+    def __init__(self, Lambda = 0, T: LinearMap = None, P: LinearMap = None):
+        super().__init__(T, P)
+        self.Lambda = float(Lambda)
+
+    def _apply(self, v: torch.Tensor, alpha: FloatLike):
         return v
+
+
+class Conj(Prox):
+    """
+    Proximal operator of the convex conjugate (Moreau's identity).
+
+    ..math::
+        Prox_{\alpha f^*}(v) = v - \alpha Prox_{frac{1}{\alpha} f}(\frac{1}{\alpha} v)
+
+    Attributes:
+        prox (Prox): Proximal operator function
+    """
+
+    def __init__(self, prox: Prox):
+        self.prox = prox
+        super().__init__()
+
+    def _apply(self, v, alpha):
+        assert alpha > 0, "alpha should be greater than 0"
+        return v - alpha * self.prox(v / alpha, 1 / alpha)
+
