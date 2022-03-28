@@ -34,7 +34,7 @@ The toolbox contains common proximal operators such as soft thresholding. These 
 
 #### Iterative reconstruction (IR) algorithms
 
-Currently, the package includes the conjugate gradient (CG), FISTA, and POGM algorithms for image reconstruction.
+Currently, the package includes the conjugate gradient (CG), fast iterative thresholding (FISTA), optimized gradient method (POGM), forward-backward primal-dual (FBPD) algorithms for image reconstruction.
 
 #### Dictionary learning
 

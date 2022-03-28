@@ -75,7 +75,7 @@ class POGM():
             gamma_old = gamma_new
 
             if self.eval_func is not None:
-                saved.append(xold)
+                saved.append(self.eval_func(xold))
 
         if self.eval_func is not None:
             return xold, saved
