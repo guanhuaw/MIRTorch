@@ -69,7 +69,7 @@ class FISTA():
             xold = xnew
             yold = ynew
             if self.eval_func is not None:
-                saved.append(eval_func(xold, yold))
+                saved.append(self.eval_func(xold))
         if self.eval_func is not None:
             return xold, saved
         else:

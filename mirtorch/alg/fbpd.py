@@ -36,7 +36,7 @@ class FBPD():
                  g_L: float,
                  G_norm: float,
                  G: LinearMap = None,
-                 tau: float = 1e-4,
+                 tau: float = None,
                  max_iter: int = 10,
                  eval_func: Callable = None):
 
@@ -48,7 +48,10 @@ class FBPD():
         self.g_L = g_L
         self.G = G
         self.G_norm = G_norm
-        self.tau = tau
+        if tau is None:
+            self.tau = 2 / (g_L + 2)
+        else:
+            self.tau = tau
         self.sigma = (1 / self.tau - self.g_L / 2) / self.G_norm
         self.eval_func = eval_func
 
@@ -76,7 +79,7 @@ class FBPD():
             xold = xnew
             uold = unew
             if self.eval_func is not None:
-                saved.append(xold)
+                saved.append(self.eval_func(xold))
         if self.eval_func is not None:
             return xold, saved
         else:
