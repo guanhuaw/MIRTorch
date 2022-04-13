@@ -52,9 +52,9 @@ class Diffnd(LinearMap):
     def __init__(self,
                  size_in: Sequence[int],
                  dims: Sequence[int]):
-        self.dims = dims
+        self.dims = sorted(dims)
         size_out = copy.copy(list(size_in))
-        size_out[self.dims[0]] = size_out[self.dims[0]] * 2
+        size_out[self.dims[0]] = size_out[self.dims[0]] * len(dims)
         super(Diffnd, self).__init__(size_in, size_out)
 
     def _apply(self, x):

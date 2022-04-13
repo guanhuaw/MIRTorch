@@ -7,7 +7,7 @@ from .wavelets import Wavelet2D
 __all__ = ['LinearMap',
            'Identity',
            'Diff1d',
-           'Diffnd'
+           'Diffnd',
            'Diff2dframe', 'Diff3dframe',
            'Diag',
            'Convolve1d', 'Convolve2d', 'Convolve3d',

@@ -57,7 +57,7 @@ class DiffFunc(torch.autograd.Function):
         return finitediff(x, dim, mode)
 
     @staticmethod
-    def backward(ctx, dx, mode):
+    def backward(ctx, dx):
         return finitediff_adj(dx, ctx.dim, ctx.mode), None, None
 
 

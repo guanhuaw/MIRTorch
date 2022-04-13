@@ -49,15 +49,14 @@ class FBPD():
         self.G = G
         self.G_norm = G_norm
         if tau is None:
-            self.tau = 2 / (g_L + 2)
+            self.tau = 2.0 / (g_L + 2.0)
         else:
             self.tau = tau
-        self.sigma = (1 / self.tau - self.g_L / 2) / self.G_norm
+        self.sigma = (1.0 / self.tau - self.g_L / 2.0) / self.G_norm
         self.eval_func = eval_func
 
     def run(self,
-            x0: torch.Tensor,
-            u0: torch.Tensor):
+            x0: torch.Tensor):
         """
         Run the algorithm
         Args:
@@ -67,12 +66,12 @@ class FBPD():
             xk: results
             saved: (optional) a list of intermediate results, calcuated by the eval_func.
         """
-        uold = u0
+        uold = self.G*x0
         xold = x0
         if self.eval_func is not None:
             saved = []
         for i in range(1, self.max_iter + 1):
-            xold_bar = self.g_grad(xold - self.G.H * uold)
+            xold_bar = self.g_grad(xold) - self.G.H * uold
             xnew = self.f_prox(xold - self.tau * xold_bar, self.tau)
             uold_bar = self.G * (2 * xnew - xold)
             unew = self.h_conj_prox(uold + self.sigma * uold_bar, self.sigma)

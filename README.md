@@ -16,7 +16,7 @@ Documentation: https://mirtorch.readthedocs.io/en/latest/
 We recommend to [pre-install `PyTorch` first](https://pytorch.org/).
 To install the `MIRTorch` package, after cloning the repo, please try `pip install -e .` 
 
-`requirements.txt` details the package dependencies. 
+`requirements.txt` details the package dependencies. We recommend to install [pytorch_wavelets](https://github.com/fbcotter/pytorch_wavelets) directly from the source code instead of `pip`.  
 
 ### Features
 
