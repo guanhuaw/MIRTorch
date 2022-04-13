@@ -84,7 +84,7 @@ class L1Regularizer(Prox):
     def __init__(self, Lambda, T: LinearMap = None, P: LinearMap = None):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
-        assert self.Lambda > 0, "alpha should be greater than 0"
+        assert self.Lambda >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
 
@@ -94,7 +94,7 @@ class L1Regularizer(Prox):
         return mask1.float() * (-lambd) + mask1.float() * x + mask2.float() * lambd + mask2.float() * x
 
     def _apply(self, v, alpha):
-        assert alpha >= 0, "alpha should be greater than 0"
+        assert alpha >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
         if type(self.Lambda) is not torch.Tensor and type(alpha) is not torch.Tensor:
             # The softshrink function do not support tensor as Lambda.
             thresh = torch.nn.Softshrink(self.Lambda * alpha)
@@ -131,7 +131,7 @@ class L0Regularizer(Prox):
         return mask1 * x + mask2 * x
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike):
-        assert alpha >= 0, "alpha should be greater than 0"
+        assert alpha >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
         if type(self.Lambda) is not torch.Tensor and type(alpha) is not torch.Tensor:
             # The hardthreshold function do not support tensor as Lambda.
             thresh = torch.nn.Hardshrink(self.Lambda * alpha)
@@ -290,6 +290,6 @@ class Conj(Prox):
         super().__init__()
 
     def _apply(self, v, alpha):
-        assert alpha > 0, "alpha should be greater than 0"
+        assert alpha >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
         return v - alpha * self.prox(v / alpha, 1 / alpha)
 

@@ -70,13 +70,13 @@ class Sense(LinearMap):
             size_out = list(smaps.shape)
             dims = tuple(np.arange(2, len(smaps.shape)))
             self.masks = masks.unsqueeze(1)
-            assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
+            assert smaps.shape[2:] == masks.shape[1:], "size of sensitivity maps and mask not matched!"
         else:
             size_in = list(smaps.shape[1:])
             size_out = list(smaps.shape)
             dims = tuple(np.arange(1, len(smaps.shape)))
             self.masks = masks
-            assert size_in == list(self.masks.shape), "size of sensitivity maps and mask not matched!"
+            assert smaps.shape[1:] == masks.shape, "size of sensitivity maps and mask not matched!"
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
@@ -246,7 +246,7 @@ class NuSense(LinearMap):
             if self.batchmode:
                 return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm)
             else:
-                return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(0)
+                return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(0).squeeze(0)
 
 
 class NuSenseFrame(LinearMap):
