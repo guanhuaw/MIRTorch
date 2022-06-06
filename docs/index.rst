@@ -21,9 +21,3 @@ This project is under active development.
    HISTORY.md
 
 
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`

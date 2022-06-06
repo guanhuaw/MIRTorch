@@ -12,4 +12,5 @@ __all__ = ['LinearMap',
            'Diag',
            'Convolve1d', 'Convolve2d', 'Convolve3d',
            'Wavelet2D',
-           'Patch2D', 'Patch3D']
+           'Patch2D', 'Patch3D',
+           'FFTCn']

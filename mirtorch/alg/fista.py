@@ -4,12 +4,14 @@ import torch
 from typing import Callable
 
 class FISTA():
-    """
+    r"""
     Fast Iterative Soft Thresholding Algorithm (FISTA) / Fast Proximal Gradient Method (FPGM)
 
     .. math::
-        \arg \min_x f(x) + g(x)
-     where grad(f(x)) is L-Lipschitz continuous and g is proximal operator
+
+        arg \min_x f(x) + g(x)
+
+    where grad(f(x)) is L-Lipschitz continuous and g is proximal-friendly function.
 
     Attributes:
         max_iter (int): number of iterations to run
@@ -39,7 +41,7 @@ class FISTA():
 
     def run(self,
             x0: torch.Tensor):
-        """
+        r"""
         Run the algorithm
 
         Args:

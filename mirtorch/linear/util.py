@@ -7,11 +7,11 @@ def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
     """
     Apply finite difference operator on a certain dim
     Args:
-        x: input data
-        dim: dimension to apply the operator
+        x: tensor, input data
+        dim: int, dimension to apply the operator
         mode: 'reflexive' or 'periodic'
     Returns:
-        Diff(x)
+        y: the first-order finite difference of x
     """
     if mode == 'reflexibe':
         len_dim = x.shape[dim]
@@ -26,12 +26,12 @@ def finitediff_adj(y: Tensor, dim: int = -1, mode='reflexive'):
     """
     Apply finite difference operator on a certain dim
     Args:
-        y: input data
-        dim: dimension to apply the operator
+        y: tensor, input data
+        dim: int, dimension to apply the operator
         mode: 'reflexive' or 'periodic'
 
     Returns:
-        Diff'(x)
+        y: the first-order finite difference of x
     """
     if mode == 'reflexibe':
         len_dim = y.shape[dim]
@@ -47,7 +47,7 @@ def finitediff_adj(y: Tensor, dim: int = -1, mode='reflexive'):
 
 class DiffFunc(torch.autograd.Function):
     """
-        autograd.Function for the 1st-order finite difference operators
+    autograd.Function for the 1st-order finite difference operators
     """
 
     @staticmethod
@@ -108,3 +108,5 @@ def ifftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
 def dim_conv(dim_in, dim_kernel_size, dim_stride=1, dim_padding=0, dim_dilation=1):
     dim_out = (dim_in + 2 * dim_padding - dim_dilation * (dim_kernel_size - 1) - 1) // dim_stride + 1
     return dim_out
+
+

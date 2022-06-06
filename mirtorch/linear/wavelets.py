@@ -73,11 +73,7 @@ class Wavelet2D(LinearMap):
     https://pytorch-wavelets.readthedocs.io/en/latest/dwt.html
     It should support all wave types available in PyWavelets
     Attributes:
-        size_in: Input size.
-                 If batchmode:
-                    [nbatch, nchannel, nx, ny],
-                 else:
-                    [nx, ny] (real)
+        size_in: Input size. If batchmode: [nbatch, nchannel, nx, ny]; else [nx, ny] (real)
         wave_type: all that pywt supports
         padding: 'zero', 'symmetric', 'reflect' or 'periodization'
         When using periodization, it should be a unitary transform
