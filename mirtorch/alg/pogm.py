@@ -6,20 +6,26 @@ from mirtorch.prox import Prox
 
 
 class POGM():
-    """
+    r"""
     Optimized Proximal Gradient Method (POGM)
+    Ref: D. Kim and J. A. Fessler. “Adaptive restart of the optimized gradient method for convex optimization”.
+    In: J. Optim. Theory Appl. 178.1 (July 2018), 240–63 (cit. on pp. 5.26, 5.29).
 
     .. math::
-        \arg \min_x f(x) + g(x)
-     where grad(f(x)) is L-Lipschitz continuous and g is proximal operator
+
+        arg \min_x f(x) + g(x)
+
+    where grad(f(x)) is L-Lipschitz continuous and g is proximal-friendly function.
 
     Attributes:
         max_iter (int): number of iterations to run
         f_grad (Callable): gradient of f
         f_L (float): L-Lipschitz value of f_grad
-        g_prox (Prox): proximal operator g
+        g_prox (Prox): proximal operator g. For plain OGM, you could call Const() as a place-holder here
         restart (Union[...]): restart strategy, not yet implemented
         eval_func: user-defined function to calculate the loss at each iteration.
+
+    TODO: add the restart
     """
 
     def __init__(self,
@@ -42,7 +48,7 @@ class POGM():
 
     def run(self,
                 x0: torch.Tensor):
-        """
+        r"""
         Run the algorithm
         Args:
             x0: initialization

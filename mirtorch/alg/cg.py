@@ -85,16 +85,17 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
 
 
 class CG:
-    """Solve the equation :math:'Ax = b', where A is a PSD matrix with the conjugate gradient method.
-    TODO: add a preconditioner
-    TODO: check if A is PSD
+    r"""
+    Solve the equation :math:`Ax = b` with the conjugate gradient method, where A is a PSD matrix.
+    The backpropagation still calls the CG to calculate the Jacobian to save the memory.
+
     Attributes:
-        A: PSD matrix (Linear Map)
-        tol: exiting tolerance
-        max_iter: max number of iterations
-        alert: print the norm of residuals at the end
+        A: LinearMap of a PSD matrix
+        tol: float, exiting tolerance
+        max_iter: int, max number of iterations
+        alert: bool, print the norm of residuals at the end
         eval_func: user-defined function to calculate the loss at each iteration.
-        P: preconditioner, LinearMap
+        P: LinearMap of a Preconditioner
 
     Methods:
         run: run the CG algorithm
@@ -112,14 +113,14 @@ class CG:
         self.P = P
 
     def run(self, x0, b):
-        """Run the CG iterations.
+        r"""Run the CG iterations.
         Args:
             x0: Initialization
             b: RHS
 
         Returns:
             xk: results
-            saved: (optional) a list of intermediate results, calcuated by the eval_func.
+            saved: (optional) a list of intermediate results, calculated by the eval_func.
         """
         assert list(self.A.size_out) == list(b.shape), "The size of A and b do not match."
         return self.solver(b, self.A, self.max_iter, self.tol, self.alert, x0, self.eval_func, self.P)

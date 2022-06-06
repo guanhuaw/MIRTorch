@@ -2,7 +2,7 @@ import torch
 
 @torch.no_grad()
 def power_iter(A, x0, max_iter=100, tol=1e-6, alert=True):
-    """
+    r"""
         Use power iteration to calculate the spectral norm of a LinearMap.
 
         Args:
@@ -12,9 +12,9 @@ def power_iter(A, x0, max_iter=100, tol=1e-6, alert=True):
             x0: initial guess of singular vector corresponding to max singular value
 
         Returns:
-            v1: principal right singular vector
-            sig1: spectral norm of A
+            The spectral norm (x) and the principal right singular vector (sig1)
     """
+
     x = x0
     ratio_old = float('inf')
     for iter in range(max_iter):

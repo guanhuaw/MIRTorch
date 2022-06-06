@@ -1,7 +1,9 @@
-"""
-Proximal operators, including soft-thresholding, box-constraint and L2 norm.
+""" Proximal operators, such as soft-thresholding, box-constraint and L2 norm.
+
+Prox() class includes the common proximal operators used in iterative optimization.
 2021-02. Neel Shah and Guanhua Wang, University of Michigan
 """
+
 
 from mirtorch.linear import LinearMap
 import torch
@@ -11,16 +13,18 @@ FloatLike = Union[float, torch.FloatTensor]
 
 
 class Prox:
-    """
+    r"""
     Proximal operator base class
     Prox is currently supported to be called on a torch.Tensor
+    The math definition is:
 
     .. math::
-       Prox_f(v) = \arg \min_x \frac{1}{2} \| x - v \|_2^2 + f(PTx)
+
+       Prox_f(v) = arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda  f(PTx)
 
     Attributes:
-        T (LinearMap): optional, unitary LinearMap
-        P (LinearMap): optional, diagonal matrix
+        T: LinearMap, optional, unitary LinearMap
+        P: LinearMap, optional, diagonal matrix
         TODO: manually check if it is unitary or diagonal (maybe not so easy ...)
     """
 
@@ -69,16 +73,18 @@ class Prox:
 
 
 class L1Regularizer(Prox):
-    """
-    Proximal operator for L1 regularizer, using soft thresholding
+    r"""
+    Proximal operator for L1 regularizer, using soft threshold.
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_1
+
+        arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_1
+
 
     Attributes:
-        Lambda (float): regularization parameter.
-        P (LinearMap): optional, diagonal LinearMap
-        T (LinearMap): optional, unitary LinearMap
+        Lambda: floatm regularization parameter.
+        P: LinearMap, optional, diagonal LinearMap
+        T: LinearMap, optional, unitary LinearMap
     """
 
     def __init__(self, Lambda, T: LinearMap = None, P: LinearMap = None):
@@ -105,16 +111,18 @@ class L1Regularizer(Prox):
 
 
 class L0Regularizer(Prox):
-    """
+    r"""
     Proximal operator for L0 regularizer, using hard thresholding
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_0
+
+        arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_0
+
 
     Attributes:
-        Lambda (float): regularization parameter.
-        P (LinearMap): optional, diagonal LinearMap
-        T (LinearMap): optional, unitary LinearMap
+        Lambda: float, regularization parameter.
+        P: LinearMap, optional, diagonal LinearMap
+        T: LinearMap, optional, unitary LinearMap
     """
 
     def __init__(self, Lambda, T: LinearMap = None, P: LinearMap = None):
@@ -142,16 +150,17 @@ class L0Regularizer(Prox):
 
 
 class L2Regularizer(Prox):
-    """
+    r"""
     Proximal operator for L2 regularizer
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| Tx \|_2
+
+        arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_2
 
     Attributes:
-        Lambda (float): regularization parameter.
-        P (LinearMap): optional, diagonal LinearMap
-        T (LinearMap): optional, unitary LinearMap
+        Lambda: float, regularization parameter.
+        P: LinearMap, optional, diagonal LinearMap
+        T: LinearMap, optional, unitary LinearMap
     """
 
     def __init__(self, Lambda, T: LinearMap = None, P: LinearMap = None):
@@ -172,16 +181,17 @@ class L2Regularizer(Prox):
 
 
 class SquaredL2Regularizer(Prox):
-    """
+    r"""
     Proximal operator for Squared L2 regularizer
 
     .. math::
-        \arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| Tx \|_2^2
+
+        arg \min_x \frac{1}{2} \| x - v \|_2^2 + \alpha \lambda \| PTx \|_2^2
 
     Attributes:
-        Lambda (float): regularization parameter.
-        P (LinearMap): optional, diagonal LinearMap
-        T (LinearMap): optional, unitary LinearMap
+        Lambda: float, regularization parameter.
+        P: LinearMap, optional, diagonal LinearMap
+        T: LinearMap, optional, unitary LinearMap
     """
 
     def __init__(self, Lambda, T: LinearMap = None, P: LinearMap = None):
@@ -199,17 +209,18 @@ class SquaredL2Regularizer(Prox):
 
 
 class BoxConstraint(Prox):
-    """
-    Proximal operator for Box Constraint
+    r"""
+    Proximal operator for Box Constraint.
 
     .. math::
-        \arg \min_{x} \in [lower, upper]} \frac{1}{2} \| x - v \|_2^2
+
+        arg \min_{x \in [lower, upper]} \frac{1}{2} \| x - v \|_2^2
 
     Attributes:
-        Lambda (float): regularization parameter.
-        lower (scalar): minimum value
-        upper (scalar): maximum value
-        T (LinearMap): optional, unitary LinearMap
+        Lambda: flaot, regularization parameter.
+        lower: float, minimum value
+        upper: float, maximum value
+        T: LinearMap, optional, unitary LinearMap
     """
 
     def __init__(self, Lambda, lower, upper, T: LinearMap = None, P: LinearMap = None):
@@ -232,7 +243,7 @@ class BoxConstraint(Prox):
 
 
 class Stack(Prox):
-    """
+    r"""
     Stack proximal operators.
 
     Attributes:
@@ -256,11 +267,13 @@ class Stack(Prox):
         return torch.cat(seq)
 
 class Const(Prox):
-    """
+    r"""
     Proximal operator a constant function, identical to an identity mapping
 
     .. math::
-        \arg \min_{x}  \frac{1}{2} \| x - v \|_2^2 + C
+
+       arg \min_{x}  \frac{1}{2} \| x - v \|_2^2 + C
+
     Attributes:
         Lambda (float): regularization parameter.
         T (LinearMap): optional, unitary LinearMap
@@ -275,10 +288,11 @@ class Const(Prox):
 
 
 class Conj(Prox):
-    """
+    r"""
     Proximal operator of the convex conjugate (Moreau's identity).
 
-    ..math::
+    .. math::
+
         Prox_{\alpha f^*}(v) = v - \alpha Prox_{frac{1}{\alpha} f}(\frac{1}{\alpha} v)
 
     Attributes:
