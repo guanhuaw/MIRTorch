@@ -6,13 +6,17 @@ import time
 
 
 def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
-    """
+    r"""
     Efficient patch-based dictionary learning algorithm according to:
     Ravishankar, S., Nadakuditi, R. R., & Fessler, J. A. (2017). Efficient sum of outer products dictionary learning (SOUP-DIL)
     and its application to inverse problems. IEEE transactions on computational imaging, 3(4), 694-709.
 
     Generally, the algorithm solves the following problem:
-        .. math:: \argmin{D, X} \|Y-DX\|_2^2 + \lambda \|X\|_0.
+
+    .. math::
+
+         arg \min_{D, X} \|Y-DX\|_2^2 + \lambda \|X\|_0.
+
     (the '0-norm' means the number of non-zero elements across the whole matrix)
 
     Args:

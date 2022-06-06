@@ -7,16 +7,20 @@ A Py***Torch***-based differentiable ***I***mage ***R***econstruction ***T***ool
 
 The work is inspired by [MIRT](https://github.com/JeffFessler/mirt), a well-acclaimed toolbox for medical imaging reconstruction. 
 
-The overarching goal is to provide fast iterative and data-driven image reconstruction across CPUs and GPUs. Researchers can rapidly develop new model-based and learning-based methods (i.e., unrolled neural networks) with its convenient abstraction layers. With the full support of auto-differentiation, one may optimize imaging protocols and image reconstruction parameters with gradient methods.
+The overarching goal is to provide fast iterative and data-driven image reconstruction across CPUs and GPUs. Researchers can rapidly develop new model-based and learning-based methods (i.e., unrolled neural networks) with convenient abstraction layers. With the full support of auto-differentiation, one may optimize imaging protocols and image reconstruction parameters with gradient methods.
 
 Documentation: https://mirtorch.readthedocs.io/en/latest/
+
+------
 
 ### Installation
 
 We recommend to [pre-install `PyTorch` first](https://pytorch.org/).
-To install the `MIRTorch` package, after cloning the repo, please try `pip install -e .` 
+To install the `MIRTorch` package, after cloning the repo, please try `python setup.py install`. 
 
-`requirements.txt` details the package dependencies. We recommend to install [pytorch_wavelets](https://github.com/fbcotter/pytorch_wavelets) directly from the source code instead of `pip`.  
+`requirements.txt` details the package dependencies. We recommend installing [pytorch_wavelets](https://github.com/fbcotter/pytorch_wavelets) directly from the source code instead of `pip`.  
+
+------
 
 ### Features
 
@@ -26,13 +30,15 @@ The `LinearMap` class overloads common matrix operations, such as `+, - , *`.
 
 Instances include basic linear operations (like convolution), classical imaging processing, and MRI system matrix (Cartesian and Non-Cartesian, sensitivity- and B0-informed system models). More is on the way...
 
-Since the Jacobian matrix of a linear operator is itself, the toolbox may actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
+Since the Jacobian matrix of a linear operator is itself, the toolbox can actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
+
+When defining linear operators, please make sure that all torch tensors are on the same device and compatible. For example, `torch.cfloat` are compatible with `torch.float` but not `torch.double`.
 
 #### Proximal operators
 
 The toolbox contains common proximal operators such as soft thresholding. These operators also support the regularizers that involve multiplication with diagonal or unitary matrices, such as orthogonal wavelets.
 
-#### Iterative reconstruction (IR) algorithms
+#### Iterative reconstruction (MBIR) algorithms
 
 Currently, the package includes the conjugate gradient (CG), fast iterative thresholding (FISTA), optimized gradient method (POGM), forward-backward primal-dual (FBPD) algorithms for image reconstruction.
 
@@ -40,15 +46,23 @@ Currently, the package includes the conjugate gradient (CG), fast iterative thre
 
 For dictionary learning-based reconstruction, we implemented an efficient dictionary learning algorithm ([SOUP-DIL](https://arxiv.org/abs/1511.06333)) and orthogonal matching pursuit ([OMP](https://ieeexplore.ieee.org/abstract/document/342465/?casa_token=aTDkQVCM9WEAAAAA:5rXu9YikP822bCBvkhYxKWlBTJ6Fn6baTQJ9kuNrU7K-64EmGOAczYvF2dTW3al3PfPdwJAiYw)). Due to PyTorch’s limited support of sparse matrices, we use SciPy as the backend. 
 
-### Basic usage
+------
 
-#### MRI reconstruction: 
+### Usage and examples
 
-`/example` includes SENSE (CG-SENSE), Non-Cartesian SENSE, and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*), compressed sensing (CS), and dictionary learning (DL) methods.
+`/example` includes several examples. 
 
-#### MRI sampling pattern optimization:
+`/example/demo_mnist.ipynb` shows the LASSO on MNIST with FISTA and POGM. 
 
-`/example/demo_mri_traj.ipynb` contains MRI sampling pattern optimization examples. One may use the reconstruction loss as objective function to jointly optimize reconstruction algorithms and the sampling pattern.
+`/example/demo_mri.ipynb` contains the SENSE (CG-SENSE) and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*).
+
+`/example/demo_cs.ipynb` shows the compressed sensing reconstruction of under-determined MRI signals.
+
+`/example/demo_dl.ipynb` exhibits the dictionary learning results.
+
+[Bjork repo](https://github.com/guanhuaw/Bjork) contains MRI sampling pattern optimization examples. One may use the reconstruction loss as the objective function to jointly optimize reconstruction algorithms and the sampling pattern.
+
+------
 
 ### Acknowledgments
 
@@ -59,6 +73,20 @@ SigPy: https://github.com/mikgroup/sigpy
 MIRT/MIRT.jl: https://web.eecs.umich.edu/~fessler/code/index.html
 
 PyLops: https://github.com/PyLops/pylops
+
+If the code is useful to your research, please cite:
+
+```bibtex
+@article{wang:22:bjork,
+  author={Wang, Guanhua and Luo, Tianrui and Nielsen, Jon-Fredrik and Noll, Douglas C. and Fessler, Jeffrey A.},
+  journal={IEEE Transactions on Medical Imaging}, 
+  title={B-spline Parameterized Joint Optimization of Reconstruction and K-space Trajectories (BJORK) for Accelerated 2D MRI}, 
+  year={2022},
+  pages={1-1},
+  doi={10.1109/TMI.2022.3161875}}
+```
+
+------
 
 ### License
 

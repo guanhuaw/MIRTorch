@@ -7,25 +7,29 @@ from mirtorch.linear import LinearMap
 
 
 class FBPD():
-    """
-    Forward-backward primal dual (FBPD) algorithm
+    r"""Forward-backward primal dual (FBPD) algorithm.
+
     Ref:
     L. Condat, A primal dual splitting method for convex optimization involving
     Lipschitzian, proximable and linear composite terms. Journal of Optimization Theory
     and Applications, 158(2):460-479, 2013.
 
+    The cost function is:
+
     .. math::
-        \arg \min_x f(x) + g(x) + h(Gx)
-     where f and h are proper convex functions, and g is a convex function with a L-Lipschitz continuous gradient.
+
+        arg \min_x f(x) + g(x) + h(Gx)
+
+    where f and h are proper convex functions, and g is a convex function with a L-Lipschitz continuous gradient.
 
     Attributes:
-        g_grad (Callable): gradient of g
-        f_prox (Prox): proximal operator of f
-        h_prox (Prox): proximal operator of h
-        g_L (float): Lipschitz value of g_grad
-        G_norm (float): \|G^TG\|, can be solved by power_iter()
-        tau (float): step size
-        max_iter (int): number of iterations to run
+        g_grad: Callable to calculate the gradient of g
+        f_prox: Prox: proximal operator of f
+        h_prox: Prox: proximal operator of h
+        g_L: float, Lipschitz value of g_grad
+        G_norm: float of the norm of G'G, can be solved by power_iter()
+        tau: float, step size
+        max_iter: int, number of iterations to run
         eval_func: user-defined function to calculate the loss at each iteration.
     """
 
@@ -57,13 +61,12 @@ class FBPD():
 
     def run(self,
             x0: torch.Tensor):
-        """
+        r"""
         Run the algorithm
         Args:
-            x0: initialization
-            u0: initialization the dual variable
+            x0: tensor, initialization
         Returns:
-            xk: results
+            xk: tensor, results
             saved: (optional) a list of intermediate results, calcuated by the eval_func.
         """
         uold = self.G*x0
