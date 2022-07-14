@@ -68,11 +68,13 @@ For dictionary learning-based reconstruction, we implemented an efficient dictio
 
 This work is inspired by (but not limited to):
 
-SigPy: https://github.com/mikgroup/sigpy
+* SigPy: https://github.com/mikgroup/sigpy
 
-MIRT/MIRT.jl: https://web.eecs.umich.edu/~fessler/code/index.html
+* MIRT: https://github.com/JeffFessler/mirt
 
-PyLops: https://github.com/PyLops/pylops
+* MIRT.jl: https://github.com/JeffFessler/MIRT.jl
+
+* PyLops: https://github.com/PyLops/pylops
 
 If the code is useful to your research, please cite:
 
