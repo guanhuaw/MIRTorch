@@ -42,7 +42,8 @@ class FBPD():
                  G: LinearMap = None,
                  tau: float = None,
                  max_iter: int = 10,
-                 eval_func: Callable = None):
+                 eval_func: Callable = None,
+                 p: int = 1):
 
         self.max_iter = max_iter
         self.g_grad = g_grad
@@ -52,13 +53,13 @@ class FBPD():
         self.g_L = g_L
         self.G = G
         self.G_norm = G_norm
+        self.p = p
         if tau is None:
             self.tau = 2.0 / (g_L + 2.0)
         else:
             self.tau = tau
         self.sigma = (1.0 / self.tau - self.g_L / 2.0) / self.G_norm
         self.eval_func = eval_func
-
     def run(self,
             x0: torch.Tensor):
         r"""
@@ -74,12 +75,12 @@ class FBPD():
         if self.eval_func is not None:
             saved = []
         for i in range(1, self.max_iter + 1):
-            xold_bar = self.g_grad(xold) - self.G.H * uold
+            xold_bar = self.g_grad(xold) + self.G.H * uold
             xnew = self.f_prox(xold - self.tau * xold_bar, self.tau)
             uold_bar = self.G * (2 * xnew - xold)
             unew = self.h_conj_prox(uold + self.sigma * uold_bar, self.sigma)
-            xold = xnew
-            uold = unew
+            xold = self.p * xnew + (1 - self.p) * xold
+            uold = self.p * unew + (1 - self.p) * uold
             if self.eval_func is not None:
                 saved.append(self.eval_func(xold))
         if self.eval_func is not None:

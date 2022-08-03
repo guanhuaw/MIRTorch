@@ -30,7 +30,7 @@ The `LinearMap` class overloads common matrix operations, such as `+, - , *`.
 
 Instances include basic linear operations (like convolution), classical imaging processing, and MRI system matrix (Cartesian and Non-Cartesian, sensitivity- and B0-informed system models). More is on the way...
 
-Since the Jacobian matrix of a linear operator is itself, the toolbox can actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
+Since the Jacobian matrix of a linear operator is [itself](https://en.wikipedia.org/wiki/Matrix_calculus/), the toolbox can actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
 
 When defining linear operators, please make sure that all torch tensors are on the same device and compatible. For example, `torch.cfloat` are compatible with `torch.float` but not `torch.double`.
 
@@ -40,7 +40,7 @@ The toolbox contains common proximal operators such as soft thresholding. These 
 
 #### Iterative reconstruction (MBIR) algorithms
 
-Currently, the package includes the conjugate gradient (CG), fast iterative thresholding (FISTA), optimized gradient method (POGM), forward-backward primal-dual (FBPD) algorithms for image reconstruction.
+Currently, the package includes the conjugate gradient ([CG](https://en.wikipedia.org/wiki/Conjugate_gradient_method)), fast iterative thresholding ([FISTA](https://epubs.siam.org/doi/10.1137/080716542)), optimized gradient method ([POGM](https://dl.acm.org/doi/10.1007/s10957-018-1287-4)), forward-backward primal-dual ([FBPD](https://arxiv.org/abs/1406.5439)) algorithms for image reconstruction.
 
 #### Dictionary learning
 
@@ -52,7 +52,7 @@ For dictionary learning-based reconstruction, we implemented an efficient dictio
 
 `/example` includes several examples. 
 
-`/example/demo_mnist.ipynb` shows the LASSO on MNIST with FISTA and POGM. 
+`/example/demo_mnist.ipynb` shows the [LASSO](https://en.wikipedia.org/wiki/Lasso_(statistics)) on MNIST with FISTA and POGM. 
 
 `/example/demo_mri.ipynb` contains the SENSE (CG-SENSE) and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*).
 
@@ -68,11 +68,13 @@ For dictionary learning-based reconstruction, we implemented an efficient dictio
 
 This work is inspired by (but not limited to):
 
-SigPy: https://github.com/mikgroup/sigpy
+* SigPy: https://github.com/mikgroup/sigpy
 
-MIRT/MIRT.jl: https://web.eecs.umich.edu/~fessler/code/index.html
+* MIRT: https://github.com/JeffFessler/mirt
 
-PyLops: https://github.com/PyLops/pylops
+* MIRT.jl: https://github.com/JeffFessler/MIRT.jl
+
+* PyLops: https://github.com/PyLops/pylops
 
 If the code is useful to your research, please cite:
 
