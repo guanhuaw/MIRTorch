@@ -17,7 +17,7 @@ class CG_func(torch.autograd.Function):
     def backward(ctx, dx):
         b = ctx.saved_tensors[0]
         # a better initialization?
-        return cg_block(b, dx, ctx.A, ctx.tol, ctx.max_iter, ctx.alert, ctx.eval_func, ctx.P), None, None, None, None, None
+        return cg_block(b, dx, ctx.A, ctx.tol, ctx.max_iter, ctx.alert, ctx.eval_func, ctx.P), None, None, None, None, None, None, None
 
 
 def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):

@@ -164,7 +164,7 @@ class NuSense(LinearMap):
                                           numpoints=numpoints).to(smaps)
             size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
             size_out = list(smaps.shape[0:2]) + [traj.shape[-1]]
-            super(NuSense, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
+            super(NuSense, self).__init__(tuple(size_in), tuple(size_out))
         else:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
             self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[1:]), grid_size=self.grid_size,
@@ -174,7 +174,7 @@ class NuSense(LinearMap):
                                           numpoints=numpoints).to(smaps)
             size_in = smaps.shape[1:]
             size_out = [smaps.shape[0]] + [traj.shape[-1]]
-            super(NuSense, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
+            super(NuSense, self).__init__(tuple(size_in), tuple(size_out))
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -263,13 +263,13 @@ class NuSenseFrame(LinearMap):
             self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[2:]),
                                                     grid_size=self.grid_size, numpoints=numpoints, norm=self.norm)
             size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
-            super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in), device=smaps.device)
+            super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in))
         else:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
             self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_size=self.grid_size,
                                                     numpoints=numpoints, norm=self.norm)
             size_in = list(smaps.shape[1:])
-            super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in), device=smaps.device)
+            super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in))
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -316,7 +316,8 @@ class Gmri(LinearMap):
                  L: int = 6,
                  nbins: int = 20,
                  dt: int = 4e-3,
-                 numpoints: Union[int, Sequence[int]] = 6
+                 numpoints: Union[int, Sequence[int]] = 6,
+                 grid_size: float = 2
                  ):
         self.norm = norm
         self.smaps = smaps
@@ -346,7 +347,7 @@ class Gmri(LinearMap):
             self.C[:, ib, 0, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
                 (self.L,) + tuple(zmap.shape[1:]))
         self.traj = self.traj.reshape((self.traj.shape[0], self.ndim, self.nshot * self.npoints))
-        super(Gmri, self).__init__(tuple(size_in), tuple(size_out), device=smaps.device)
+        super(Gmri, self).__init__(tuple(size_in), tuple(size_out))
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
