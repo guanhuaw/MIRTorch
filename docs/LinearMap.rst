@@ -1,17 +1,20 @@
 Linear Operators
 ================
 
-MRI system models
------------------
+.. automodule::
+   mirtorch.linear.LinearMap
+
+Attributes of LinearMap
+---------------------------------
+
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-   mirtorch.linear.mri.FFTCn
-   mirtorch.linear.mri.NuSense
-   mirtorch.linear.mri.Sense
-   mirtorch.linear.mri.NuSenseFrame
-   mirtorch.linear.mri.Gmri
+    mirtorch.linear.Add
+    mirtorch.linear.Multiply
+    mirtorch.linear.Matmul
+    mirtorch.linear.ConjTranspose
 
 
 Basic image processing operations
@@ -32,6 +35,19 @@ Basic image processing operations
    mirtorch.linear.basics.Patch2D
    mirtorch.linear.basics.Patch3D
    mirtorch.linear.wavelets.Wavelet2D
+
+
+MRI system models
+-----------------
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   mirtorch.linear.mri.FFTCn
+   mirtorch.linear.mri.NuSense
+   mirtorch.linear.mri.Sense
+   mirtorch.linear.mri.NuSenseFrame
+   mirtorch.linear.mri.Gmri
 
 
 

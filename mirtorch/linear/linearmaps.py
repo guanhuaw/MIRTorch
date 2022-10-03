@@ -1,29 +1,3 @@
-r"""Abstraction of linear operators as matrices.
-
-    The implementation follow the SigPy(https://github.com/mikgroup/sigpy)
-    and LinearmapAA (https://github.com/JeffFessler/LinearMapsAA.jl).
-    Recommendation for linear operation：
-    (but you do not have to do this if the BP is efficient enough).
-    class forward(torch.autograd.Function):
-        @staticmethod
-        def forward(ctx, data_in):
-            return forward_func(data_in)
-        @staticmethod
-        def backward(ctx, grad_data_in):
-            return adjoint_func(grad_data_in)
-    forward_op = forward.apply
-
-    class adjoint(torch.autograd.Function):
-        @staticmethod
-        def forward(ctx, data_in):
-            return forward_func(data_in)
-        @staticmethod
-        def backward(ctx, grad_data_in):
-            return adjoint_func(grad_data_in)
-    adjoint_op = adjoint.apply
-    2021-02. Guanhua Wang and Keyue Zhu, University of Michigan
-    TODO: extended assignments, unary operators
-"""
 import torch
 from torch import Tensor
 import numpy as np
@@ -35,8 +9,6 @@ FloatLike = Union[float, torch.FloatTensor]
 def check_device(x, y):
     r"""
     check if two tensors are on the same device
-    Returns:
-
     """
     assert x.device == y.device, "Tensors should be on the same device"
 
@@ -46,27 +18,47 @@ T = TypeVar('T', bound='LinearMap')
 
 class LinearMap:
     r"""
-    Linear Operator: :math: `y = A*x`
+    Abstraction of linear operators as matrices :math:`y = A*x`.
+    The implementation follow the `SigPy <https://github.com/mikgroup/sigpy>`_ and `LinearmapAA <https://github.com/JeffFessler/LinearMapsAA.jl>`_.
+
+    Common operators, including +, -, *, are overloaded. One may freely compose operators as long as the size matches.
+
+    Defining new linear operators required `_apply` (forward, :math:`A`) and `_adjoint` (conjugate adjoint, :math:`A'`) functions, as well as size.
+    Recommendation for efficient backpropagation (but you do not have to do this if the AD is efficient enough):
+
+    .. code-block:: python
+
+        class forward(torch.autograd.Function):
+            @staticmethod
+            def forward(ctx, data_in):
+                return forward_func(data_in)
+            @staticmethod
+            def backward(ctx, grad_data_in):
+                return adjoint_func(grad_data_in)
+        forward_op = forward.apply
+
+        class adjoint(torch.autograd.Function):
+            @staticmethod
+            def forward(ctx, data_in):
+                return forward_func(data_in)
+            @staticmethod
+            def backward(ctx, grad_data_in):
+                return adjoint_func(grad_data_in)
+        adjoint_op = adjoint.apply
 
     Attributes:
         size_in: the size of the input of the linear map (a list)
         size_out: the size of the output of the linear map (a list)
-
-    TODO: size_in and size_out could also be a tuple of list (consider wavelets)
-
     """
 
     def __init__(self,
                  size_in: Sequence[int],
-                 size_out: Sequence[int],
-                 device='cpu'):
+                 size_out: Sequence[int]):
         r"""
         Initiate the linear operator.
         """
-        self.size_in = list(size_in)  # size_in: input data dimension
-        self.size_out = list(size_out)  # size_out: output data dimension
-        self.device = device  # some linear operators do not depend on devices, like FFT.
-        # self.property = property  # properties like 'unitary', 'Toeplitz', 'frame' ...
+        self.size_in = list(size_in)
+        self.size_out = list(size_out)
 
     def __repr__(self):
         return '<{oshape}x{ishape} {repr_str} Linop>'.format(
@@ -240,6 +232,9 @@ class Matmul(LinearMap):
 
 
 class ConjTranspose(LinearMap):
+    r"""
+    Hermitian transpose of linear operators.
+    """
     def __init__(self, A: LinearMap):
         self.A = A
         super().__init__(A.size_out, A.size_in)
