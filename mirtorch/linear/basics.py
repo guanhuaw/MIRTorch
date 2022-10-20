@@ -71,15 +71,15 @@ class Diffnd(LinearMap):
         return x
 
 
-class Diff2dframe(LinearMap):
+class Diff2dgram(LinearMap):
     """
-    A little more efficient way to implement the frame operator for the Gram of finite difference.
+    A little more efficient way to implement the gram operator for the Gram (A'A) of finite difference.
     Apply to last two dimensions, with the reflexive boundary condition.
     """
 
     def __init__(self,
                  size_in: Sequence[int]):
-        super(Diff2dframe, self).__init__(size_in, size_in)
+        super(Diff2dgram, self).__init__(size_in, size_in)
 
     def RtR(self, x):
         return torch.cat(((x[..., 0, :] - x[..., 1, :]).unsqueeze(-2),
@@ -95,15 +95,15 @@ class Diff2dframe(LinearMap):
         return self.RtR(x)
 
 
-class Diff3dframe(LinearMap):
+class Diff3dgram(LinearMap):
     """
-    A little more efficient way to implement the frame operator for the Gram of finite difference, with the reflexive boundary condition.
+    A little more efficient way to implement the gram operator for the Gram of finite difference, with the reflexive boundary condition.
     Apply to last three dimensions.
     """
 
     def __init__(self,
                  size_in: Sequence[int]):
-        super(Diff3dframe, self).__init__(size_in, size_in)
+        super(Diff3dgram, self).__init__(size_in, size_in)
 
     def RtR(self, x):
         return torch.cat(((x[..., 0, :, :] - x[..., 1, :, :]).unsqueeze(-3),

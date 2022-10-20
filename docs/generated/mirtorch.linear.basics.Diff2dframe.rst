@@ -1,9 +1,9 @@
-﻿mirtorch.linear.basics.Diff2dframe
+﻿mirtorch.linear.basics.Diff2dgram
 ==================================
 
 .. currentmodule:: mirtorch.linear.basics
 
-.. autoclass:: Diff2dframe
+.. autoclass:: Diff2dgram
 
    
    .. automethod:: __init__
@@ -13,11 +13,11 @@
 
    .. autosummary::
    
-      ~Diff2dframe.RtR
-      ~Diff2dframe.__init__
-      ~Diff2dframe.adjoint
-      ~Diff2dframe.apply
-      ~Diff2dframe.to
+      ~Diff2dgram.RtR
+      ~Diff2dgram.__init__
+      ~Diff2dgram.adjoint
+      ~Diff2dgram.apply
+      ~Diff2dgram.to
    
    
 
@@ -27,6 +27,6 @@
 
    .. autosummary::
    
-      ~Diff2dframe.H
+      ~Diff2dgram.H
    
    
