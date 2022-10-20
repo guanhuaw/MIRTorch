@@ -64,6 +64,8 @@ Here we provide several notebook tutorials focused on MRI, where $A$ is FFT or N
 
 - `/example/demo_mri.ipynb` contains the SENSE (CG-SENSE) and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*).
 
+- `/example/demo_3d.ipynb` contains the 3d non-Cartesian MR reconstruction.
+
 - `/example/demo_cs.ipynb` shows the compressed sensing reconstruction of under-determined MRI signals.
 
 - `/example/demo_dl.ipynb` exhibits the dictionary learning results.

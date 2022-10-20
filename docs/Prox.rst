@@ -1,4 +1,4 @@
-Proximal Operators
+Proximal operators
 ==================
 
 

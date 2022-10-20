@@ -1,4 +1,4 @@
-Dictionary Learning
+Dictionary learning
 ===================
 
 Dictionary learning methods

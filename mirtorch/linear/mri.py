@@ -296,6 +296,7 @@ class Gmri(LinearMap):
     r"""
     B0-informed mri reconstruction, the name follows MIRT.
     Note that the data format is a little different from NuSENSE.
+
     Attributes:
         norm: normalization of the fft ('ortho' or None)
         smaps: tensor with dimension [batch, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
@@ -306,6 +307,8 @@ class Gmri(LinearMap):
         L: int, number of segmentation
         dt: float, dwell time in ms
         nbins: int, granularity of exponential approximation.
+
+    TODO: add DataParallel
     """
 
     def __init__(self,

@@ -1,4 +1,4 @@
-Linear Operators
+Linear operators
 ================
 
 .. automodule::
