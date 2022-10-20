@@ -224,7 +224,7 @@ class Matmul(LinearMap):
         super().__init__(self.B.size_in, self.A.size_out)
 
     def _apply(self: T, x: Tensor) -> Tensor:
-        # TODO: add frame operator
+        # TODO: add gram operator
         return self.A(self.B(x))
 
     def _apply_adjoint(self: T, x: Tensor) -> Tensor:

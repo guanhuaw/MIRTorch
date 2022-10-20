@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-REQUIRED_PACKAGES = ['torch=1.10', 'numpy', 'scipy', 'torchvision>=0.8', 'dominate>=2.5.1',
+REQUIRED_PACKAGES = ['torch == 1.10', 'numpy', 'scipy', 'torchvision>=0.8', 'dominate>=2.5.1',
                      'torchkbnufft >= 1.1.0', 'scipy>=1.6.0', 'PyWavelets>=1.1.0',
                      'h5py >= 3.2.1']
 

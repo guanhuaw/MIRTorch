@@ -1,9 +1,9 @@
-﻿mirtorch.linear.mri.NuSenseFrame
+﻿mirtorch.linear.mri.NuSenseGram
 ================================
 
 .. currentmodule:: mirtorch.linear.mri
 
-.. autoclass:: NuSenseFrame
+.. autoclass:: NuSenseGram
 
    
    .. automethod:: __init__
@@ -13,10 +13,10 @@
 
    .. autosummary::
    
-      ~NuSenseFrame.__init__
-      ~NuSenseFrame.adjoint
-      ~NuSenseFrame.apply
-      ~NuSenseFrame.to
+      ~NuSenseGram.__init__
+      ~NuSenseGram.adjoint
+      ~NuSenseGram.apply
+      ~NuSenseGram.to
    
    
 
@@ -26,6 +26,6 @@
 
    .. autosummary::
    
-      ~NuSenseFrame.H
+      ~NuSenseGram.H
    
    
