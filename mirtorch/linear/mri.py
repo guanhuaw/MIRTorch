@@ -230,9 +230,9 @@ class NuSense(LinearMap):
                 return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(0).squeeze(0)
 
 
-class NuSenseFrame(LinearMap):
+class NuSenseGram(LinearMap):
     r"""
-    Gram operator of the Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
+    Gram operator (A'A) of the Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
     The implementation calls Matthew Muckley's Torchkbnufft toolbox:
     https://github.com/mmuckley/torchkbnufft
 
@@ -263,13 +263,13 @@ class NuSenseFrame(LinearMap):
             self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[2:]),
                                                     grid_size=self.grid_size, numpoints=numpoints, norm=self.norm)
             size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
-            super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in))
+            super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
         else:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
             self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_size=self.grid_size,
                                                     numpoints=numpoints, norm=self.norm)
             size_in = list(smaps.shape[1:])
-            super(NuSenseFrame, self).__init__(tuple(size_in), tuple(size_in))
+            super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -294,8 +294,8 @@ class NuSenseFrame(LinearMap):
 
 class Gmri(LinearMap):
     r"""
-    B0-informed mri reconstruction
-
+    B0-informed mri reconstruction, the name follows MIRT.
+    Note that the data format is a little different from NuSENSE.
     Attributes:
         norm: normalization of the fft ('ortho' or None)
         smaps: tensor with dimension [batch, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
@@ -352,10 +352,10 @@ class Gmri(LinearMap):
     def _apply(self, x: Tensor) -> Tensor:
         r"""
         Args:
-            x: complex-valued images, [nx, ny, (nz)] or [nbatch, 1, nx, ny (nz)]
+            x: [nbatch, 1, nx, ny (nz)]
 
         Returns:
-            k: k-space data, [(batch), ncoil, nshot*npoints]
+            k: k-space data, [(batch), ncoil, nshot, npoints]
         """
         y = torch.zeros(self.size_out).to(self.smaps)
         for il in range(self.L):
@@ -364,6 +364,12 @@ class Gmri(LinearMap):
         return y
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
+        r"""
+        Args:
+            k: k-space data, [(batch), ncoil, nshot, npoints]
+        Returns:
+            x: [nbatch, 1, nx, ny (nz)]
+        """
         x = torch.zeros(self.size_in).to(self.smaps)
         for il in range(self.L):
             x = x + self.C[il].conj() * self.AT(
@@ -377,7 +383,7 @@ def mri_exp_approx(b0, bins, lseg, dt, T):
     From Sigpy: https://github.com/mikgroup/sigpy and MIRT: https://web.eecs.umich.edu/~fessler/code/
     Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2*pi*zmap) [M*N]
     Args:
-        b0: numpy array in dimension [], inhomogeneity matrix in Hz.
+        b0: numpy array in dimension [nx, ny, nz], inhomogeneity matrix in Hz.
         bins: int, number of histogram bins to use.
         lseg: int, number of time segments.
         dt: float, hardware dwell time (ms).
