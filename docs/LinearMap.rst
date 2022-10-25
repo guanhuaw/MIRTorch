@@ -46,7 +46,7 @@ MRI system models
    mirtorch.linear.mri.FFTCn
    mirtorch.linear.mri.NuSense
    mirtorch.linear.mri.Sense
-   mirtorch.linear.mri.NuSensegram
+   mirtorch.linear.mri.NuSenseGram
    mirtorch.linear.mri.Gmri
 
 
