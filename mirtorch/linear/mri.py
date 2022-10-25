@@ -54,7 +54,10 @@ class FFTCn(LinearMap):
 
 class Sense(LinearMap):
     r"""
-    Cartesian sense operator, following "SENSE: Sensitivity encoding for fast MRI"
+    Cartesian sense operator, following "SENSE: Sensitivity encoding for fast MRI".
+    The input/ourput size depends on the sensitivity maps.
+    If we use the batch dimension, the input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, nx, ny, (nz)].
+    Otherwise, the input dimension is [nx, ny, (nz)], and the output is [ncoil, nx, ny, (nz)].
 
     Attributes:
         masks: tensor with dimension [(batch), nx, ny, (nz)]
@@ -130,6 +133,10 @@ class NuSense(LinearMap):
     Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
     The implementation calls Matthew Muckley's Torchkbnufft toolbox:
     https://github.com/mmuckley/torchkbnufft
+    The input/ourput size depends on the sensitivity maps.
+    If we use the batch dimension, the input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, npoints].
+    Otherwise, the input dimension is [nx, ny, (nz)], and the output is [ncoil, npoints].
+
 
     Attributes:
         traj: tensor with dimension [(batch), ndim, nshot*npoints]. Note that traj can have no batch dimension even x have. ref: https://github.com/mmuckley/torchkbnufft/pull/24
@@ -235,6 +242,10 @@ class NuSenseGram(LinearMap):
     Gram operator (A'A) of the Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
     The implementation calls Matthew Muckley's Torchkbnufft toolbox:
     https://github.com/mmuckley/torchkbnufft
+    The input/ourput size depends on the sensitivity maps.
+    If we use the batch dimension, the input/output dimension is [nbatch, 1, nx, ny, (nz)].
+    Otherwise, the input/output dimension is [nx, ny, (nz)].
+
 
     Attributes:
         traj: tensor with dimension [(batch), ndim, nshot*npoints]. Note that traj can have no batch dimension even x have. ref: https://github.com/mmuckley/torchkbnufft/pull/24
@@ -296,6 +307,8 @@ class Gmri(LinearMap):
     r"""
     B0-informed mri reconstruction, the name follows MIRT.
     Note that the data format is a little different from NuSENSE.
+    The input/ourput size depends on the sensitivity maps.
+    The input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, nshot, nfe].
 
     Attributes:
         norm: normalization of the fft ('ortho' or None)
