@@ -390,7 +390,7 @@ class Gmri(LinearMap):
         for il in range(self.L):
             x = x + self.C[il].conj() * self.AT(
                 (y * self.B[il].conj()).reshape(self.nbatch, self.nc, self.nshot * self.npoints), self.traj,
-                smaps=self.smaps, norm=self.norm).squeeze(1)
+                smaps=self.smaps, norm=self.norm)
         return x
 
 
