@@ -169,8 +169,8 @@ class Add(LinearMap):
     """
 
     def __init__(self, A: LinearMap, B: LinearMap):
-        assert list(A.size_in) == list(B.size_in), "The input dimentions of two combined ops are not the same."
-        assert list(A.size_out) == list(B.size_out), "The output dimentions of two combined ops are not the same."
+        assert list(A.size_in) == list(B.size_in), "The input dimensions of two combined ops are not the same."
+        assert list(A.size_out) == list(B.size_out), "The output dimensions of two combined ops are not the same."
         self.A = A
         self.B = B
         super().__init__(self.A.size_in, self.B.size_out)
@@ -245,6 +245,84 @@ class ConjTranspose(LinearMap):
     def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         return self.A.apply(x)
 
+class BlockDiagonal(LinearMap):
+    r"""
+    Create a block-diagonal linear map from a list of linear maps. This assumes that each of the linear maps
+    is a 2D linearmap, with identical input and output shapes.
+
+    Attributes:
+    A : List of 2D linear maps
+    """
+
+    def __init__(self, A: Sequence[LinearMap]):
+        self.A = A
+
+        # dimension checks
+        nz = len(A)
+        assert all([list(A[i].size_in) == list(A[i + 1].size_in) for i in range(nz - 1)]),\
+            "Input dimensions of each linear map must be compatible to create a block diagonal linear map."
+        assert all([list(A[i].size_out) == list(A[i + 1].size_out) for i in range(nz - 1)]),\
+            "Output dimensions of each linear map must be compatible to create a block diagonal linear map."
+        size_in = list(A[0].size_in) + [nz]
+        size_out = list(A[0].size_out) + [nz]
+        super().__init__(tuple(size_in), tuple(size_out))
+
+    def _apply(self: T, x: Tensor) -> Tensor:
+        out = torch.zeros(self.size_out, dtype = x.dtype, device = x.device, layout = x.layout)
+        nz = self.size_out[-1]
+
+        # TODO: exploit parallelism
+        for k in range(nz):
+            out[..., k] = self.A[k].apply(x[..., k])
+        return out
+
+    def _apply_adjoint(self: T, x: Tensor):
+        out = torch.zeros(self.size_in, dtype = x.dtype, device = x.device, layout = x.layout)
+        nz = self.size_in[-1]
+
+        # TODO: exploit parallelism
+        for k in range(nz):
+            out[..., k] = self.A[k].adjoint(x[..., k])
+        return out
+
+
+class Kron(LinearMap):
+    r"""
+    Create a LinearMap corresponding to the Kronecker product of a linear map with the identity matrix, i.e.,
+    kron(I_n, A), where A is a LinearMap.
+
+    Attributes:
+    A: linear map
+    n: dimension of identity matrix for Kronecker product
+
+    Example: This could be used for 2D stack of spirals reconstruction where we have identical spiral trajectories
+    in each slice, and we neglect the effects of off-resonance + no parallel imaging.
+    """
+
+    def __init__(self, A: LinearMap, n):
+        self.A = A
+        self.n = n
+        size_in = list(A.size_in) + [n]
+        size_out = list(A.size_out) + [n]
+        super().__init__(tuple(size_in), tuple(size_out))
+
+    def apply(self, x: Tensor):
+        out = torch.zeros(self.size_out, dtype = x.dtype, device = x.device, layout = x.layout)
+
+        # TODO: exploit parallelism.
+        for k in range(self.n):
+            out[...,k] = self.A.apply(x[...,k])
+
+        return out
+
+    def _apply_adjoint(self, x: Tensor):
+        out = torch.zeros(self.size_in, dtype = x.dtype, device = x.device, layout = x.layout)
+
+        # TODO: exploit parallelism.
+        for k in range(self.n):
+            out[...,k] = self.A.adjoint(x[...,k])
+
+        return out
 
 class Vstack(LinearMap):
     # TODO
