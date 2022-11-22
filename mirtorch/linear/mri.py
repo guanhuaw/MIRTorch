@@ -313,7 +313,7 @@ class Gmri(LinearMap):
     Attributes:
         norm: normalization of the fft ('ortho' or None)
         smaps: tensor with dimension [batch, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
-        zmap: tensor with dimension [batch, nx, ny, (nz)]. Relaxation and off-resonance effects in Hz. ref: DOI: 10.1109/TSP.2005.853152
+        zmap: tensor with dimension [batch, nx, ny, (nz)]. Off-resonance map in Hz. ref: DOI: 10.1109/TSP.2005.853152
         traj: tensor with dimension [nbatch (or 1), ndimension, nshot, nreadout]
         numpoints: int, number of interpolation points in gridding.
         grid_size: float, oversampling ratio (>1)
@@ -397,25 +397,25 @@ class Gmri(LinearMap):
 def mri_exp_approx(b0, bins, lseg, dt, T):
     r"""
     From Sigpy: https://github.com/mikgroup/sigpy and MIRT: https://web.eecs.umich.edu/~fessler/code/
-    Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2*pi*zmap) [M*N]
+    Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2i*pi*b0*t) [M*N]
     Args:
         b0: numpy array in dimension [nx, ny, nz], inhomogeneity matrix in Hz.
         bins: int, number of histogram bins to use.
         lseg: int, number of time segments.
         dt: float, hardware dwell time (ms).
-        T: float, length of pulse (ms).
+        T: float, length of readout (ms).
     Returns:
         2-element tuple containing b: temporal interpolator; ct: off-resonance phase at each time segment center.
     TODO(guahuaw@umich.edu): The SVD approach and pure pytorch implementation.
     """
 
     # create time vector
-    t = np.linspace(0, T, np.int(T / dt))
+    t = np.linspace(0, T, np.int(T / dt)) # todo: should start from RF, not from readout!
     hist_wt, bin_edges = np.histogram(np.imag(2j * np.pi * np.ndarray.flatten(b0)),
                                       bins)
 
     # build B and Ct
-    bin_centers = bin_edges[1:] - bin_edges[1] / 2
+    bin_centers = bin_edges[1:] - (bin_edges[2]-bin_edges[1]) / 2
     zk = 0 + 1j * bin_centers
     tl = np.linspace(0, lseg, lseg) / lseg * T / 1000  # time seg centers
     # calculate off-resonance phase @ each time seg, for hist bins
