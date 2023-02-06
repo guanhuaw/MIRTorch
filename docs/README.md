@@ -74,6 +74,11 @@ Since MIRTorch is differentiable, one may use AD to update many parameters. For 
 
 ------
 
+### Tips
+
+- The computation favors single precision, especially if you are using consumer-level GPUs (like Nvidia Geforce).
+- When the reconstruction results look weird, please check if there is some model mismatch.
+
 ### Acknowledgments
 
 This work is inspired by (but not limited to):

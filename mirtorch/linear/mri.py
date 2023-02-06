@@ -313,13 +313,15 @@ class Gmri(LinearMap):
     Attributes:
         norm: normalization of the fft ('ortho' or None)
         smaps: tensor with dimension [batch, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
-        zmap: tensor with dimension [batch, nx, ny, (nz)]. Relaxation and off-resonance effects in Hz. ref: DOI: 10.1109/TSP.2005.853152
+        zmap: tensor with dimension [batch, nx, ny, (nz)]. Off-resonance effects in Hz. ref: DOI: 10.1109/TSP.2005.853152
         traj: tensor with dimension [nbatch (or 1), ndimension, nshot, nreadout]
         numpoints: int, number of interpolation points in gridding.
         grid_size: float, oversampling ratio (>1)
         L: int, number of segmentation
         dt: float, dwell time in ms
         nbins: int, granularity of exponential approximation.
+        T: tensor with dimension [nfe]. Descrbe the time (in ms) of readout out after excitation. When T is none,
+        the readout is supposed to start immediately after the excitation.
 
     TODO: add DataParallel
     """
@@ -333,7 +335,8 @@ class Gmri(LinearMap):
                  nbins: int = 20,
                  dt: int = 4e-3,
                  numpoints: Union[int, Sequence[int]] = 6,
-                 grid_size: float = 2
+                 grid_size: float = 2,
+                 T: Tensor = None
                  ):
         self.norm = norm
         self.smaps = smaps
@@ -358,7 +361,11 @@ class Gmri(LinearMap):
         self.C = torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
             self.smaps.device) * 1j  # [L, batch, 1, nx, ny ...]
         for ib in range(self.nbatch):
-            b, c = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, dt, dt * self.npoints)
+            if T is None:
+               t =  np.linspace(0, dt * self.npoints, self.npoints)
+            else:
+                t = T.cpu().numpy()
+            b, c = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, t)
             self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
             self.C[:, ib, 0, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
                 (self.L,) + tuple(zmap.shape[1:]))
@@ -394,30 +401,28 @@ class Gmri(LinearMap):
         return x
 
 
-def mri_exp_approx(b0, bins, lseg, dt, T):
+def mri_exp_approx(b0, bins, lseg, t):
     r"""
-    From Sigpy: https://github.com/mikgroup/sigpy and MIRT: https://web.eecs.umich.edu/~fessler/code/
-    Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2*pi*zmap) [M*N]
+    From Sigpy: https://github.com/mikgroup/sigpy and MIRT (mri_exp_approx.m): https://web.eecs.umich.edu/~fessler/code/
+    Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2i*pi*b0*t) [M*N]
     Args:
         b0: numpy array in dimension [nx, ny, nz], inhomogeneity matrix in Hz.
         bins: int, number of histogram bins to use.
         lseg: int, number of time segments.
-        dt: float, hardware dwell time (ms).
-        T: float, length of pulse (ms).
+        t: float, describing the readout time (ms).
     Returns:
         2-element tuple containing b: temporal interpolator; ct: off-resonance phase at each time segment center.
     TODO(guahuaw@umich.edu): The SVD approach and pure pytorch implementation.
     """
 
     # create time vector
-    t = np.linspace(0, T, np.int(T / dt))
     hist_wt, bin_edges = np.histogram(np.imag(2j * np.pi * np.ndarray.flatten(b0)),
                                       bins)
 
     # build B and Ct
-    bin_centers = bin_edges[1:] - bin_edges[1] / 2
+    bin_centers = bin_edges[1:] - (bin_edges[1]-bin_edges[0]) / 2
     zk = 0 + 1j * bin_centers
-    tl = np.linspace(0, lseg, lseg) / lseg * T / 1000  # time seg centers
+    tl = np.linspace(t[0], t[-1], lseg) / 1000  # time seg centers
     # calculate off-resonance phase @ each time seg, for hist bins
     ch = np.exp(-np.expand_dims(tl, axis=1) @ np.expand_dims(zk, axis=0))
     w = np.diag(np.sqrt(hist_wt))
