@@ -1,8 +1,15 @@
 from setuptools import setup, find_packages
 
-REQUIRED_PACKAGES = ['torch == 1.10', 'numpy', 'scipy', 'torchvision>=0.8', 'dominate>=2.5.1',
-                     'torchkbnufft >= 1.1.0', 'scipy>=1.6.0', 'PyWavelets>=1.1.0',
-                     'h5py >= 3.2.1']
+REQUIRED_PACKAGES = ['torch >= 1.13',
+                     'numpy',
+                     'scipy',
+                     'torchvision>=0.8',
+                     'dominate>=2.5.1',
+                     'torchkbnufft >= 1.4.0',
+                     'scipy>=1.6.0',
+                     'PyWavelets>=1.1.0',
+                     'h5py >= 3.2.1',
+                     'pytorch_wavelets @ git+https://github.com/fbcotter/pytorch_wavelets.git@8d2e3b4289beaea9aa89f7b1dbb290e448331197']
 
 with open("README.md", "r") as h:
     long_description = h.read()
