@@ -9,7 +9,7 @@ REQUIRED_PACKAGES = ['torch >= 1.13',
                      'scipy>=1.6.0',
                      'PyWavelets>=1.1.0',
                      'h5py >= 3.2.1',
-                     'pytorch_wavelets @ git+https://github.com/fbcotter/pytorch_wavelets.git@8d2e3b4289beaea9aa89f7b1dbb290e448331197']
+                     'pytorch_wavelets']
 
 with open("README.md", "r") as h:
     long_description = h.read()
@@ -32,6 +32,10 @@ setup(
         "Operating System :: OS Independent",
         'Development Status :: 2 - Pre-Alpha',
         'Topic :: Signal Processing'
+    ],
+    dependency_links=[
+        # Make sure to include the `#egg` portion so the `install_requires` recognizes the package
+        'git+https://github.com/fbcotter/pytorch_wavelets.git#egg=pytorch_wavelets'
     ],
     python_requires='>=3.6',
 )
