@@ -11,7 +11,7 @@ from .linearmaps import LinearMap
 from typing import Union, Sequence
 import torchkbnufft as tkbn
 from .util import fftshift, ifftshift
-
+import math
 
 
 class FFTCn(LinearMap):
@@ -234,7 +234,8 @@ class NuSense(LinearMap):
             if self.batchmode:
                 return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm)
             else:
-                return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(0).squeeze(0)
+                return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(
+                    0).squeeze(0)
 
 
 class NuSenseGram(LinearMap):
@@ -277,7 +278,7 @@ class NuSenseGram(LinearMap):
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
         else:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
-            self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_size=self.grid_size,
+            self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_siaze=self.grid_size,
                                                     numpoints=numpoints, norm=self.norm)
             size_in = list(smaps.shape[1:])
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
@@ -312,7 +313,7 @@ class Gmri(LinearMap):
 
     Attributes:
         norm: normalization of the fft ('ortho' or None)
-        smaps: tensor with dimension [batch, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
+        smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
         zmap: tensor with dimension [batch, nx, ny, (nz)]. Off-resonance effects in Hz. ref: DOI: 10.1109/TSP.2005.853152
         traj: tensor with dimension [nbatch (or 1), ndimension, nshot, nreadout]
         numpoints: int, number of interpolation points in gridding.
@@ -362,10 +363,10 @@ class Gmri(LinearMap):
             self.smaps.device) * 1j  # [L, batch, 1, nx, ny ...]
         for ib in range(self.nbatch):
             if T is None:
-               t =  np.linspace(0, dt * self.npoints, self.npoints)
+                t = np.linspace(0, dt * self.npoints, self.npoints)
             else:
                 t = T.cpu().numpy()
-            b, c = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, t)
+            b, c, _ = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, t)
             self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
             self.C[:, ib, 0, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
                 (self.L,) + tuple(zmap.shape[1:]))
@@ -401,6 +402,106 @@ class Gmri(LinearMap):
         return x
 
 
+class GmriGram(LinearMap):
+    r"""
+    B0-informed mri reconstruction, the name follows MIRT.
+    Note that the data format is a little different from NuSENSE.
+    The input/ourput size depends on the sensitivity maps.
+    The input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, nshot, nfe].
+
+    Attributes:
+        norm: normalization of the fft ('ortho' or None)
+        smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
+        zmap: tensor with dimension [batch, nx, ny, (nz)]. Off-resonance effects in Hz. ref: DOI: 10.1109/TSP.2005.853152
+        traj: tensor with dimension [nbatch (or 1), ndimension, nshot, nreadout]
+        numpoints: int, number of interpolation points in gridding.
+        grid_size: float, oversampling ratio (>1)
+        L: int, number of segmentation
+        dt: float, dwell time in ms
+        nbins: int, granularity of exponential approximation.
+        T: tensor with dimension [nfe]. Descrbe the time (in ms) of readout out after excitation. When T is none,
+        the readout is supposed to start immediately after the excitation.
+
+    TODO: add DataParallel
+    """
+
+    def __init__(self,
+                 smaps: Tensor,
+                 zmap: Tensor,
+                 traj: Tensor,
+                 norm: str = 'ortho',
+                 L: int = 6,
+                 nbins: int = 20,
+                 dt: int = 4e-3,
+                 numpoints: Union[int, Sequence[int]] = 6,
+                 grid_size: float = 2,
+                 T: Tensor = None
+                 ):
+        self.norm = norm
+        self.smaps = smaps
+        self.zmap = zmap
+        self.L = L
+        self.nbins = nbins
+        self.dt = dt
+        self.nbatch = self.smaps.shape[0]
+        self.nc = self.smaps.shape[1]
+        self.traj = traj
+        _, self.ndim, self.nshot, self.npoints = self.traj.shape
+        self.grid_size = tuple(np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int))
+        size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
+        self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(
+            self.smaps.device) * 1j  # [L, batch, coil, shot, points]
+        self.C = torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
+            self.smaps.device) * 1j  # [L, batch, 1, nx, ny ...]
+        for ib in range(self.nbatch):
+            if T is None:
+                t = np.linspace(0, dt * self.npoints, self.npoints)
+            else:
+                t = T.cpu().numpy()
+            b, c, tl = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, t)
+            self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
+            self.C[:, ib, 0, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
+                (self.L,) + tuple(zmap.shape[1:]))
+            self.tl = torch.tensor(tl).to(smaps.device)
+        self.traj = self.traj.reshape((self.traj.shape[0], self.ndim, self.nshot * self.npoints))
+        self.toep_op = tkbn.ToepNufft()
+        self.kernel = []
+        for il in range(self.L):
+            self.kernel.append(tkbn.calc_toeplitz_kernel(self.traj, list(smaps.shape[2:]),
+                                                         grid_size=self.grid_size, numpoints=numpoints, norm=self.norm,
+                                                         weights=self.B[il].repeat(1, 1, self.nshot, 1).reshape(
+                                                             self.nbatch, 1, self.nshot * self.npoints)))
+        super(GmriGram, self).__init__(tuple(size_in), tuple(size_in))
+
+    def _apply(self, x: Tensor) -> Tensor:
+        r"""
+        Args:
+            x: [nbatch, 1, nx, ny (nz)]
+
+        Returns:
+            y: [nbatch, 1, nx, ny (nz)]
+        """
+        y = torch.zeros_like(x).to(self.smaps)
+        for il in range(self.L):
+            D = torch.exp(-2 * math.pi * 1j * self.zmap.unsqueeze(1) * self.tl[il])
+            y = y + D.conj() * self.toep_op(x * D, self.kernel[il], smaps=self.smaps, norm=self.norm)
+        return y
+
+    def _apply_adjoint(self, x: Tensor) -> Tensor:
+        r"""
+        Args:
+            x: [nbatch, 1, nx, ny (nz)]
+
+        Returns:
+            y: [nbatch, 1, nx, ny (nz)]
+        """
+        y = torch.zeros_like(x).to(self.smaps)
+        for il in range(self.L):
+            D = torch.exp(-2 * math.pi * 1j * self.zmap.unsqueeze(1) * self.tl[il])
+            y = y + D.conj() * self.toep_op(x * D, self.kernel[il], smaps=self.smaps, norm=self.norm)
+        return y
+
+
 def mri_exp_approx(b0, bins, lseg, t):
     r"""
     From Sigpy: https://github.com/mikgroup/sigpy and MIRT (mri_exp_approx.m): https://web.eecs.umich.edu/~fessler/code/
@@ -420,7 +521,7 @@ def mri_exp_approx(b0, bins, lseg, t):
                                       bins)
 
     # build B and Ct
-    bin_centers = bin_edges[1:] - (bin_edges[1]-bin_edges[0]) / 2
+    bin_centers = bin_edges[1:] - (bin_edges[1] - bin_edges[0]) / 2
     zk = 0 + 1j * bin_centers
     tl = np.linspace(t[0], t[-1], lseg) / 1000  # time seg centers
     # calculate off-resonance phase @ each time seg, for hist bins
@@ -433,7 +534,7 @@ def mri_exp_approx(b0, bins, lseg, t):
     b0_v = np.expand_dims(2j * np.pi * np.ndarray.flatten(b0), axis=0)
     ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
 
-    return b, ct
+    return b, ct, tl
 
 # def tukey_filer(LinearMap):
 #     r"""
@@ -454,6 +555,3 @@ def mri_exp_approx(b0, bins, lseg, t):
 #         self.width = width
 #         self.alpha = alpha
 #         super(tukey_filer, self).__init__(tuple(size_in), tuple(size_in))
-
-
-
