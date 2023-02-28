@@ -64,7 +64,7 @@ Here we provide several notebook tutorials focused on MRI, where $A$ is FFT or N
 
 - `/example/demo_mri.ipynb` contains the SENSE (CG-SENSE) and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*).
 
-- `/example/demo_3d.ipynb` contains the 3d non-Cartesian MR reconstruction.
+- `/example/demo_3d.ipynb` contains the 3d non-Cartesian MR reconstruction. *New!* Try the Toeplitz-embedding version of B0-informed reconstruction, which reduce hour-long recon to 5 secs.
 
 - `/example/demo_cs.ipynb` shows the compressed sensing reconstruction of under-determined MRI signals.
 
