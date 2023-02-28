@@ -92,11 +92,23 @@ If the code is useful to your research, please cite:
 @article{wang:22:bjork,
   author={Wang, Guanhua and Luo, Tianrui and Nielsen, Jon-Fredrik and Noll, Douglas C. and Fessler, Jeffrey A.},
   journal={IEEE Transactions on Medical Imaging}, 
-  title={B-spline Parameterized Joint Optimization of Reconstruction and K-space Trajectories (BJORK) for Accelerated 2D MRI}, 
+  title={B-spline Parameterized Joint Optimization of Reconstruction and K-space Trajectories ({BJORK}) for Accelerated {2D} {MRI}}, 
   year={2022},
   pages={1-1},
   doi={10.1109/TMI.2022.3161875}}
 ```
+
+```bibtex
+@inproceedings{wang:22:mirtorch,
+  title={{MIRTorch}: A {PyTorch}-powered Differentiable Toolbox for Fast Image Reconstruction and Scan Protocol Optimization},
+  author={Wang, Guanhua and Shah, Neel and Zhu, Keyue and Noll, Douglas C. and Fessler, Jeffrey A.},
+  booktitle={Proc. Intl. Soc. Magn. Reson. Med. (ISMRM)},
+  pages={4982},
+  year={2022}
+}
+```
+
+
 
 ------
 
