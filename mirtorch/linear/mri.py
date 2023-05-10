@@ -278,7 +278,7 @@ class NuSenseGram(LinearMap):
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
         else:
             self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
-            self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_siaze=self.grid_size,
+            self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_size=self.grid_size,
                                                     numpoints=numpoints, norm=self.norm)
             size_in = list(smaps.shape[1:])
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
@@ -291,16 +291,16 @@ class NuSenseGram(LinearMap):
             x:  tensor with dimension [nbatch, 1, nx, ny (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
         if self.batchmode:
-            return self.toep_op(x, self.kernel, smaps=self.smaps)
+            return self.toep_op(x, self.kernel, smaps=self.smaps, norm=self.norm)
         else:
-            return self.toep_op(x.unsqueeze(0).unsqueeze(0), self.kernel, smaps=self.smaps.unsqueeze(0)).squeeze(
+            return self.toep_op(x.unsqueeze(0).unsqueeze(0), self.kernel, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(
                 0).squeeze(0)
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
         if self.batchmode:
-            return self.toep_op(y, self.kernel, smaps=self.smaps)
+            return self.toep_op(y, self.kernel, smaps=self.smaps, norm=self.norm)
         else:
-            return self.toep_op(y.unsqueeze(0).unsqueeze(0), self.kernel, smaps=self.smaps.unsqueeze(0)).squeeze(
+            return self.toep_op(y.unsqueeze(0).unsqueeze(0), self.kernel, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(
                 0).squeeze(0)
 
 

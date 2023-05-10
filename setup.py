@@ -9,7 +9,9 @@ REQUIRED_PACKAGES = ['torch >= 1.13',
                      'scipy>=1.6.0',
                      'PyWavelets>=1.1.0',
                      'h5py >= 3.2.1',
-                     'pytorch_wavelets']
+                     'pytorch_wavelets',
+                     'einops',
+                     'matplotlib']
 
 with open("README.md", "r") as h:
     long_description = h.read()
