@@ -4,7 +4,7 @@ from torch import Tensor
 from typing import Union, Sequence
 import torchvision
 import numpy as np
-
+from xitorch.interpolate import Interp1D
 
 def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
     """
@@ -251,3 +251,28 @@ def fft_conv_adj(img, ker):
     xout[:, nz + padleft - 1] += torch.sum(xout[:, nz + padleft:], dim=1)
     return xout[padup:padup + nx, padleft:padleft + nz]
 
+def map2x(x1,y1,x2,y2):
+    x = x1-(y1.mul(x1-x2)).div(y1-y2)
+    return x
+
+def map2y(x1,y1,x2,y2):
+    y = y1-(x1.mul(y1-y2)).div(x1-x2)
+    return y
+
+def integrate1D(p_v,pixelSize):
+    n_pixel = len(p_v)
+    
+    P_x = 0
+    Ppj = torch.zeros(n_pixel+1).to(p_v.device)
+    
+    for pj in range(n_pixel):
+       P_x += p_v[pj] * pixelSize[pj]
+       
+       Ppj[pj+1] = P_x
+
+    return Ppj
+
+def inter1d(idx, val, query):
+    interp_func = Interp1D(idx, val, method="linear", extrap="bound")
+    Pdk = interp_func(query)
+    return Pdk
