@@ -1,3 +1,10 @@
+# bdd2d.py
+"""
+2D branchless distance-driven projection and backprojection (bdd_2d) 
+for fan-beam CT geometries with a "flat" detector.
+2023-06, Sonia Minseo Kim, University of Michigan
+"""
+
 import torch 
 from .linearmaps import LinearMap
 import numpy as np
@@ -5,10 +12,26 @@ from util import map2x, map2y, integrate1D, inter1d
 
 
 class bdd(LinearMap):
+    """
+    Forward and back-projection methods for CT image reconstruction.
+    Designed for use with the Michigan Image Reconstruction Toolbox (MIRT) or similar frameworks.
+    
+    Attributes:
+        DSD: int, distance from source to detector
+        DS0: int, distance from source to origin
+        pSize: float, pixel size i.e. distance from one pixel to the next
+        dSize: float, detector size i.e. distance from one detector to the next
+        nPix: int, number of pixel boundaries
+        nDet: int, number of detector boundaries
+        angle: tensor with dimension [1, ny], vector of projection view angles in radians
+    """
+    
     def __init__(self, size_in, size_out, **kwargs):
+        """
+        :param size_in: input shape [nx, ny]
+        :param size_out: output shape [nPix, len(angle)]
+        """
         super(bdd, self).__init__(size_in, size_out)
-        # size_in: nx * ny
-        # size_out: pSize * len(angle)
         self.DSD = kwargs['DSD']
         self.DS0 = kwargs['DS0'] 
         self.pSize = kwargs['pSize'] 
@@ -34,6 +57,14 @@ class bdd(LinearMap):
         self.pixelY = self.pixelY * self.pSize
             
     def common(self, proj):
+        r"""
+        Common sequence in both forward and back projections
+        Args:
+            proj: int, one projection index in angle vector
+
+        Returns:
+            None
+        """
         beta = self.angle[proj] # angle from x-ray beam to y-axis
             
         # Tube rotation
@@ -76,9 +107,16 @@ class bdd(LinearMap):
                 self.L[n] = abs(self.pSize/((self.detSize[n]*torch.sin(theta))))    
 
     def _apply(self, phantom):
-        #### forward projection ######
-        # For each projection
-        sinogram = torch.zeros(len(self.angle), self.nDet)
+        r"""
+        Forward projection
+        Args:
+            phantom: tensor with dimension [nPix, nPix], phantom image
+
+        Returns:
+            sinogram: tensor with dimension [nPix, len(angle)], sinogram 
+        """
+        
+        sinogram = torch.zeros(len(self.angle), self.nDet) # For each projection
         
         for proj in range(len(self.angle)):
             self.common(proj)
@@ -104,7 +142,14 @@ class bdd(LinearMap):
         return sinogram
 
     def _apply_adjoint(self, sinogram):
-        #### backward projection ######
+        r"""
+        Back projection
+        Args:
+            sinogram: tensor with dimension [nPix, len(angle)], sinogram 
+
+        Returns:
+            reconImg: tensor with dimension [nPix, nPix], backprojected image
+        """
         reconImg = torch.zeros(self.nPix, self.nPix)
         for proj in range(len(self.angle)):
             reconImg_angle = torch.zeros(self.nPix, self.nPix)

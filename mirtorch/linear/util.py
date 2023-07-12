@@ -252,14 +252,33 @@ def fft_conv_adj(img, ker):
     return xout[padup:padup + nx, padleft:padleft + nz]
 
 def map2x(x1,y1,x2,y2):
+    """
+    :param x1: floating point
+    :param x2: nx * nz
+    :param y1: floating point
+    :param y2: nx * nz
+    :return: nx * nz
+    """
     x = x1-(y1.mul(x1-x2)).div(y1-y2)
     return x
 
 def map2y(x1,y1,x2,y2):
+    """
+    :param x1: floating point
+    :param x2: nx * nz
+    :param y1: floating point
+    :param y2: nx * nz
+    :return: nx * nz
+    """
     y = y1-(x1.mul(y1-y2)).div(x1-x2)
     return y
 
-def integrate1D(p_v,pixelSize):
+def integrate1D(p_v, pixelSize):
+    """
+    :param p_v: nx * nz
+    :param pixelSize: floating point
+    :return: (nx+1) * nz
+    """
     n_pixel = len(p_v)
     
     P_x = 0
@@ -273,6 +292,12 @@ def integrate1D(p_v,pixelSize):
     return Ppj
 
 def inter1d(idx, val, query):
+    """
+    :param idx: nx * ny
+    :param val: nx * ny
+    :param query: nx * nz
+    :return: nx * nz
+    """
     interp_func = Interp1D(idx, val, method="linear", extrap="bound")
     Pdk = interp_func(query)
     return Pdk
