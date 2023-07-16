@@ -4,7 +4,7 @@ from torch import Tensor
 from typing import Union, Sequence
 import torchvision
 import numpy as np
-
+from xitorch.interpolate import Interp1D
 
 def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
     """
@@ -251,3 +251,53 @@ def fft_conv_adj(img, ker):
     xout[:, nz + padleft - 1] += torch.sum(xout[:, nz + padleft:], dim=1)
     return xout[padup:padup + nx, padleft:padleft + nz]
 
+def map2x(x1,y1,x2,y2):
+    """
+    :param x1: floating point
+    :param x2: nx * nz
+    :param y1: floating point
+    :param y2: nx * nz
+    :return: nx * nz
+    """
+    x = x1-(y1.mul(x1-x2)).div(y1-y2)
+    return x
+
+def map2y(x1,y1,x2,y2):
+    """
+    :param x1: floating point
+    :param x2: nx * nz
+    :param y1: floating point
+    :param y2: nx * nz
+    :return: nx * nz
+    """
+    y = y1-(x1.mul(y1-y2)).div(x1-x2)
+    return y
+
+def integrate1D(p_v, pixelSize):
+    """
+    :param p_v: nx * nz
+    :param pixelSize: floating point
+    :return: (nx+1) * nz
+    """
+    n_pixel = len(p_v)
+    
+    P_x = 0
+    Ppj = torch.zeros(n_pixel+1).to(p_v.device)
+    
+    for pj in range(n_pixel):
+       P_x += p_v[pj] * pixelSize[pj]
+       
+       Ppj[pj+1] = P_x
+
+    return Ppj
+
+def inter1d(idx, val, query):
+    """
+    :param idx: nx * ny
+    :param val: nx * ny
+    :param query: nx * nz
+    :return: nx * nz
+    """
+    interp_func = Interp1D(idx, val, method="linear", extrap="bound")
+    Pdk = interp_func(query)
+    return Pdk
