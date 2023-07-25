@@ -108,6 +108,17 @@ If the code is useful to your research, please cite:
 }
 ```
 
+```bibtex
+@ARTICLE{li:23:tet,
+  author={Li, Zongyu and Dewaraja, Yuni K. and Fessler, Jeffrey A.},
+  journal={IEEE Transactions on Radiation and Plasma Medical Sciences}, 
+  title={Training End-to-End Unrolled Iterative Neural Networks for SPECT Image Reconstruction}, 
+  year={2023},
+  volume={7},
+  number={4},
+  pages={410-420},
+  doi={10.1109/TRPMS.2023.3240934}}
+```
 
 
 ------
