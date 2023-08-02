@@ -6,6 +6,7 @@ import torchvision
 import numpy as np
 from xitorch.interpolate import Interp1D
 
+
 def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
     """
     Apply finite difference operator on a certain dim
@@ -16,7 +17,7 @@ def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
     Returns:
         y: the first-order finite difference of x
     """
-    if mode == 'reflexibe':
+    if mode == 'reflexive':
         len_dim = x.shape[dim]
         return torch.narrow(x, dim, 1, len_dim - 1) - torch.narrow(x, dim, 0, len_dim - 1)
     elif mode == 'periodic':
@@ -115,80 +116,97 @@ def dim_conv(dim_in, dim_kernel_size, dim_stride=1, dim_padding=0, dim_dilation=
 
 def imrotate(img, angle):
     """
-    :param img: N * C * H * W tensor
-    :param angle: in degree
-    :return: rotated img
+    Args:
+        img: N * C * H * W tensor
+        angle: in degree
+    Returns:
+        rotated img
     """
     return torchvision.transforms.functional.rotate(img,
-            angle, interpolation=torchvision.transforms.InterpolationMode.BILINEAR, fill=0)
+                                                    angle,
+                                                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                                                    fill=0)
 
 
 def fft2(img):
     """
-    :param img: H * W tensor
-    :return: 2D FFT of the img
+    Args:
+        img: H * W tensor
+    Returns:
+         2D FFT of the img
     """
     return torch.fft.fftshift(torch.fft.fft2(torch.fft.ifftshift(img)))
 
 
 def ifft2(img):
     """
-    :param img: H * W tensor
-    :return: 2D iFFT of the img
+    Args:
+        img: H * W tensor
+    Returns:
+        2D iFFT of the img
     """
     return torch.fft.fftshift(torch.fft.ifft2(torch.fft.ifftshift(img)))
 
 
 def power2(x):
     """
-    :param x: floating point
-    :return:
+    Args:
+        x: floating point
+    Returns:
+
     """
     return (2 ** (np.ceil(np.log2(x)))).astype(int)
 
 
 def _padup(nx, px):
     """
-    :param nx: floating point
-    :param px: floating point
-    :return:
+    Args:
+        nx: floating point
+        px: floating point
+    Returns:
+
     """
     return np.ceil((power2(nx + px - 1) - nx) / 2).astype(int)
 
 
 def _paddown(nx, px):
     """
-    :param nx: floating point
-    :param px: floating point
-    :return:
+    Args:
+        nx: floating point
+        px: floating point
+    Returns:
+
     """
     return np.floor((power2(nx + px - 1) - nx) / 2).astype(int)
 
 
 def _padleft(nz, pz):
     """
-    :param nz: floating point
-    :param pz: floating point
-    :return:
+    Args:
+        nz: floating point
+        pz: floating point
+    Returns:
     """
     return np.ceil((power2(nz + pz - 1) - nz) / 2).astype(int)
 
 
 def _padright(nz, pz):
     """
-    :param nz: floating point
-    :param pz: floating point
-    :return:
+    Args:
+        nz: floating point
+        pz: floating point
+    Returns:
     """
     return np.floor((power2(nz + pz - 1) - nz) / 2).astype(int)
 
 
 def pad2sizezero(img, padx, padz):
     """
-    :param img: H * W tensor
-    :param padx: floating point
-    :param padz: floating point
-    :return:
+    Args:
+        mg: H * W tensor
+        padx: floating point
+        padz: floating point
+    Returns:
     """
     px, pz = img.shape
     pad_img = torch.zeros(padx, padz).to(img.device).to(img.dtype)
@@ -200,9 +218,11 @@ def pad2sizezero(img, padx, padz):
 
 def fft_conv(img, ker):
     """
-    :param img: nx * nz
-    :param ker: px * pz
-    :return: nx * nz
+    Args:
+        img: nx * nz
+        ker: px * pz
+    Returns:
+        xout: nx * nz
     """
     nx, nz = img.shape[0], img.shape[1]
     px, pz = ker.shape[0], ker.shape[1]
@@ -225,9 +245,11 @@ def fft_conv(img, ker):
 
 def fft_conv_adj(img, ker):
     """
-      :param img: nx * nz
-      :param ker: px * pz
-      :return: nx * nz
+    Args:
+        img: nx * nz
+        ker: px * pz
+    Returns:
+        xout: nx * nz
     """
     nx, nz = img.shape[0], img.shape[1]
     px, pz = ker.shape[0], ker.shape[1]
@@ -251,52 +273,64 @@ def fft_conv_adj(img, ker):
     xout[:, nz + padleft - 1] += torch.sum(xout[:, nz + padleft:], dim=1)
     return xout[padup:padup + nx, padleft:padleft + nz]
 
-def map2x(x1,y1,x2,y2):
+
+def map2x(x1, y1, x2, y2):
     """
-    :param x1: floating point
-    :param x2: nx * nz
-    :param y1: floating point
-    :param y2: nx * nz
-    :return: nx * nz
+    Args:
+        x1: floating point
+        x2: nx * nz
+        y1: floating point
+        y2: nx * nz
+    Return:
+        x: nx * nz
     """
-    x = x1-(y1.mul(x1-x2)).div(y1-y2)
+    x = x1 - (y1.mul(x1 - x2)).div(y1 - y2)
     return x
 
-def map2y(x1,y1,x2,y2):
+
+def map2y(x1, y1, x2, y2):
     """
-    :param x1: floating point
-    :param x2: nx * nz
-    :param y1: floating point
-    :param y2: nx * nz
-    :return: nx * nz
+    Args:
+        x1: floating point
+        x2: nx * nz
+        y1: floating point
+        y2: nx * nz
+    Returns:
+        y: nx * nz
     """
-    y = y1-(x1.mul(y1-y2)).div(x1-x2)
+    y = y1 - (x1.mul(y1 - y2)).div(x1 - x2)
     return y
+
 
 def integrate1D(p_v, pixelSize):
     """
-    :param p_v: nx * nz
-    :param pixelSize: floating point
-    :return: (nx+1) * nz
+    Args:
+        p_v: nx * nz
+        pixelSize: floating point
+    Returns:
+        Ppj: (nx+1) * nz
     """
     n_pixel = len(p_v)
-    
+
     P_x = 0
-    Ppj = torch.zeros(n_pixel+1).to(p_v.device)
-    
+    Ppj = torch.zeros(n_pixel + 1).to(p_v.device)
+
     for pj in range(n_pixel):
-       P_x += p_v[pj] * pixelSize[pj]
-       
-       Ppj[pj+1] = P_x
+        P_x += p_v[pj] * pixelSize[pj]
+
+        Ppj[pj + 1] = P_x
 
     return Ppj
 
+
 def inter1d(idx, val, query):
     """
-    :param idx: nx * ny
-    :param val: nx * ny
-    :param query: nx * nz
-    :return: nx * nz
+    Args:
+        idx: nx * ny
+        val: nx * ny
+        query: nx * nz
+    Returns:
+        Pdk: nx * nz
     """
     interp_func = Interp1D(idx, val, method="linear", extrap="bound")
     Pdk = interp_func(query)

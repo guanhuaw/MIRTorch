@@ -8,11 +8,12 @@ for fan-beam CT geometries with a "flat" detector.
 import torch 
 from .linearmaps import LinearMap
 import numpy as np
-from util import map2x, map2y, integrate1D, inter1d
+from .util import map2x, map2y, integrate1D, inter1d
+from typing import Union, Sequence
+from torch import Tensor
 
-
-class bdd(LinearMap):
-    """
+class Bdd(LinearMap):
+    r"""
     Forward and back-projection methods for CT image reconstruction.
     Designed for use with the Michigan Image Reconstruction Toolbox (MIRT) or similar frameworks.
     
@@ -26,19 +27,26 @@ class bdd(LinearMap):
         angle: tensor with dimension [1, ny], vector of projection view angles in radians
     """
     
-    def __init__(self, size_in, size_out, **kwargs):
-        """
-        :param size_in: input shape [nx, ny]
-        :param size_out: output shape [nPix, len(angle)]
-        """
-        super(bdd, self).__init__(size_in, size_out)
-        self.DSD = kwargs['DSD']
-        self.DS0 = kwargs['DS0'] 
-        self.pSize = kwargs['pSize'] 
-        self.dSize = kwargs['dSize']   
-        self.nPix = kwargs['nPix']      
-        self.nDet = kwargs['nDet']    
-        self.angle = kwargs['angle']
+    def __init__(self,
+                 size_in: Sequence[int],
+                 size_out: Sequence[int],
+                 DSD: int,
+                 DS0: int,
+                 pSize: float,
+                 dSize: float,
+                 nPix: int,
+                 nDet: int,
+                 angle: Tensor
+                 ):
+
+        super(Bdd, self).__init__(size_in, size_out)
+        self.DSD = DSD
+        self.DS0 = DS0
+        self.pSize = pSize
+        self.dSize = dSize
+        self.nPix = nPix
+        self.nDet = nDet
+        self.angle = angle
         
         assert size_out[0] == len(self.angle)
         assert size_out[1] == self.nDet
@@ -106,7 +114,8 @@ class bdd(LinearMap):
                 theta = np.pi/2 - torch.atan(abs(self.rtubeY-det_mid)/abs(self.rtubeX))
                 self.L[n] = abs(self.pSize/((self.detSize[n]*torch.sin(theta))))    
 
-    def _apply(self, phantom):
+    def _apply(self,
+               phantom: Tensor):
         r"""
         Forward projection
         Args:

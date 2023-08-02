@@ -15,6 +15,8 @@ Attributes of LinearMap
     mirtorch.linear.Multiply
     mirtorch.linear.Matmul
     mirtorch.linear.ConjTranspose
+    mirtorch.linear.Kron
+    mirtorch.linear.BlockDiagonal
 
 
 Basic image processing operations
@@ -48,6 +50,26 @@ MRI system models
    mirtorch.linear.mri.Sense
    mirtorch.linear.mri.NuSenseGram
    mirtorch.linear.mri.Gmri
+
+
+SPECT system models
+-----------------
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   mirtorch.linear.spect.SPECT
+
+
+CT system models
+-----------------
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   mirtorch.linear.ct.Bdd
+
+
 
 
 

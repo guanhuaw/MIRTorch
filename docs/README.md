@@ -70,6 +70,9 @@ Here we provide several notebook tutorials focused on MRI, where $A$ is FFT or N
 
 - `/example/demo_dl.ipynb` exhibits the dictionary learning results.
 
+- `/example/demo_mlem` showcase SPECT recon algorithms, including EM and CNN.
+
+
 Since MIRTorch is differentiable, one may use AD to update many parameters. For example, updating the reconstruction neural network's weights. More importantly, one may update the imaging system itself via gradient-based and data-driven methods. As a user case, [Bjork repo](https://github.com/guanhuaw/Bjork) contains MRI sampling pattern optimization examples. One may use the reconstruction loss as the objective function to jointly optimize reconstruction algorithms and the sampling pattern. See [this video](https://www.youtube.com/watch?v=sLFOf5EvVAs) on how to jointly optimize reconstruction and acquisition. 
 
 ------
