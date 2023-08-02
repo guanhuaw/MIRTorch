@@ -30,6 +30,11 @@ class SPECT(LinearMap):
         super(SPECT, self).__init__(size_in, size_out)
         self.mumap = mumap
         self.psfs = psfs
+        assert mumap.device == psfs.device, "mumap and psfs should be on the same device!"
+        assert mumap.dtype == psfs.dtype, "mumap and psfs should have the same datatype!"
+        assert mumap.shape == torch.Size(size_in), "mumap shape mismatched!"
+        assert psfs.shape[-1] == size_out[-1], "psfs nview mismatched!"
+        
         self.dy = dy
 
     def _apply(self, x) -> Tensor:

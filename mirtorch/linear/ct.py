@@ -48,10 +48,18 @@ class Bdd(LinearMap):
         self.nDet = nDet
         self.angle = angle
         
-        assert size_out[0] == len(self.angle)
-        assert size_out[1] == self.nDet
-        assert size_in[0] == self.nPix
-        assert size_in[1] == self.nPix
+        assert size_out[0] == len(self.angle), "size of angle mismatched!"
+        assert size_out[1] == self.nDet, "number of detector boundaries mismatched!"
+        assert size_in[0] == self.nPix, "number of pixel boundaries mismatched!"
+        assert size_in[1] == self.nPix, "number of pixel boundaries mismatched!"
+        
+        assert self.DSD.dtype == torch.int, "DSD must be of int type!"
+        assert self.DS0.dtype == torch.int, "DS0 must be of int type!"
+        assert self.pSize.dtype == torch.float, "pSize must be of float type!"
+        assert self.dSize.dtype == torch.float, "dSize must be of float type!"
+        assert self.nPix.dtype == torch.int, "nPix must be of int type!"
+        assert self.nDet.dtype == torch.int, "nDet must be of int type!"
+        assert self.angle.dtype[0] == torch.float, "angle vector must be of float type!"
         
         # Detector boundaries
         self.detX = torch.arange(-(self.nDet//2), (self.nDet//2)+1).mul(self.dSize)
@@ -64,7 +72,7 @@ class Bdd(LinearMap):
         self.pixelY = torch.flipud(torch.transpose(self.pixelY, 0, 1) - 1/2)
         self.pixelY = self.pixelY * self.pSize
             
-    def common(self, proj):
+    def common(self, proj, device = 'cpu'):
         r"""
         Common sequence in both forward and back projections
         Args:
@@ -76,12 +84,12 @@ class Bdd(LinearMap):
         beta = self.angle[proj] # angle from x-ray beam to y-axis
             
         # Tube rotation
-        self.rtubeX = -self.DS0*torch.sin(beta)
-        self.rtubeY = self.DS0*torch.cos(beta)
+        self.rtubeX = -self.DS0*torch.sin(beta).to(device)
+        self.rtubeY = self.DS0*torch.cos(beta).to(device)
 
         # Detector rotation
-        self.rdetX = self.detX*torch.cos(beta) - self.detY*torch.sin(beta)
-        self.rdetY = self.detX*torch.sin(beta) + self.detY*torch.cos(beta)
+        self.rdetX = (self.detX*torch.cos(beta) - self.detY*torch.sin(beta)).to(device)
+        self.rdetY = (self.detX*torch.sin(beta) + self.detY*torch.cos(beta)).to(device)
 
         # Define angle case & which axis it project boundaries
         if (((beta >= np.pi/4) and (beta <= 3*np.pi/4)) or 
@@ -92,16 +100,16 @@ class Bdd(LinearMap):
         
         # Mapping boundaries onto a common axis
         if self.axisCase:
-            self.detm = map2x(self.rtubeX,self.rtubeY,self.rdetX,self.rdetY)
-            self.pixm = map2x(self.rtubeX,self.rtubeY,self.pixelX,self.pixelY)
+            self.detm = map2x(self.rtubeX,self.rtubeY,self.rdetX,self.rdetY).to(device)
+            self.pixm = map2x(self.rtubeX,self.rtubeY,self.pixelX,self.pixelY).to(device)
             
         else:
-            self.detm = map2y(self.rtubeX,self.rtubeY,self.rdetX,self.rdetY)
+            self.detm = map2y(self.rtubeX,self.rtubeY,self.rdetX,self.rdetY).to(device)
             self.pixm = torch.fliplr(torch.transpose(map2y(self.rtubeX,self.rtubeY, 
-                                                           self.pixelX,self.pixelY), 0, 1))
-        self.detSize = torch.diff(self.detm, dim = 0)
+                                                           self.pixelX,self.pixelY), 0, 1)).to(device)
+        self.detSize = torch.diff(self.detm, dim = 0).to(device)
 
-        self.L = torch.zeros(self.nDet)
+        self.L = torch.zeros(self.nDet).to(device)
             
         if self.axisCase: 
             for n in range(self.nDet):
@@ -128,13 +136,13 @@ class Bdd(LinearMap):
         sinogram = torch.zeros(len(self.angle), self.nDet) # For each projection
         
         for proj in range(len(self.angle)):
-            self.common(proj)
+            self.common(proj, device = phantom.device)
             if self.axisCase:
                 img = phantom
             else:
                 img = torch.fliplr(torch.transpose(phantom, 0, 1))
             
-            sinoTmp = torch.zeros(self.nDet) # one "row" of sinogram
+            sinoTmp = torch.zeros(self.nDet).to(phantom.device) # one "row" of sinogram
             
             # For each image row
             for row in range(self.nPix):   
@@ -159,10 +167,10 @@ class Bdd(LinearMap):
         Returns:
             reconImg: tensor with dimension [nPix, nPix], backprojected image
         """
-        reconImg = torch.zeros(self.nPix, self.nPix)
+        reconImg = torch.zeros(self.nPix, self.nPix).to(sinogram.device)
         for proj in range(len(self.angle)):
-            reconImg_angle = torch.zeros(self.nPix, self.nPix)
-            self.common(proj)
+            reconImg_angle = torch.zeros(self.nPix, self.nPix).to(sinogram.device)
+            self.common(proj, device = sinogram.device)
             for row in range(self.nPix):   
                 rowm = self.pixm[row, :]
                 Ppj = integrate1D(sinogram[proj,:].mul(self.L), self.detSize)
