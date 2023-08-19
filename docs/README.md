@@ -7,7 +7,7 @@ A Py***Torch***-based differentiable ***I***mage ***R***econstruction ***T***ool
 
 The work is inspired by [MIRT](https://github.com/JeffFessler/mirt), a well-acclaimed toolbox for medical imaging reconstruction. 
 
-The overarching goal is to provide fast iterative and data-driven image reconstruction across CPUs and GPUs. Researchers can rapidly develop new model-based and learning-based methods (i.e., unrolled neural networks) with convenient abstraction layers. With the full support of auto-differentiation, one may optimize imaging protocols and image reconstruction parameters with gradient methods.
+The main objective is to facilitate rapid, data-driven image reconstruction using CPUs and GPUs through fast prototyping and iteration. Researchers can conveniently develop new model-based and learning-based methods (e.g., unrolled neural networks) with abstraction layers. The availability of auto-differentiation enables optimization of imaging protocols and reconstruction parameters using gradient methods.
 
 Documentation: https://mirtorch.readthedocs.io/en/latest/
 
@@ -16,9 +16,7 @@ Documentation: https://mirtorch.readthedocs.io/en/latest/
 ### Installation
 
 We recommend to [pre-install `PyTorch` first](https://pytorch.org/).
-To install the `MIRTorch` package, after cloning the repo, please try `python setup.py install`. 
-
-`requirements.txt` details the package dependencies. We recommend installing [pytorch_wavelets](https://github.com/fbcotter/pytorch_wavelets) directly from the source code instead of `pip`.  
+To install the `MIRTorch` package, after cloning the repo, please try `pip install -e .`(one can modify the package locally with this `-e` option.) 
 
 ------
 
@@ -28,7 +26,7 @@ To install the `MIRTorch` package, after cloning the repo, please try `python se
 
 The `LinearMap` class overloads common matrix operations, such as `+, - , *`.
 
-Instances include basic linear operations (like convolution), classical imaging processing, and MRI system matrix (Cartesian and Non-Cartesian, sensitivity- and B0-informed system models). We are planning to add support for PET/CT this year.
+Instances include basic linear operations (like convolution), classical imaging processing, and MRI system matrix (Cartesian and Non-Cartesian, sensitivity- and B0-informed system models). ***NEW!*** MIRTorch recently adds the support for **SPECT** and **CT**.
 
 Since the Jacobian matrix of a linear operator is itself, the toolbox can actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
 
@@ -61,26 +59,15 @@ Generally, MIRTorch solves the image reconstruction problems that have the cost 
 Here we provide several notebook tutorials focused on MRI, where $A$ is FFT or NUFFT. 
 
 - `/example/demo_mnist.ipynb` shows the LASSO on MNIST with FISTA and POGM. 
-
 - `/example/demo_mri.ipynb` contains the SENSE (CG-SENSE) and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*).
-
 - `/example/demo_3d.ipynb` contains the 3d non-Cartesian MR reconstruction. *New!* Try the Toeplitz-embedding version of B0-informed reconstruction, which reduce hour-long recon to 5 secs.
-
 - `/example/demo_cs.ipynb` shows the compressed sensing reconstruction of under-determined MRI signals.
-
 - `/example/demo_dl.ipynb` exhibits the dictionary learning results.
-
 - `/example/demo_mlem` showcase SPECT recon algorithms, including EM and CNN.
-
 
 Since MIRTorch is differentiable, one may use AD to update many parameters. For example, updating the reconstruction neural network's weights. More importantly, one may update the imaging system itself via gradient-based and data-driven methods. As a user case, [Bjork repo](https://github.com/guanhuaw/Bjork) contains MRI sampling pattern optimization examples. One may use the reconstruction loss as the objective function to jointly optimize reconstruction algorithms and the sampling pattern. See [this video](https://www.youtube.com/watch?v=sLFOf5EvVAs) on how to jointly optimize reconstruction and acquisition. 
 
 ------
-
-### Tips
-
-- The computation favors single precision, especially if you are using consumer-level GPUs (like Nvidia Geforce).
-- When the reconstruction results look weird, please check if there is some model mismatch.
 
 ### Acknowledgments
 
@@ -116,6 +103,17 @@ If the code is useful to your research, please cite:
 }
 ```
 
+```bibtex
+@ARTICLE{li:23:tet,
+  author={Li, Zongyu and Dewaraja, Yuni K. and Fessler, Jeffrey A.},
+  journal={IEEE Transactions on Radiation and Plasma Medical Sciences}, 
+  title={Training End-to-End Unrolled Iterative Neural Networks for SPECT Image Reconstruction}, 
+  year={2023},
+  volume={7},
+  number={4},
+  pages={410-420},
+  doi={10.1109/TRPMS.2023.3240934}}
+```
 
 
 ------

@@ -23,7 +23,7 @@ class LinearMap:
 
     Common operators, including +, -, *, are overloaded. One may freely compose operators as long as the size matches.
 
-    Defining new linear operators required `_apply` (forward, :math:`A`) and `_adjoint` (conjugate adjoint, :math:`A'`) functions, as well as size.
+    New linear operators require to implement `_apply` (forward, :math:`A`) and `_adjoint` (conjugate adjoint, :math:`A'`) functions, as well as size.
     Recommendation for efficient backpropagation (but you do not have to do this if the AD is efficient enough):
 
     .. code-block:: python
