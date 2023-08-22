@@ -7,7 +7,6 @@ name = "MIRTorch"
 authors = [{ name = "Guanhua Wang", email = "guanhuaw@umich.edu" }]
 description = "a PyTorch-based image reconstruction toolbox"
 readme = "README.md"
-version = "0.0.4"
 requires-python = ">=3.9"
 keywords = ["signal processing", "inverse problems"]
 license = { text = "BSD-3-Clause" }
