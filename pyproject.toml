@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MIRTorch"
+authors = [{ name = "Guanhua Wang", email = "guanhuaw@umich.edu" }]
+description = "a PyTorch-based image reconstruction toolbox"
+readme = "README.md"
+version = "0.0.4"
+requires-python = ">=3.9"
+keywords = ["signal processing", "inverse problems"]
+license = { text = "BSD-3-Clause" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    'Development Status :: 2 - Pre-Alpha',
+    'Topic :: Signal Processing',
+]
+dependencies = [
+    "torch>=1.13",
+    "torchvision",
+    "torchkbnufft>=1.4.0",
+    "dominate",
+    "scipy",
+    "PyWavelets",
+    "requests",
+    "xitorch",
+    'importlib-metadata; python_version<"3.8"',
+    "einops",
+    "matplotlib",
+    "pytorch_wavelets@git+https://github.com/fbcotter/pytorch_wavelets.git@8d2e3b4289beaea9aa89f7b1dbb290e448331197#egg=pytorch_wavelets",
+]
+dynamic = ["version"]
+
+[project.urls]  # Optional
+"repository" = "https://github.com/guanhuaw/MIRTorch"
+
+[project.optional-dependencies] # Optional
+dev = ["check-manifest"]
+test = ["coverage", "pytest"]
+
+[project.scripts]
+my-script = "my_package.module:function"

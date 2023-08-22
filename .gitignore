@@ -15,6 +15,7 @@
 !*.npz
 !*.yml
 !*.yaml
+!*.toml
 
 
 # even if in sub-dirs
