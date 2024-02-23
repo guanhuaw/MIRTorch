@@ -1,10 +1,11 @@
-from .linearmaps import LinearMap
-import torch
-from torch import Tensor
-from pytorch_wavelets import DWTForward, DWTInverse
-from typing import Union, Sequence
 import sys
+from typing import Sequence, Union
 
+import torch
+from pytorch_wavelets import DWTForward, DWTInverse
+from torch import Tensor
+
+from .linearmaps import LinearMap
 
 # TODO: 3d wavelets
 

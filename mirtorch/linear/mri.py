@@ -3,15 +3,17 @@ Discrete-to-discreate system matrices for MRI.
 2021-02. Guanhua Wang, University of Michigan
 """
 
+import math
+from typing import Sequence, Union, Optional
+
 import numpy as np
 import torch
+import torchkbnufft as tkbn
 from torch import Tensor
 from torch.fft import fftn, ifftn
+
 from .linearmaps import LinearMap
-from typing import Union, Sequence
-import torchkbnufft as tkbn
 from .util import fftshift, ifftshift
-import math
 
 
 class FFTCn(LinearMap):
