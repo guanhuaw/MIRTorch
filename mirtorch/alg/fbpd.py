@@ -1,12 +1,13 @@
-import numpy as np
 from typing import Callable
+import logging
 
 import torch
 from mirtorch.prox import Prox, Conj
 from mirtorch.linear import LinearMap
 
+logger = logging.getLogger(__name__)
 
-class FBPD():
+class FBPD:
     r"""Forward-backward primal dual (FBPD) algorithm.
 
     Ref:
@@ -33,18 +34,19 @@ class FBPD():
         eval_func: user-defined function to calculate the loss at each iteration.
     """
 
-    def __init__(self,
-                 g_grad: Callable,
-                 f_prox: Prox,
-                 h_prox: Prox,
-                 g_L: float,
-                 G_norm: float,
-                 G: LinearMap = None,
-                 tau: float = None,
-                 max_iter: int = 10,
-                 eval_func: Callable = None,
-                 p: int = 1):
-
+    def __init__(
+        self,
+        g_grad: Callable,
+        f_prox: Prox,
+        h_prox: Prox,
+        g_L: float,
+        G_norm: float,
+        G: LinearMap = None,
+        tau: float = None,
+        max_iter: int = 10,
+        eval_func: Callable = None,
+        p: int = 1,
+    ):
         self.max_iter = max_iter
         self.g_grad = g_grad
         self.f_prox = f_prox
@@ -60,8 +62,8 @@ class FBPD():
             self.tau = tau
         self.sigma = (1.0 / self.tau - self.g_L / 2.0) / self.G_norm
         self.eval_func = eval_func
-    def run(self,
-            x0: torch.Tensor):
+
+    def run(self, x0: torch.Tensor):
         r"""
         Run the algorithm
         Args:
@@ -70,7 +72,7 @@ class FBPD():
             xk: tensor, results
             saved: (optional) a list of intermediate results, calcuated by the eval_func.
         """
-        uold = self.G*x0
+        uold = self.G * x0
         xold = x0
         if self.eval_func is not None:
             saved = []
@@ -83,6 +85,7 @@ class FBPD():
             uold = self.p * unew + (1 - self.p) * uold
             if self.eval_func is not None:
                 saved.append(self.eval_func(xold))
+                logger.info("The cost function at %dth iter in FBPD: %10.3e." % (i, saved[-1]))
         if self.eval_func is not None:
             return xold, saved
         else:

@@ -1,7 +1,9 @@
+import logging
+from typing import Sequence, TypeVar, Union
+
+import numpy as np
 import torch
 from torch import Tensor
-import numpy as np
-from typing import Union, Sequence, TypeVar
 
 FloatLike = Union[float, torch.FloatTensor]
 

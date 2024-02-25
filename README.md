@@ -30,7 +30,7 @@ Instances include basic linear operations (like convolution), classical imaging 
 
 Since the Jacobian matrix of a linear operator is itself, the toolbox can actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
 
-When defining linear operators, please make sure that all torch tensors are on the same device and compatible. For example, `torch.cfloat` are compatible with `torch.float` but not `torch.double`.
+When defining linear operators, please make sure that all torch tensors are on the same device and compatible. For example, `torch.cfloat` are compatible with `torch.float` but not `torch.double`. Similarily, `torch.chalf` is compatible with `torch.half`.
 When the data is image, there are 2 empirical formats: `[num_batch, num_channel, nx, ny, (nz)]` and `[nx, ny, (nz)]`.
 For some LinearMaps, there is a boolean `batchmode` to control it.
 

@@ -10,6 +10,7 @@ import torch
 from typing import Union
 
 FloatLike = Union[float, torch.FloatTensor]
+EPS = 1e-15
 
 
 class Prox:
@@ -29,16 +30,13 @@ class Prox:
     """
 
     def __init__(self, T: LinearMap = None, P: LinearMap = None):
-
         self.T = T
         self.P = P
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike):
-
         raise NotImplementedError
 
-    def __call__(self, v: torch.Tensor, alpha: FloatLike):
-
+    def __call__(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
         if self.T is not None:
             v = self.T(v)
 
@@ -52,9 +50,9 @@ class Prox:
         return out
 
     def __repr__(self):
-        return f'<{self.__class__.__name__} Prox'
+        return f"<{self.__class__.__name__} Prox"
 
-    def _complex(self, v):
+    def _complex(self, v) -> torch.Tensor:
         """
         Args:
             v: input tensor
@@ -64,11 +62,11 @@ class Prox:
         """
         # To avoid the influence of noise
         # Without thresholding, numerical issues may happen for some unitary transform (wavelets)
-        eps = 1e-15
+        # TODO:"This is a temporary fix, we need to find a better solution."
         angle = torch.zeros_like(v)
-        msk = torch.abs(v) > eps
+        msk = torch.abs(v) > EPS
         angle[msk] = v[msk] / torch.abs(v)[msk]
-        angle[~msk] = v[~msk] / eps
+        angle[~msk] = v[~msk] / EPS
         return angle
 
 
@@ -90,17 +88,28 @@ class L1Regularizer(Prox):
     def __init__(self, Lambda, T: LinearMap = None, P: LinearMap = None):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
-        assert self.Lambda >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
+        if self.Lambda < 0:
+            raise ValueError(
+                f"Lambda should be non-negative, the Lambda here is {Lambda}."
+            )
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
 
-    def _softshrink(self, x, lambd):
+    def _softshrink(self, x, lambd) -> torch.Tensor:
         mask1 = x > lambd
         mask2 = x < -lambd
-        return mask1.float() * (-lambd) + mask1.float() * x + mask2.float() * lambd + mask2.float() * x
+        return (
+            mask1.float() * (-lambd)
+            + mask1.float() * x
+            + mask2.float() * lambd
+            + mask2.float() * x
+        )
 
-    def _apply(self, v, alpha):
-        assert alpha >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
+    def _apply(self, v, alpha) -> torch.Tensor:
+        if alpha < 0:
+            raise ValueError(
+                f"alpha should be non-negative, the alpha here is {alpha}."
+            )
         if type(self.Lambda) is not torch.Tensor and type(alpha) is not torch.Tensor:
             # The softshrink function do not support tensor as Lambda.
             thresh = torch.nn.Softshrink(self.Lambda * alpha)
@@ -131,15 +140,13 @@ class L0Regularizer(Prox):
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
 
-    def _hardshrink(self,
-                    x: torch.Tensor,
-                    lambd: FloatLike):
+    def _hardshrink(self, x: torch.Tensor, lambd: FloatLike) -> torch.Tensor:
         mask1 = x > lambd
         mask2 = x < -lambd
         return mask1 * x + mask2 * x
 
-    def _apply(self, v: torch.Tensor, alpha: FloatLike):
-        assert alpha >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
+    def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
+        assert alpha >= 0, f"alpha should be greater than 0, the alpha here is {alpha}."
         if type(self.Lambda) is not torch.Tensor and type(alpha) is not torch.Tensor:
             # The hardthreshold function do not support tensor as Lambda.
             thresh = torch.nn.Hardshrink(self.Lambda * alpha)
@@ -169,14 +176,17 @@ class L2Regularizer(Prox):
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
 
-    def _apply(self, v: torch.Tensor, alpha: FloatLike):
+    def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
         if self.P is None:
-            scale = 1.0 - self.Lambda * alpha / torch.max(torch.Tensor([self.Lambda * alpha]), torch.linalg.norm(v))
+            scale = 1.0 - self.Lambda * alpha / torch.max(
+                torch.Tensor([self.Lambda * alpha]), torch.linalg.norm(v)
+            )
         else:
-            scale = torch.ones_like(v) - self.Lambda * alpha / torch.max(torch.Tensor(self.Lambda * alpha),
-                                                                         torch.linalg.norm(v))
+            scale = torch.ones_like(v) - self.Lambda * alpha / torch.max(
+                torch.Tensor(self.Lambda * alpha), torch.linalg.norm(v)
+            )
         return scale * v
 
 
@@ -200,7 +210,7 @@ class SquaredL2Regularizer(Prox):
         if P is not None:
             self.Lambda = P(Lambda * torch.ones(P.size_in))
 
-    def _apply(self, v: torch.Tensor, alpha: FloatLike):
+    def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
         if self.P is None:
             x = torch.div(v, 1 + 2 * self.Lambda * alpha)
         else:
@@ -229,7 +239,7 @@ class BoxConstraint(Prox):
         self.u = upper
         self.Lambda = float(Lambda)
 
-    def _apply(self, v: torch.Tensor, alpha: FloatLike):
+    def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
         if self.P is None:
             x = torch.clamp(v, self.l, self.u)
         else:
@@ -238,8 +248,6 @@ class BoxConstraint(Prox):
             u = self.u / Lambda
             x = torch.minimum(u, torch.minimum(v, l))
         return x
-
-
 
 
 class Stack(Prox):
@@ -254,10 +262,10 @@ class Stack(Prox):
         self.proxs = proxs
         super().__init__()
 
-    def __call__(self, v, alphas, sizes=None):
+    def __call__(self, v, alphas, sizes=None) -> torch.Tensor:
         return self._apply(v, alphas, sizes)
 
-    def _apply(self, v, alphas, sizes=None):
+    def _apply(self, v, alphas, sizes=None) -> torch.Tensor:
         if sizes is None:
             sizes = len(self.proxs)
         splits = torch.split(v, sizes)
@@ -265,6 +273,7 @@ class Stack(Prox):
             alphas = [alphas] * sizes
         seq = [self.proxs[i](splits[i], alphas[i]) for i in range(len(self.proxs))]
         return torch.cat(seq)
+
 
 class Const(Prox):
     r"""
@@ -279,11 +288,11 @@ class Const(Prox):
         T (LinearMap): optional, unitary LinearMap
     """
 
-    def __init__(self, Lambda = 0, T: LinearMap = None, P: LinearMap = None):
+    def __init__(self, Lambda=0, T: LinearMap = None, P: LinearMap = None):
         super().__init__(T, P)
         self.Lambda = float(Lambda)
 
-    def _apply(self, v: torch.Tensor, alpha: FloatLike):
+    def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
         return v
 
 
@@ -303,7 +312,9 @@ class Conj(Prox):
         self.prox = prox
         super().__init__()
 
-    def _apply(self, v, alpha):
-        assert alpha >= 0, f'alpha should be greater than 0, the alpha here is {alpha}.'
+    def _apply(self, v, alpha) -> torch.Tensor:
+        if alpha < 0:
+            raise ValueError(
+                f"alpha should be non-negative, the alpha here is {alpha}."
+            )
         return v - alpha * self.prox(v / alpha, 1 / alpha)
-

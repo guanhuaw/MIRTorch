@@ -3,7 +3,9 @@ import scipy as sc
 import scipy.sparse as sp
 import numpy.random as random
 import time
+import logging
 
+logger = logging.getLogger(__name__)
 
 def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
     r"""
@@ -108,7 +110,7 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
             C[idx_row_j, iatom] = 0
             C[idx_row_new, iatom] = cj_new[idx_row_new]
             if alert:
-                print('Update of %dth atom costs %4f s,' % (iatom, time.time() - start),
+                logger.info('Update of %dth atom costs %4f s,' % (iatom, time.time() - start),
                       'sparse ratio from %5f to %5f' % (len(idx_row_j) / num_patch, len(idx_row_new) / num_patch))
         C.eliminate_zeros()
     return D, C.T.conj(), (C.dot(D.T.conj())).T.conj()

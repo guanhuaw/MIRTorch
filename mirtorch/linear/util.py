@@ -1,15 +1,15 @@
+from typing import Sequence, Union
+
+import numpy as np
 import torch
 import torch.nn as nn
-from torch import Tensor
-from typing import Union, Sequence
 import torchvision
-import numpy as np
-from xitorch.interpolate import Interp1D
+from torch import Tensor
 
 
-def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
+def finitediff(x: Tensor, dim: int = -1, mode="reflexive"):
     """
-    Apply finite difference operator on a certain dim
+    Apply finite difference operator on a certain dimension.
     Args:
         x: tensor, input data
         dim: int, dimension to apply the operator
@@ -17,18 +17,20 @@ def finitediff(x: Tensor, dim: int = -1, mode='reflexive'):
     Returns:
         y: the first-order finite difference of x
     """
-    if mode == 'reflexive':
+    if mode == "reflexive":
         len_dim = x.shape[dim]
-        return torch.narrow(x, dim, 1, len_dim - 1) - torch.narrow(x, dim, 0, len_dim - 1)
-    elif mode == 'periodic':
+        return torch.narrow(x, dim, 1, len_dim - 1) - torch.narrow(
+            x, dim, 0, len_dim - 1
+        )
+    elif mode == "periodic":
         return torch.roll(x, 1, dims=dim) - x
     else:
         raise ValueError("mode should be either 'reflexive' or 'periodic'")
 
 
-def finitediff_adj(y: Tensor, dim: int = -1, mode='reflexive'):
+def finitediff_adj(y: Tensor, dim: int = -1, mode="reflexive"):
     """
-    Apply finite difference operator on a certain dim
+    Apply finite difference operator on a certain dimension. Adjoint operator.
     Args:
         y: tensor, input data
         dim: int, dimension to apply the operator
@@ -37,13 +39,20 @@ def finitediff_adj(y: Tensor, dim: int = -1, mode='reflexive'):
     Returns:
         y: the first-order finite difference of x
     """
-    if mode == 'reflexibe':
+    if mode == "reflexibe":
         len_dim = y.shape[dim]
         return torch.cat(
-            (-torch.narrow(y, dim, 0, 1), (torch.narrow(y, dim, 0, len_dim - 1) - torch.narrow(y, dim, 1, len_dim - 1)),
-             torch.narrow(y, dim, len_dim - 1, 1)),
-            dim=dim)
-    elif mode == 'periodic':
+            (
+                -torch.narrow(y, dim, 0, 1),
+                (
+                    torch.narrow(y, dim, 0, len_dim - 1)
+                    - torch.narrow(y, dim, 1, len_dim - 1)
+                ),
+                torch.narrow(y, dim, len_dim - 1, 1),
+            ),
+            dim=dim,
+        )
+    elif mode == "periodic":
         return torch.roll(y, -1, dims=dim) - y
     else:
         raise ValueError("mode should be either 'reflexive' or 'periodic'")
@@ -51,7 +60,7 @@ def finitediff_adj(y: Tensor, dim: int = -1, mode='reflexive'):
 
 class DiffFunc(torch.autograd.Function):
     """
-    autograd.Function for the 1st-order finite difference operators
+    autograd.Function for the 1st-order finite difference operators, on top of auto-diff.
     """
 
     @staticmethod
@@ -67,7 +76,7 @@ class DiffFunc(torch.autograd.Function):
 
 class DiffFunc_adj(torch.autograd.Function):
     """
-    autograd.Function for the 1st-order finite difference operators
+    autograd.Function for the 1st-order finite difference operators, on top of auto-diff.
     """
 
     @staticmethod
@@ -110,7 +119,9 @@ def ifftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
 
 
 def dim_conv(dim_in, dim_kernel_size, dim_stride=1, dim_padding=0, dim_dilation=1):
-    dim_out = (dim_in + 2 * dim_padding - dim_dilation * (dim_kernel_size - 1) - 1) // dim_stride + 1
+    dim_out = (
+        dim_in + 2 * dim_padding - dim_dilation * (dim_kernel_size - 1) - 1
+    ) // dim_stride + 1
     return dim_out
 
 
@@ -122,10 +133,12 @@ def imrotate(img, angle):
     Returns:
         rotated img
     """
-    return torchvision.transforms.functional.rotate(img,
-                                                    angle,
-                                                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                                                    fill=0)
+    return torchvision.transforms.functional.rotate(
+        img,
+        angle,
+        interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+        fill=0,
+    )
 
 
 def fft2(img):
@@ -212,7 +225,7 @@ def pad2sizezero(img, padx, padz):
     pad_img = torch.zeros(padx, padz).to(img.device).to(img.dtype)
     padx_dims = np.ceil((padx - px) / 2).astype(int)
     padz_dims = np.ceil((padz - pz) / 2).astype(int)
-    pad_img[padx_dims:padx_dims + px, padz_dims:padz_dims + pz] = img
+    pad_img[padx_dims : padx_dims + px, padz_dims : padz_dims + pz] = img
     return pad_img
 
 
@@ -240,7 +253,7 @@ def fft_conv(img, ker):
     pad_ker_fft = fft2(pad_ker)
     freq = torch.mul(pad_img_fft, pad_ker_fft)
     xout = torch.real(ifft2(freq))
-    return xout[padup:padup + nx, padleft:padleft + nz]
+    return xout[padup : padup + nx, padleft : padleft + nz]
 
 
 def fft_conv_adj(img, ker):
@@ -268,10 +281,10 @@ def fft_conv_adj(img, ker):
     freq = torch.mul(pad_img_fft, pad_ker_fft)
     xout = torch.real(ifft2(freq))
     xout[padup, :] += torch.sum(xout[0:padup, :], dim=0)
-    xout[nx + padup - 1, :] += torch.sum(xout[nx + padup:, :], dim=0)
+    xout[nx + padup - 1, :] += torch.sum(xout[nx + padup :, :], dim=0)
     xout[:, padleft] += torch.sum(xout[:, 0:padleft], dim=1)
-    xout[:, nz + padleft - 1] += torch.sum(xout[:, nz + padleft:], dim=1)
-    return xout[padup:padup + nx, padleft:padleft + nz]
+    xout[:, nz + padleft - 1] += torch.sum(xout[:, nz + padleft :], dim=1)
+    return xout[padup : padup + nx, padleft : padleft + nz]
 
 
 def map2x(x1, y1, x2, y2):
@@ -321,17 +334,3 @@ def integrate1D(p_v, pixelSize):
         Ppj[pj + 1] = P_x
 
     return Ppj
-
-
-def inter1d(idx, val, query):
-    """
-    Args:
-        idx: nx * ny
-        val: nx * ny
-        query: nx * nz
-    Returns:
-        Pdk: nx * nz
-    """
-    interp_func = Interp1D(idx, val, method="linear", extrap="bound")
-    Pdk = interp_func(query)
-    return Pdk
