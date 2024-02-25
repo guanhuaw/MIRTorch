@@ -1,7 +1,6 @@
 import torch
 import logging
 from torch import Tensor
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,7 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
                 saved.append(eval_func(rk))
             if alert:
                 logger.info(
-                    "Residual at %dth iter in forward mode: %10.3e." % (num_loop, rktrk)
+                    "Residual at %dth iter in forward CG: %10.3e." % (num_loop, rktrk)
                 )
     else:
         r0 = b - A * x0
@@ -95,12 +94,12 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
                 saved.append(eval_func(rk))
             if alert:
                 logger.info(
-                    "Residual at %dth iter in backpropagation: %10.3e."
+                    "Residual at %dth iter in CG backpropagation: %10.3e."
                     % (num_loop, rktzk)
                 )
                 if torch.cuda.is_available():
                     logging.info(
-                        "GPU memory usage at %dth iter in backpropagation: %10.3e."
+                        "GPU memory usage at %dth iter in CG backpropagation: %10.3e."
                         % (num_loop, torch.cuda.memory_allocated() / 1024 / 1024 / 1024)
                     )
 
@@ -147,9 +146,8 @@ class CG:
             xk: results
             saved: (optional) a list of intermediate results, calculated by the eval_func.
         """
-        assert list(self.A.size_out) == list(
-            b.shape
-        ), "The size of A and b do not match."
+        if list(self.A.size_out) != list(b.shape):
+            raise ValueError("The size of A and b do not match.")
         return self.solver(
             b, self.A, self.max_iter, self.tol, self.alert, x0, self.eval_func, self.P
         )

@@ -21,7 +21,7 @@ dependencies = [
     "torch>=1.13",
     "torchvision",
     "torchkbnufft>=1.4.0",
-    "numpy=1.24",
+    "numpy>=1.24",
     "dominate",
     "scipy",
     "PyWavelets",

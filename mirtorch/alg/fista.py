@@ -2,6 +2,9 @@ from mirtorch.prox import Prox
 import numpy as np
 import torch
 from typing import Callable
+import logging
+
+logger = logging.getLogger(__name__)
 
 class FISTA():
     r"""
@@ -70,8 +73,10 @@ class FISTA():
             xnew = ynew + beta * (ynew - yold)
             xold = xnew
             yold = ynew
+            # log the cost function
             if self.eval_func is not None:
                 saved.append(self.eval_func(xold))
+                logger.info(f'Cost function at {i}th iteration: {self.eval_func(xold)}')
         if self.eval_func is not None:
             return xold, saved
         else:
