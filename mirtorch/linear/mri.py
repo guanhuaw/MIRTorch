@@ -27,11 +27,13 @@ class FFTCn(LinearMap):
         dims: the dimensions to apply the fft
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 size_out: Sequence[int],
-                 dims: Union[int, Sequence[int]],
-                 norm: str = 'ortho'):
+    def __init__(
+        self,
+        size_in: Sequence[int],
+        size_out: Sequence[int],
+        dims: Union[int, Sequence[int]],
+        norm: str = "ortho",
+    ):
         super(FFTCn, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
@@ -44,12 +46,12 @@ class FFTCn(LinearMap):
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
         x = ifftshift(x, self.dims)
-        if self.norm == 'ortho':
-            x = ifftn(x, dim=self.dims, norm='ortho')
-        elif self.norm == 'forward':
-            x = ifftn(x, dim=self.dims, norm='backward')
+        if self.norm == "ortho":
+            x = ifftn(x, dim=self.dims, norm="ortho")
+        elif self.norm == "forward":
+            x = ifftn(x, dim=self.dims, norm="backward")
         else:
-            x = ifftn(x, dim=self.dims, norm='forward')
+            x = ifftn(x, dim=self.dims, norm="forward")
         x = fftshift(x, self.dims)
         return x
 
@@ -68,24 +70,26 @@ class Sense(LinearMap):
         norm: normalization of the fft ('ortho', 'forward' or 'backward')
     """
 
-    def __init__(self,
-                 smaps: Tensor,
-                 masks: Tensor,
-                 norm: str = 'ortho',
-                 batchmode: bool = True):
+    def __init__(
+        self, smaps: Tensor, masks: Tensor, norm: str = "ortho", batchmode: bool = True
+    ):
         if batchmode:
             # comform to [nbatch, 1, nx, ny, nz]
             size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
             size_out = list(smaps.shape)
             dims = tuple(np.arange(2, len(smaps.shape)))
             self.masks = masks.unsqueeze(1)
-            assert smaps.shape[2:] == masks.shape[1:], "size of sensitivity maps and mask not matched!"
+            assert (
+                smaps.shape[2:] == masks.shape[1:]
+            ), "size of sensitivity maps and mask not matched!"
         else:
             size_in = list(smaps.shape[1:])
             size_out = list(smaps.shape)
             dims = tuple(np.arange(1, len(smaps.shape)))
             self.masks = masks
-            assert smaps.shape[1:] == masks.shape, "size of sensitivity maps and mask not matched!"
+            assert (
+                smaps.shape[1:] == masks.shape
+            ), "size of sensitivity maps and mask not matched!"
         super(Sense, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
@@ -113,15 +117,17 @@ class Sense(LinearMap):
             x:  tensor with dimension [batch, 1, nx, ny, (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
         # asser
-        assert k.shape == self.smaps.shape, "sensitivity maps and signal's shape mismatch"
+        assert (
+            k.shape == self.smaps.shape
+        ), "sensitivity maps and signal's shape mismatch"
         k = k * self.masks
         k = ifftshift(k, self.dims)
-        if self.norm == 'ortho':
-            x = ifftn(k, dim=self.dims, norm='ortho')
-        elif self.norm == 'forward':
-            x = ifftn(k, dim=self.dims, norm='backward')
+        if self.norm == "ortho":
+            x = ifftn(k, dim=self.dims, norm="ortho")
+        elif self.norm == "forward":
+            x = ifftn(k, dim=self.dims, norm="backward")
         else:
-            x = ifftn(k, dim=self.dims, norm='forward')
+            x = ifftn(k, dim=self.dims, norm="forward")
         x = fftshift(x, self.dims)
         if self.batchmode:
             x = (x * torch.conj(self.smaps)).sum(1).unsqueeze(1)
@@ -150,14 +156,16 @@ class NuSense(LinearMap):
         grid_size: float, oversampling ratio (>1)
     """
 
-    def __init__(self,
-                 smaps: Tensor,
-                 traj: Tensor,
-                 norm='ortho',
-                 batchmode=True,
-                 numpoints: Union[int, Sequence[int]] = 6,
-                 grid_size: float = 2,
-                 sequential: bool = False):
+    def __init__(
+        self,
+        smaps: Tensor,
+        traj: Tensor,
+        norm="ortho",
+        batchmode=True,
+        numpoints: Union[int, Sequence[int]] = 6,
+        grid_size: float = 2,
+        sequential: bool = False,
+    ):
         self.smaps = smaps
         self.norm = norm
         self.traj = traj
@@ -165,22 +173,36 @@ class NuSense(LinearMap):
         self.sequential = sequential
         assert grid_size >= 1, "grid size should be greater than 1"
         if batchmode:
-            self.grid_size = tuple(np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int))
-            self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=self.grid_size,
-                                  numpoints=numpoints).to(smaps)
-            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
-                                          grid_size=self.grid_size,
-                                          numpoints=numpoints).to(smaps)
+            self.grid_size = tuple(
+                np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+            )
+            self.A = tkbn.KbNufft(
+                im_size=tuple(smaps.shape[2:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
+            self.AT = tkbn.KbNufftAdjoint(
+                im_size=tuple(smaps.shape[2:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
             size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
             size_out = list(smaps.shape[0:2]) + [traj.shape[-1]]
             super(NuSense, self).__init__(tuple(size_in), tuple(size_out))
         else:
-            self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
-            self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[1:]), grid_size=self.grid_size,
-                                  numpoints=numpoints).to(smaps)
-            self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[1:]),
-                                          grid_size=self.grid_size,
-                                          numpoints=numpoints).to(smaps)
+            self.grid_size = tuple(
+                np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int)
+            )
+            self.A = tkbn.KbNufft(
+                im_size=tuple(smaps.shape[1:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
+            self.AT = tkbn.KbNufftAdjoint(
+                im_size=tuple(smaps.shape[1:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
             size_in = smaps.shape[1:]
             size_out = [smaps.shape[0]] + [traj.shape[-1]]
             super(NuSense, self).__init__(tuple(size_in), tuple(size_out))
@@ -196,21 +218,40 @@ class NuSense(LinearMap):
             k = torch.zeros(self.size_out).to(self.smaps)
             if self.batchmode:
                 for i in range(self.smaps.shape[1]):
-                    k[:, i, ...] = self.A(x, self.traj, smaps=self.smaps[:, i, ...].unsqueeze(1),
-                                          norm=self.norm).squeeze(1)
+                    k[:, i, ...] = self.A(
+                        x,
+                        self.traj,
+                        smaps=self.smaps[:, i, ...].unsqueeze(1),
+                        norm=self.norm,
+                    ).squeeze(1)
                 return k
             else:
                 for i in range(self.smaps.shape[0]):
-                    k[i, ...] = self.A(x.unsqueeze(0).unsqueeze(0), self.traj,
-                                       smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0), norm=self.norm).squeeze(
-                        0).squeeze(0)
+                    k[i, ...] = (
+                        self.A(
+                            x.unsqueeze(0).unsqueeze(0),
+                            self.traj,
+                            smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0),
+                            norm=self.norm,
+                        )
+                        .squeeze(0)
+                        .squeeze(0)
+                    )
                 return k
         else:
             if self.batchmode:
                 return self.A(x, self.traj, smaps=self.smaps, norm=self.norm)
             else:
-                return self.A(x.unsqueeze(0).unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0),
-                              norm=self.norm).squeeze(0).squeeze(0)
+                return (
+                    self.A(
+                        x.unsqueeze(0).unsqueeze(0),
+                        self.traj,
+                        smaps=self.smaps.unsqueeze(0),
+                        norm=self.norm,
+                    )
+                    .squeeze(0)
+                    .squeeze(0)
+                )
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
         r"""
@@ -223,21 +264,40 @@ class NuSense(LinearMap):
             x = torch.zeros(self.size_in).to(self.smaps)
             if self.batchmode:
                 for i in range(self.smaps.shape[1]):
-                    x += self.AT(y[:, i, ...].unsqueeze(1), self.traj, smaps=self.smaps[:, i, ...].unsqueeze(1),
-                                 norm=self.norm)
+                    x += self.AT(
+                        y[:, i, ...].unsqueeze(1),
+                        self.traj,
+                        smaps=self.smaps[:, i, ...].unsqueeze(1),
+                        norm=self.norm,
+                    )
                 return x
             else:
                 for i in range(self.smaps.shape[0]):
-                    x += self.AT(y[i, ...].unsqueeze(0).unsqueeze(0), self.traj,
-                                 smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0), norm=self.norm).squeeze(0).squeeze(
-                        0)
+                    x += (
+                        self.AT(
+                            y[i, ...].unsqueeze(0).unsqueeze(0),
+                            self.traj,
+                            smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0),
+                            norm=self.norm,
+                        )
+                        .squeeze(0)
+                        .squeeze(0)
+                    )
                 return x
         else:
             if self.batchmode:
                 return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm)
             else:
-                return self.AT(y.unsqueeze(0), self.traj, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(
-                    0).squeeze(0)
+                return (
+                    self.AT(
+                        y.unsqueeze(0),
+                        self.traj,
+                        smaps=self.smaps.unsqueeze(0),
+                        norm=self.norm,
+                    )
+                    .squeeze(0)
+                    .squeeze(0)
+                )
 
 
 class NuSenseGram(LinearMap):
@@ -259,13 +319,15 @@ class NuSenseGram(LinearMap):
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
     """
 
-    def __init__(self,
-                 smaps: Tensor,
-                 traj: Tensor,
-                 norm='ortho',
-                 batchmode=True,
-                 numpoints: Union[int, Sequence[int]] = 6,
-                 grid_size: float = 2):
+    def __init__(
+        self,
+        smaps: Tensor,
+        traj: Tensor,
+        norm="ortho",
+        batchmode=True,
+        numpoints: Union[int, Sequence[int]] = 6,
+        grid_size: float = 2,
+    ):
         self.smaps = smaps
         self.norm = norm
         self.traj = traj
@@ -273,15 +335,29 @@ class NuSenseGram(LinearMap):
         self.toep_op = tkbn.ToepNufft()
 
         if batchmode:
-            self.grid_size = tuple(np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int))
-            self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[2:]),
-                                                    grid_size=self.grid_size, numpoints=numpoints, norm=self.norm)
+            self.grid_size = tuple(
+                np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+            )
+            self.kernel = tkbn.calc_toeplitz_kernel(
+                traj,
+                list(smaps.shape[2:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+                norm=self.norm,
+            )
             size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
         else:
-            self.grid_size = tuple(np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int))
-            self.kernel = tkbn.calc_toeplitz_kernel(traj, list(smaps.shape[1:]), grid_size=self.grid_size,
-                                                    numpoints=numpoints, norm=self.norm)
+            self.grid_size = tuple(
+                np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int)
+            )
+            self.kernel = tkbn.calc_toeplitz_kernel(
+                traj,
+                list(smaps.shape[1:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+                norm=self.norm,
+            )
             size_in = list(smaps.shape[1:])
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
 
@@ -295,15 +371,31 @@ class NuSenseGram(LinearMap):
         if self.batchmode:
             return self.toep_op(x, self.kernel, smaps=self.smaps, norm=self.norm)
         else:
-            return self.toep_op(x.unsqueeze(0).unsqueeze(0), self.kernel, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(
-                0).squeeze(0)
+            return (
+                self.toep_op(
+                    x.unsqueeze(0).unsqueeze(0),
+                    self.kernel,
+                    smaps=self.smaps.unsqueeze(0),
+                    norm=self.norm,
+                )
+                .squeeze(0)
+                .squeeze(0)
+            )
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
         if self.batchmode:
             return self.toep_op(y, self.kernel, smaps=self.smaps, norm=self.norm)
         else:
-            return self.toep_op(y.unsqueeze(0).unsqueeze(0), self.kernel, smaps=self.smaps.unsqueeze(0), norm=self.norm).squeeze(
-                0).squeeze(0)
+            return (
+                self.toep_op(
+                    y.unsqueeze(0).unsqueeze(0),
+                    self.kernel,
+                    smaps=self.smaps.unsqueeze(0),
+                    norm=self.norm,
+                )
+                .squeeze(0)
+                .squeeze(0)
+            )
 
 
 class Gmri(LinearMap):
@@ -329,18 +421,19 @@ class Gmri(LinearMap):
     TODO: add DataParallel
     """
 
-    def __init__(self,
-                 smaps: Tensor,
-                 zmap: Tensor,
-                 traj: Tensor,
-                 norm: str = 'ortho',
-                 L: int = 6,
-                 nbins: int = 20,
-                 dt: int = 4e-3,
-                 numpoints: Union[int, Sequence[int]] = 6,
-                 grid_size: float = 2,
-                 T: Tensor = None
-                 ):
+    def __init__(
+        self,
+        smaps: Tensor,
+        zmap: Tensor,
+        traj: Tensor,
+        norm: str = "ortho",
+        L: int = 6,
+        nbins: int = 20,
+        dt: int = 4e-3,
+        numpoints: Union[int, Sequence[int]] = 6,
+        grid_size: float = 2,
+        T: Tensor = None,
+    ):
         self.norm = norm
         self.smaps = smaps
         self.zmap = zmap
@@ -351,28 +444,50 @@ class Gmri(LinearMap):
         self.nc = self.smaps.shape[1]
         self.traj = traj
         _, self.ndim, self.nshot, self.npoints = self.traj.shape
-        self.grid_size = tuple(np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int))
-        self.A = tkbn.KbNufft(im_size=tuple(smaps.shape[2:]), grid_size=self.grid_size,
-                              numpoints=numpoints).to(smaps)
-        self.AT = tkbn.KbNufftAdjoint(im_size=tuple(smaps.shape[2:]),
-                                      grid_size=self.grid_size,
-                                      numpoints=numpoints).to(smaps)
+        self.grid_size = tuple(
+            np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+        )
+        self.A = tkbn.KbNufft(
+            im_size=tuple(smaps.shape[2:]),
+            grid_size=self.grid_size,
+            numpoints=numpoints,
+        ).to(smaps)
+        self.AT = tkbn.KbNufftAdjoint(
+            im_size=tuple(smaps.shape[2:]),
+            grid_size=self.grid_size,
+            numpoints=numpoints,
+        ).to(smaps)
         size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
         size_out = (self.nbatch, self.nc, self.nshot, self.npoints)
-        self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(
-            self.smaps.device) * 1j  # [L, batch, coil, shot, points]
-        self.C = torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
-            self.smaps.device) * 1j  # [L, batch, 1, nx, ny ...]
+        self.B = (
+            torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(self.smaps.device)
+            * 1j
+        )  # [L, batch, coil, shot, points]
+        self.C = (
+            torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
+                self.smaps.device
+            )
+            * 1j
+        )  # [L, batch, 1, nx, ny ...]
         for ib in range(self.nbatch):
             if T is None:
                 t = np.linspace(0, dt * self.npoints, self.npoints)
             else:
                 t = T.cpu().numpy()
             b, c, _ = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, t)
-            self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
-            self.C[:, ib, 0, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
-                (self.L,) + tuple(zmap.shape[1:]))
-        self.traj = self.traj.reshape((self.traj.shape[0], self.ndim, self.nshot * self.npoints))
+            self.B[:, ib, ...] = (
+                torch.tensor(np.transpose(b))
+                .to(smaps.device)
+                .reshape(self.L, 1, 1, self.npoints)
+            )
+            self.C[:, ib, 0, ...] = (
+                torch.tensor(np.transpose(c))
+                .to(smaps.device)
+                .reshape((self.L,) + tuple(zmap.shape[1:]))
+            )
+        self.traj = self.traj.reshape(
+            (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
+        )
         super(Gmri, self).__init__(tuple(size_in), tuple(size_out))
 
     def _apply(self, x: Tensor) -> Tensor:
@@ -385,8 +500,9 @@ class Gmri(LinearMap):
         """
         y = torch.zeros(self.size_out).to(self.smaps)
         for il in range(self.L):
-            y = y + self.B[il] * self.A(x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm).reshape(
-                self.size_out)
+            y = y + self.B[il] * self.A(
+                x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm
+            ).reshape(self.size_out)
         return y
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
@@ -399,8 +515,13 @@ class Gmri(LinearMap):
         x = torch.zeros(self.size_in).to(self.smaps)
         for il in range(self.L):
             x = x + self.C[il].conj() * self.AT(
-                (y * self.B[il].conj()).reshape(self.nbatch, self.nc, self.nshot * self.npoints), self.traj,
-                smaps=self.smaps, norm=self.norm)
+                (y * self.B[il].conj()).reshape(
+                    self.nbatch, self.nc, self.nshot * self.npoints
+                ),
+                self.traj,
+                smaps=self.smaps,
+                norm=self.norm,
+            )
         return x
 
 
@@ -427,18 +548,19 @@ class GmriGram(LinearMap):
     TODO: add DataParallel
     """
 
-    def __init__(self,
-                 smaps: Tensor,
-                 zmap: Tensor,
-                 traj: Tensor,
-                 norm: str = 'ortho',
-                 L: int = 6,
-                 nbins: int = 20,
-                 dt: int = 4e-3,
-                 numpoints: Union[int, Sequence[int]] = 6,
-                 grid_size: float = 2,
-                 T: Tensor = None
-                 ):
+    def __init__(
+        self,
+        smaps: Tensor,
+        zmap: Tensor,
+        traj: Tensor,
+        norm: str = "ortho",
+        L: int = 6,
+        nbins: int = 20,
+        dt: int = 4e-3,
+        numpoints: Union[int, Sequence[int]] = 6,
+        grid_size: float = 2,
+        T: Tensor = None,
+    ):
         self.norm = norm
         self.smaps = smaps
         self.zmap = zmap
@@ -449,30 +571,55 @@ class GmriGram(LinearMap):
         self.nc = self.smaps.shape[1]
         self.traj = traj
         _, self.ndim, self.nshot, self.npoints = self.traj.shape
-        self.grid_size = tuple(np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int))
+        self.grid_size = tuple(
+            np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+        )
         size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
-        self.B = torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(
-            self.smaps.device) * 1j  # [L, batch, coil, shot, points]
-        self.C = torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
-            self.smaps.device) * 1j  # [L, batch, 1, nx, ny ...]
+        self.B = (
+            torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(self.smaps.device)
+            * 1j
+        )  # [L, batch, coil, shot, points]
+        self.C = (
+            torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
+                self.smaps.device
+            )
+            * 1j
+        )  # [L, batch, 1, nx, ny ...]
         for ib in range(self.nbatch):
             if T is None:
                 t = np.linspace(0, dt * self.npoints, self.npoints)
             else:
                 t = T.cpu().numpy()
             b, c, tl = mri_exp_approx(zmap[ib].cpu().data.numpy(), nbins, L, t)
-            self.B[:, ib, ...] = torch.tensor(np.transpose(b)).to(smaps.device).reshape(self.L, 1, 1, self.npoints)
-            self.C[:, ib, 0, ...] = torch.tensor(np.transpose(c)).to(smaps.device).reshape(
-                (self.L,) + tuple(zmap.shape[1:]))
+            self.B[:, ib, ...] = (
+                torch.tensor(np.transpose(b))
+                .to(smaps.device)
+                .reshape(self.L, 1, 1, self.npoints)
+            )
+            self.C[:, ib, 0, ...] = (
+                torch.tensor(np.transpose(c))
+                .to(smaps.device)
+                .reshape((self.L,) + tuple(zmap.shape[1:]))
+            )
             self.tl = torch.tensor(tl).to(smaps.device)
-        self.traj = self.traj.reshape((self.traj.shape[0], self.ndim, self.nshot * self.npoints))
+        self.traj = self.traj.reshape(
+            (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
+        )
         self.toep_op = tkbn.ToepNufft()
         self.kernel = []
         for il in range(self.L):
-            self.kernel.append(tkbn.calc_toeplitz_kernel(self.traj, list(smaps.shape[2:]),
-                                                         grid_size=self.grid_size, numpoints=numpoints, norm=self.norm,
-                                                         weights=self.B[il].repeat(1, 1, self.nshot, 1).reshape(
-                                                             self.nbatch, 1, self.nshot * self.npoints)))
+            self.kernel.append(
+                tkbn.calc_toeplitz_kernel(
+                    self.traj,
+                    list(smaps.shape[2:]),
+                    grid_size=self.grid_size,
+                    numpoints=numpoints,
+                    norm=self.norm,
+                    weights=self.B[il]
+                    .repeat(1, 1, self.nshot, 1)
+                    .reshape(self.nbatch, 1, self.nshot * self.npoints),
+                )
+            )
         super(GmriGram, self).__init__(tuple(size_in), tuple(size_in))
 
     def _apply(self, x: Tensor) -> Tensor:
@@ -486,7 +633,9 @@ class GmriGram(LinearMap):
         y = torch.zeros_like(x).to(self.smaps)
         for il in range(self.L):
             D = torch.exp(-2 * math.pi * 1j * self.zmap.unsqueeze(1) * self.tl[il])
-            y = y + D.conj() * self.toep_op(x * D, self.kernel[il], smaps=self.smaps, norm=self.norm)
+            y = y + D.conj() * self.toep_op(
+                x * D, self.kernel[il], smaps=self.smaps, norm=self.norm
+            )
         return y
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
@@ -500,7 +649,9 @@ class GmriGram(LinearMap):
         y = torch.zeros_like(x).to(self.smaps)
         for il in range(self.L):
             D = torch.exp(-2 * math.pi * 1j * self.zmap.unsqueeze(1) * self.tl[il])
-            y = y + D.conj() * self.toep_op(x * D, self.kernel[il], smaps=self.smaps, norm=self.norm)
+            y = y + D.conj() * self.toep_op(
+                x * D, self.kernel[il], smaps=self.smaps, norm=self.norm
+            )
         return y
 
 
@@ -519,8 +670,9 @@ def mri_exp_approx(b0, bins, lseg, t):
     """
 
     # create time vector
-    hist_wt, bin_edges = np.histogram(np.imag(2j * np.pi * np.ndarray.flatten(b0)),
-                                      bins)
+    hist_wt, bin_edges = np.histogram(
+        np.imag(2j * np.pi * np.ndarray.flatten(b0)), bins
+    )
 
     # build B and Ct
     bin_centers = bin_edges[1:] - (bin_edges[1] - bin_edges[0]) / 2
@@ -530,13 +682,13 @@ def mri_exp_approx(b0, bins, lseg, t):
     ch = np.exp(-np.expand_dims(tl, axis=1) @ np.expand_dims(zk, axis=0))
     w = np.diag(np.sqrt(hist_wt))
     p = np.linalg.pinv(w @ np.transpose(ch)) @ w
-    b = p @ np.exp(-np.expand_dims(zk, axis=1)
-                   @ np.expand_dims(t, axis=0) / 1000)
+    b = p @ np.exp(-np.expand_dims(zk, axis=1) @ np.expand_dims(t, axis=0) / 1000)
     b = np.transpose(b)
     b0_v = np.expand_dims(2j * np.pi * np.ndarray.flatten(b0), axis=0)
     ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
 
     return b, ct, tl
+
 
 # def tukey_filer(LinearMap):
 #     r"""

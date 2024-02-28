@@ -7,6 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
     r"""
     Efficient patch-based dictionary learning algorithm according to:
@@ -42,7 +43,9 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
     2021-06. Guanhua Wang, University of Michigan
     """
 
-    assert Y.dtype == X0.dtype == D0.dtype, 'datatype (complex/real) between dictionary and sparse code should stay the same!'
+    assert (
+        Y.dtype == X0.dtype == D0.dtype
+    ), "datatype (complex/real) between dictionary and sparse code should stay the same!"
     D = D0
     [len_atom, num_atom] = D0.shape
     [_, num_patch] = X0.shape
@@ -58,7 +61,6 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
 
     # Outer loop: iterations
     for iouter in range(numiter):
-
         # Compute for just once
         YtD = np.matmul(Y.T.conj(), D)
 
@@ -99,9 +101,14 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
 
                     # h += -D.dot(X.dot(cj_new)) + D[:, iatom] * ((cj.conj()).dot(cj_new)) # inefficient manner
                     h = h - D.dot(C[idx_row_new, :].T.conj().dot(cj_new[idx_row_new]))
-                    idx_ovlp, idx_ovlp_new, idx_ovlp_j = np.intersect1d(idx_row_new, idx_row_j, return_indices=True)
+                    idx_ovlp, idx_ovlp_new, idx_ovlp_j = np.intersect1d(
+                        idx_row_new, idx_row_j, return_indices=True
+                    )
                     if idx_ovlp.size != 0:
-                        h += D[:, iatom] * (cj_new[idx_ovlp] * (C[idx_ovlp, iatom].conj())).item()
+                        h += (
+                            D[:, iatom]
+                            * (cj_new[idx_ovlp] * (C[idx_ovlp, iatom].conj())).item()
+                        )
                 h = h / np.linalg.norm(h, 2)
                 D[:, iatom] = h
 
@@ -110,7 +117,10 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
             C[idx_row_j, iatom] = 0
             C[idx_row_new, iatom] = cj_new[idx_row_new]
             if alert:
-                logger.info('Update of %dth atom costs %4f s,' % (iatom, time.time() - start),
-                      'sparse ratio from %5f to %5f' % (len(idx_row_j) / num_patch, len(idx_row_new) / num_patch))
+                logger.info(
+                    "Update of %dth atom costs %4f s," % (iatom, time.time() - start),
+                    "sparse ratio from %5f to %5f"
+                    % (len(idx_row_j) / num_patch, len(idx_row_new) / num_patch),
+                )
         C.eliminate_zeros()
     return D, C.T.conj(), (C.dot(D.T.conj())).T.conj()

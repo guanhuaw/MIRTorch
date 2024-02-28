@@ -7,6 +7,7 @@ from mirtorch.linear import LinearMap
 
 logger = logging.getLogger(__name__)
 
+
 class FBPD:
     r"""Forward-backward primal dual (FBPD) algorithm.
 
@@ -85,7 +86,9 @@ class FBPD:
             uold = self.p * unew + (1 - self.p) * uold
             if self.eval_func is not None:
                 saved.append(self.eval_func(xold))
-                logger.info("The cost function at %dth iter in FBPD: %10.3e." % (i, saved[-1]))
+                logger.info(
+                    "The cost function at %dth iter in FBPD: %10.3e." % (i, saved[-1])
+                )
         if self.eval_func is not None:
             return xold, saved
         else:
