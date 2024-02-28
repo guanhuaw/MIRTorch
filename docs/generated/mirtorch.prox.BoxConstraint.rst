@@ -5,18 +5,12 @@
 
 .. autoclass:: BoxConstraint
 
-   
+
    .. automethod:: __init__
 
-   
+
    .. rubric:: Methods
 
    .. autosummary::
-   
-      ~BoxConstraint.__init__
-   
-   
 
-   
-   
-   
+      ~BoxConstraint.__init__

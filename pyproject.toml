@@ -33,7 +33,7 @@ dependencies = [
 ]
 dynamic = ["version"]
 
-[project.urls]  # Optional
+[project.urls] # Optional
 "repository" = "https://github.com/guanhuaw/MIRTorch"
 
 [project.optional-dependencies] # Optional

@@ -5,18 +5,12 @@
 
 .. autoclass:: L2Regularizer
 
-   
+
    .. automethod:: __init__
 
-   
+
    .. rubric:: Methods
 
    .. autosummary::
-   
-      ~L2Regularizer.__init__
-   
-   
 
-   
-   
-   
+      ~L2Regularizer.__init__

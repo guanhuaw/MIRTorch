@@ -12,7 +12,6 @@ path = path[: path.rfind("/")]
 sys.path.insert(0, path)
 from mirtorch.linear.spect import SPECT
 import torch
-import numpy as np
 
 
 def gen_data(nx, ny, nz, nview, px, pz):

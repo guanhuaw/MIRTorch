@@ -1,4 +1,3 @@
-import logging
 from typing import Sequence, TypeVar, Union
 
 import numpy as np

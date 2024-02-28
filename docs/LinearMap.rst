@@ -68,10 +68,3 @@ CT system models
    :nosignatures:
 
    mirtorch.linear.ct.Bdd
-
-
-
-
-
-
-

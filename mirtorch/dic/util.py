@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.fft import dct, idct
+from scipy.fft import idct
 import math
 
 

@@ -4,7 +4,7 @@ Discrete-to-discreate system matrices for MRI.
 """
 
 import math
-from typing import Sequence, Union, Optional
+from typing import Sequence, Union
 
 import numpy as np
 import torch
@@ -116,7 +116,6 @@ class Sense(LinearMap):
         Returns:
             x:  tensor with dimension [batch, 1, nx, ny, (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
-        # asser
         assert (
             k.shape == self.smaps.shape
         ), "sensitivity maps and signal's shape mismatch"
@@ -678,7 +677,7 @@ def mri_exp_approx(b0, bins, lseg, t):
     bin_centers = bin_edges[1:] - (bin_edges[1] - bin_edges[0]) / 2
     zk = 0 + 1j * bin_centers
     tl = np.linspace(t[0], t[-1], lseg) / 1000  # time seg centers
-    # calculate off-resonance phase @ each time seg, for hist bins
+    # calculate off-resonance phase @ each time seg, for histogram bins
     ch = np.exp(-np.expand_dims(tl, axis=1) @ np.expand_dims(zk, axis=0))
     w = np.diag(np.sqrt(hist_wt))
     p = np.linalg.pinv(w @ np.transpose(ch)) @ w

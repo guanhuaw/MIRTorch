@@ -1,5 +1,4 @@
 import numpy as np
-import scipy as sc
 import scipy.sparse as sp
 import numpy.random as random
 import time

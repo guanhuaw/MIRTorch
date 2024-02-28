@@ -9,6 +9,3 @@ Dictionary learning methods
    :nosignatures:
 
    mirtorch.dic.soup
-
-
-

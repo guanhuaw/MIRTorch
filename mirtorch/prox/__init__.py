@@ -6,7 +6,6 @@ from .prox import (
     Prox,
     L0Regularizer,
     Const,
-    Stack,
     Conj,
 )
 
