@@ -5,19 +5,13 @@
 
 .. autoclass:: CG
 
-   
+
    .. automethod:: __init__
 
-   
+
    .. rubric:: Methods
 
    .. autosummary::
-   
+
       ~CG.__init__
       ~CG.run
-   
-   
-
-   
-   
-   

@@ -1,4 +1,3 @@
-import logging
 from typing import Sequence, TypeVar, Union
 
 import numpy as np
@@ -15,7 +14,7 @@ def check_device(x, y):
     assert x.device == y.device, "Tensors should be on the same device"
 
 
-T = TypeVar('T', bound='LinearMap')
+T = TypeVar("T", bound="LinearMap")
 
 
 class LinearMap:
@@ -53,9 +52,7 @@ class LinearMap:
         size_out: the size of the output of the linear map (a list)
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 size_out: Sequence[int]):
+    def __init__(self, size_in: Sequence[int], size_out: Sequence[int]):
         r"""
         Initiate the linear operator.
         """
@@ -63,8 +60,9 @@ class LinearMap:
         self.size_out = list(size_out)
 
     def __repr__(self):
-        return '<{oshape}x{ishape} {repr_str} Linop>'.format(
-            oshape=self.size_out, ishape=self.size_in, repr_str=self.__class__.__name__)
+        return "<{oshape}x{ishape} {repr_str} Linop>".format(
+            oshape=self.size_out, ishape=self.size_in, repr_str=self.__class__.__name__
+        )
 
     def __call__(self, x) -> Tensor:
         # for a instance A, we can apply it by calling A(x). Equal to A*x
@@ -84,7 +82,8 @@ class LinearMap:
         Apply the forward operator
         """
         assert list(x.shape) == list(
-            self.size_in), f"Shape of input data {x.shape} and forward linear op {self.size_in} do not match!"
+            self.size_in
+        ), f"Shape of input data {x.shape} and forward linear op {self.size_in} do not match!"
         return self._apply(x)
 
     def adjoint(self, x) -> Tensor:
@@ -92,7 +91,8 @@ class LinearMap:
         Apply the adjoint operator
         """
         assert list(x.shape) == list(
-            self.size_out), f"Shape of input data {x.shape} and adjoint linear op {self.size_in} do not match!"
+            self.size_out
+        ), f"Shape of input data {x.shape} and adjoint linear op {self.size_in} do not match!"
         return self._apply_adjoint(x)
 
     @property
@@ -124,7 +124,8 @@ class LinearMap:
             return self.apply(other)
         else:
             raise NotImplementedError(
-                f"Only scalers, Linearmaps or Tensors, rather than '{type(other)}' are allowed as arguments for this function.")
+                f"Only scalers, Linearmaps or Tensors, rather than '{type(other)}' are allowed as arguments for this function."
+            )
 
     def __rmul__(self: T, other) -> T:
         r"""
@@ -154,7 +155,9 @@ class LinearMap:
         Copy to different devices
         """
         for prop in self.__dict__.keys():
-            if (isinstance(self.__dict__[prop], torch.Tensor) or isinstance(self.__dict__[prop], torch.nn.Module)):
+            if isinstance(self.__dict__[prop], torch.Tensor) or isinstance(
+                self.__dict__[prop], torch.nn.Module
+            ):
                 self.__dict__[prop] = self.__dict__[prop].to(*args, **kwargs)
 
 
@@ -171,8 +174,12 @@ class Add(LinearMap):
     """
 
     def __init__(self, A: LinearMap, B: LinearMap):
-        assert list(A.size_in) == list(B.size_in), "The input dimensions of two combined ops are not the same."
-        assert list(A.size_out) == list(B.size_out), "The output dimensions of two combined ops are not the same."
+        assert list(A.size_in) == list(
+            B.size_in
+        ), "The input dimensions of two combined ops are not the same."
+        assert list(A.size_out) == list(
+            B.size_out
+        ), "The output dimensions of two combined ops are not the same."
         self.A = A
         self.B = B
         super().__init__(self.A.size_in, self.B.size_out)
@@ -237,6 +244,7 @@ class ConjTranspose(LinearMap):
     r"""
     Hermitian transpose of linear operators.
     """
+
     def __init__(self, A: LinearMap):
         self.A = A
         super().__init__(A.size_out, A.size_in)
@@ -246,6 +254,7 @@ class ConjTranspose(LinearMap):
 
     def _apply_adjoint(self: T, x: Tensor) -> Tensor:
         return self.A.apply(x)
+
 
 class BlockDiagonal(LinearMap):
     r"""
@@ -261,16 +270,20 @@ class BlockDiagonal(LinearMap):
 
         # dimension checks
         nz = len(A)
-        assert all([list(A[i].size_in) == list(A[i + 1].size_in) for i in range(nz - 1)]),\
-            "Input dimensions of each linear map must be compatible to create a block diagonal linear map."
-        assert all([list(A[i].size_out) == list(A[i + 1].size_out) for i in range(nz - 1)]),\
-            "Output dimensions of each linear map must be compatible to create a block diagonal linear map."
+        assert all(
+            [list(A[i].size_in) == list(A[i + 1].size_in) for i in range(nz - 1)]
+        ), "Input dimensions of each linear map must be compatible to create a block diagonal linear map."
+        assert all(
+            [list(A[i].size_out) == list(A[i + 1].size_out) for i in range(nz - 1)]
+        ), "Output dimensions of each linear map must be compatible to create a block diagonal linear map."
         size_in = list(A[0].size_in) + [nz]
         size_out = list(A[0].size_out) + [nz]
         super().__init__(tuple(size_in), tuple(size_out))
 
     def _apply(self: T, x: Tensor) -> Tensor:
-        out = torch.zeros(self.size_out, dtype = x.dtype, device = x.device, layout = x.layout)
+        out = torch.zeros(
+            self.size_out, dtype=x.dtype, device=x.device, layout=x.layout
+        )
         nz = self.size_out[-1]
 
         # TODO: exploit parallelism
@@ -279,7 +292,7 @@ class BlockDiagonal(LinearMap):
         return out
 
     def _apply_adjoint(self: T, x: Tensor):
-        out = torch.zeros(self.size_in, dtype = x.dtype, device = x.device, layout = x.layout)
+        out = torch.zeros(self.size_in, dtype=x.dtype, device=x.device, layout=x.layout)
         nz = self.size_in[-1]
 
         # TODO: exploit parallelism
@@ -309,22 +322,25 @@ class Kron(LinearMap):
         super().__init__(tuple(size_in), tuple(size_out))
 
     def apply(self, x: Tensor):
-        out = torch.zeros(self.size_out, dtype = x.dtype, device = x.device, layout = x.layout)
+        out = torch.zeros(
+            self.size_out, dtype=x.dtype, device=x.device, layout=x.layout
+        )
 
         # TODO: exploit parallelism.
         for k in range(self.n):
-            out[...,k] = self.A.apply(x[...,k])
+            out[..., k] = self.A.apply(x[..., k])
 
         return out
 
     def _apply_adjoint(self, x: Tensor):
-        out = torch.zeros(self.size_in, dtype = x.dtype, device = x.device, layout = x.layout)
+        out = torch.zeros(self.size_in, dtype=x.dtype, device=x.device, layout=x.layout)
 
         # TODO: exploit parallelism.
         for k in range(self.n):
-            out[...,k] = self.A.adjoint(x[...,k])
+            out[..., k] = self.A.adjoint(x[..., k])
 
         return out
+
 
 class Vstack(LinearMap):
     # TODO

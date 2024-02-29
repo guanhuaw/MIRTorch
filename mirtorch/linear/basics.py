@@ -22,17 +22,16 @@ class Diff1d(LinearMap):
         dim: assign the dimension to apply operation
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 dim: int,
-                 mode='reflexive'):
+    def __init__(self, size_in: Sequence[int], dim: int, mode="reflexive"):
         # TODO: determine size_out by size in
         size_out = copy.copy(size_in)
         size_out[dim] -= 1
         super(Diff1d, self).__init__(size_in, size_out)
         self.dim = dim
         self.mode = mode
-        assert np.isscalar(dim), "Please denote 1 dimension for a 1D finite difference operator"
+        assert np.isscalar(
+            dim
+        ), "Please denote 1 dimension for a 1D finite difference operator"
 
     def _apply(self, x):
         return DiffFunc.apply(x, self.dim, self.mode)
@@ -49,9 +48,7 @@ class Diffnd(LinearMap):
         dims: assign the dimension to apply operation
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 dims: Sequence[int]):
+    def __init__(self, size_in: Sequence[int], dims: Sequence[int]):
         self.dims = sorted(dims)
         size_out = copy.copy(list(size_in))
         size_out[self.dims[0]] = size_out[self.dims[0]] * len(dims)
@@ -60,14 +57,22 @@ class Diffnd(LinearMap):
     def _apply(self, x):
         diff = []
         for i in range(len(self.dims)):
-            diff.append(DiffFunc.apply(x, self.dims[i], 'periodic'))
+            diff.append(DiffFunc.apply(x, self.dims[i], "periodic"))
         return torch.cat(diff, dim=self.dims[0])
 
     def _apply_adjoint(self, y):
         x = torch.zeros(self.size_in).to(y)
         for i in range(len(self.dims)):
-            x += DiffFunc_adj.apply(torch.narrow(y, self.dims[0], i*self.size_in[self.dims[0]],
-                                                 self.size_in[self.dims[0]]), self.dims[i], 'periodic')
+            x += DiffFunc_adj.apply(
+                torch.narrow(
+                    y,
+                    self.dims[0],
+                    i * self.size_in[self.dims[0]],
+                    self.size_in[self.dims[0]],
+                ),
+                self.dims[i],
+                "periodic",
+            )
         return x
 
 
@@ -77,16 +82,25 @@ class Diff2dgram(LinearMap):
     Apply to last two dimensions, with the reflexive boundary condition.
     """
 
-    def __init__(self,
-                 size_in: Sequence[int]):
+    def __init__(self, size_in: Sequence[int]):
         super(Diff2dgram, self).__init__(size_in, size_in)
 
     def RtR(self, x):
-        return torch.cat(((x[..., 0, :] - x[..., 1, :]).unsqueeze(-2),
-                          (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]),
-                          (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2)), dim=-2) + torch.cat(((x[..., 0] - x[
-            ..., 1]).unsqueeze(-1), (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]), (x[..., -1] - x[..., -2]).unsqueeze(
-            -1)), dim=-1)
+        return torch.cat(
+            (
+                (x[..., 0, :] - x[..., 1, :]).unsqueeze(-2),
+                (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]),
+                (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2),
+            ),
+            dim=-2,
+        ) + torch.cat(
+            (
+                (x[..., 0] - x[..., 1]).unsqueeze(-1),
+                (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]),
+                (x[..., -1] - x[..., -2]).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
 
     def _apply(self, x):
         return self.RtR(x)
@@ -101,19 +115,36 @@ class Diff3dgram(LinearMap):
     Apply to last three dimensions.
     """
 
-    def __init__(self,
-                 size_in: Sequence[int]):
+    def __init__(self, size_in: Sequence[int]):
         super(Diff3dgram, self).__init__(size_in, size_in)
 
     def RtR(self, x):
-        return torch.cat(((x[..., 0, :, :] - x[..., 1, :, :]).unsqueeze(-3),
-                          (2 * x[..., 1:-1, :, :] - x[..., :-2, :, :] - x[..., 2:, :, :]),
-                          (x[..., -1, :, :] - x[..., -2, :, :]).unsqueeze(-3)), dim=-3) + torch.cat(
-            ((x[..., 0, :] - x[..., 1, :])
-             .unsqueeze(-2), (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]),
-             (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2)), dim=-2) + torch.cat(
-            ((x[..., 0] - x[..., 1]).unsqueeze(-1), (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]),
-             (x[..., -1] - x[..., -2]).unsqueeze(-1)), dim=-1)
+        return (
+            torch.cat(
+                (
+                    (x[..., 0, :, :] - x[..., 1, :, :]).unsqueeze(-3),
+                    (2 * x[..., 1:-1, :, :] - x[..., :-2, :, :] - x[..., 2:, :, :]),
+                    (x[..., -1, :, :] - x[..., -2, :, :]).unsqueeze(-3),
+                ),
+                dim=-3,
+            )
+            + torch.cat(
+                (
+                    (x[..., 0, :] - x[..., 1, :]).unsqueeze(-2),
+                    (2 * x[..., 1:-1, :] - x[..., :-2, :] - x[..., 2:, :]),
+                    (x[..., -1, :] - x[..., -2, :]).unsqueeze(-2),
+                ),
+                dim=-2,
+            )
+            + torch.cat(
+                (
+                    (x[..., 0] - x[..., 1]).unsqueeze(-1),
+                    (2 * x[..., 1:-1] - x[..., :-2] - x[..., 2:]),
+                    (x[..., -1] - x[..., -2]).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        )
 
     def _apply(self, x):
         return self.RtR(x)
@@ -133,8 +164,7 @@ class Diag(LinearMap):
         P: the diagonal matrix
     """
 
-    def __init__(self,
-                 P: Tensor):
+    def __init__(self, P: Tensor):
         super(Diag, self).__init__(list(P.shape), list(P.shape))
         self.P = P
 
@@ -168,16 +198,22 @@ class Convolve1d(LinearMap):
     The attributes follow the definition of torch.nn.Functional.conv1d
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 weight: Tensor,
-                 bias=None,
-                 stride: int = 1,
-                 padding: int = 0,
-                 dilation: int = 1):
+    def __init__(
+        self,
+        size_in: Sequence[int],
+        weight: Tensor,
+        bias=None,
+        stride: int = 1,
+        padding: int = 0,
+        dilation: int = 1,
+    ):
         # only weight and input size
-        assert len(list(size_in)) == 3, "input must have the shape (minibatch, in_channels, iW)"
-        assert len(list(weight.shape)) == 3, "weight must have the shape (out_channels, in_channels, kW)"
+        assert (
+            len(list(size_in)) == 3
+        ), "input must have the shape (minibatch, in_channels, iW)"
+        assert (
+            len(list(weight.shape)) == 3
+        ), "weight must have the shape (out_channels, in_channels, kW)"
         minimatch, _, iW = size_in
         out_channel, _, kW = weight.shape
         assert iW >= kW, "Kernel size can't be greater than actual input size"
@@ -191,12 +227,24 @@ class Convolve1d(LinearMap):
         self.dilation = dilation
 
     def _apply(self, x):
-        return F.conv1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
-                        dilation=self.dilation)
+        return F.conv1d(
+            x,
+            self.weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+        )
 
     def _apply_adjoint(self, x):
-        return F.conv_transpose1d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
-                                  dilation=self.dilation)
+        return F.conv_transpose1d(
+            x,
+            self.weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+        )
 
 
 class Convolve2d(LinearMap):
@@ -205,18 +253,26 @@ class Convolve2d(LinearMap):
     The attributes follow the definition of torch.nn.Functional.conv2d
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 weight: Tensor,
-                 bias=None,
-                 stride: int = 1,
-                 padding: int = 0,
-                 dilation: int = 1):
-        assert len(list(size_in)) == 4, "input must have the shape (minibatch, in_channels, iH, iW)"
-        assert len(list(weight.shape)) == 4, "weight must have the shape (out_channels, in_channels, kH, kW)"
+    def __init__(
+        self,
+        size_in: Sequence[int],
+        weight: Tensor,
+        bias=None,
+        stride: int = 1,
+        padding: int = 0,
+        dilation: int = 1,
+    ):
+        assert (
+            len(list(size_in)) == 4
+        ), "input must have the shape (minibatch, in_channels, iH, iW)"
+        assert (
+            len(list(weight.shape)) == 4
+        ), "weight must have the shape (out_channels, in_channels, kH, kW)"
         minimatch, _, iH, iW = size_in
         out_channel, _, kH, kW = weight.shape
-        assert iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
+        assert (
+            iH >= kH and iW >= kW
+        ), "Kernel size can't be greater than actual input size"
 
         if isinstance(stride, int):
             stride = tuple([stride] * 2)
@@ -237,12 +293,24 @@ class Convolve2d(LinearMap):
         self.dilation = dilation
 
     def _apply(self, x):
-        return F.conv2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
-                        dilation=self.dilation)
+        return F.conv2d(
+            x,
+            self.weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+        )
 
     def _apply_adjoint(self, x):
-        return F.conv_transpose2d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
-                                  dilation=self.dilation)
+        return F.conv_transpose2d(
+            x,
+            self.weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+        )
 
 
 class Convolve3d(LinearMap):
@@ -251,18 +319,26 @@ class Convolve3d(LinearMap):
     The attributes follow the definition of torch.nn.Functional.conv3d
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 weight: Tensor,
-                 bias=None,
-                 stride: int = 1,
-                 padding: int = 0,
-                 dilation: int = 1):
-        assert len(list(size_in)) == 5, "input must have the shape (minibatch, in_channels, iD, iH, iW)"
-        assert len(list(weight.shape)) == 5, "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
+    def __init__(
+        self,
+        size_in: Sequence[int],
+        weight: Tensor,
+        bias=None,
+        stride: int = 1,
+        padding: int = 0,
+        dilation: int = 1,
+    ):
+        assert (
+            len(list(size_in)) == 5
+        ), "input must have the shape (minibatch, in_channels, iD, iH, iW)"
+        assert (
+            len(list(weight.shape)) == 5
+        ), "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
         minimatch, _, iD, iH, iW = size_in
         out_channel, _, kD, kH, kW = weight.shape
-        assert iD >= kD and iH >= kH and iW >= kW, "Kernel size can't be greater than actual input size"
+        assert (
+            iD >= kD and iH >= kH and iW >= kW
+        ), "Kernel size can't be greater than actual input size"
 
         if isinstance(stride, int):
             stride = tuple([stride] * 3)
@@ -284,12 +360,24 @@ class Convolve3d(LinearMap):
         self.dilation = dilation
 
     def _apply(self, x):
-        return F.conv3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
-                        dilation=self.dilation)
+        return F.conv3d(
+            x,
+            self.weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+        )
 
     def _apply_adjoint(self, x):
-        return F.conv_transpose3d(x, self.weight, bias=self.bias, stride=self.stride, padding=self.padding,
-                                  dilation=self.dilation)
+        return F.conv_transpose3d(
+            x,
+            self.weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+        )
 
 
 class Patch2D(LinearMap):
@@ -301,11 +389,13 @@ class Patch2D(LinearMap):
         stride: int, size of stride
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 size_kernel: int,
-                 stride: int = 1,
-                 padded: bool = False):
+    def __init__(
+        self,
+        size_in: Sequence[int],
+        size_kernel: int,
+        stride: int = 1,
+        padded: bool = False,
+    ):
         self.size_in = size_in
         self.size_kernel = size_kernel
         self.stride = stride
@@ -313,9 +403,21 @@ class Patch2D(LinearMap):
         self.npatchy = dim_conv(size_in[3], size_kernel, stride)
         self.padded = padded
         if padded:
-            self.size_out = (size_in[0], size_in[1], size_kernel * size_kernel, self.npatchx * self.npatchy)
+            self.size_out = (
+                size_in[0],
+                size_in[1],
+                size_kernel * size_kernel,
+                self.npatchx * self.npatchy,
+            )
         else:
-            self.size_out = (size_in[0], size_in[1], self.npatchx, self.npatchy, size_kernel, size_kernel)
+            self.size_out = (
+                size_in[0],
+                size_in[1],
+                self.npatchx,
+                self.npatchy,
+                size_kernel,
+                size_kernel,
+            )
         super(Patch2D, self).__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
@@ -327,23 +429,38 @@ class Patch2D(LinearMap):
             y: [nbatch, nchannel, npatchx, npatchy, kernel_size, kernel_size] (normal)
                 [nbatch, nchannel, kernel_size*kernel_size, npatchx*npatchy] (padded)
         """
-        x = x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).contiguous()
+        x = (
+            x.unfold(2, self.size_kernel, self.stride)
+            .unfold(3, self.size_kernel, self.stride)
+            .contiguous()
+        )
         if self.padded:
-            x = x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3], x.shape[4] * x.shape[5]).permute(
-                0, 1, 3, 2)
+            x = x.reshape(
+                x.shape[0], x.shape[1], x.shape[2] * x.shape[3], x.shape[4] * x.shape[5]
+            ).permute(0, 1, 3, 2)
         return x
 
     def _apply_adjoint(self, x) -> Tensor:
         if self.padded:
             # to [nbatch, nchannel*kernel_size*kernel_size, npatchx*npatchy]
-            x = x.reshape(self.size_out[0], self.size_out[1] * self.size_out[2], self.size_out[3])
+            x = x.reshape(
+                self.size_out[0], self.size_out[1] * self.size_out[2], self.size_out[3]
+            )
         else:
             # Permute to [nbatch, nchannel, kernel_size, kernel_size, npatchx, npatchy]
             x = x.permute(0, 1, 4, 5, 2, 3)
             # reshape
-            x = x.reshape(self.size_in[0], self.size_in[1] * self.size_kernel * self.size_kernel,
-                          self.npatchx * self.npatchy)
-        return F.fold(x, output_size=self.size_in[2:], kernel_size=self.size_kernel, stride=self.stride)
+            x = x.reshape(
+                self.size_in[0],
+                self.size_in[1] * self.size_kernel * self.size_kernel,
+                self.npatchx * self.npatchy,
+            )
+        return F.fold(
+            x,
+            output_size=self.size_in[2:],
+            kernel_size=self.size_kernel,
+            stride=self.stride,
+        )
 
 
 class Patch3D(LinearMap):
@@ -354,11 +471,13 @@ class Patch3D(LinearMap):
         stride: size of stride
     """
 
-    def __init__(self,
-                 size_in: Sequence[int],
-                 size_kernel: int,
-                 stride: int = 1,
-                 padded: bool = False):
+    def __init__(
+        self,
+        size_in: Sequence[int],
+        size_kernel: int,
+        stride: int = 1,
+        padded: bool = False,
+    ):
         self.size_in = size_in
         self.size_kernel = size_kernel
         self.stride = stride
@@ -368,11 +487,22 @@ class Patch3D(LinearMap):
         self.padded = padded
         if padded:
             self.size_out = (
-                size_in[0], size_in[1], size_kernel ** 3, self.npatchx * self.npatchy * self.npatchz)
+                size_in[0],
+                size_in[1],
+                size_kernel**3,
+                self.npatchx * self.npatchy * self.npatchz,
+            )
         else:
             self.size_out = (
-                size_in[0], size_in[1], self.npatchx, self.npatchy, self.npatchz, size_kernel, size_kernel,
-                size_kernel)
+                size_in[0],
+                size_in[1],
+                self.npatchx,
+                self.npatchy,
+                self.npatchz,
+                size_kernel,
+                size_kernel,
+                size_kernel,
+            )
         super(Patch3D, self).__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
@@ -386,12 +516,19 @@ class Patch3D(LinearMap):
 
 
         """
-        x = x.unfold(2, self.size_kernel, self.stride).unfold(3, self.size_kernel, self.stride).unfold(4,
-                                                                                                       self.size_kernel,
-                                                                                                       self.stride).contiguous()
+        x = (
+            x.unfold(2, self.size_kernel, self.stride)
+            .unfold(3, self.size_kernel, self.stride)
+            .unfold(4, self.size_kernel, self.stride)
+            .contiguous()
+        )
         if self.padded:
-            return x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3] * x.shape[4],
-                             x.shape[5] * x.shape[6] * x.shape[7]).permute(0, 1, 3, 2)
+            return x.reshape(
+                x.shape[0],
+                x.shape[1],
+                x.shape[2] * x.shape[3] * x.shape[4],
+                x.shape[5] * x.shape[6] * x.shape[7],
+            ).permute(0, 1, 3, 2)
         else:
             return x
 
@@ -401,18 +538,36 @@ class Patch3D(LinearMap):
         # First, do the fold on the last two dimensions
         # Permute to [nbatch, nchannel, kernel_size, npatchx, kernel_size, kernel_size, npatchy, npatchz]
         if self.padded:
-            x = x.permute(0, 1, 3, 2).reshape(self.size_in[0], self.size_in[1], self.npatchx, self.npatchy,
-                                              self.npatchz, self.size_kernel, self.size_kernel,
-                                              self.size_kernel)
-        x = x.permute(0, 1, 5, 2, 6, 7, 3, 4).reshape(self.size_in[0],
-                                                      self.size_in[1] * self.npatchx * self.size_kernel ** 3,
-                                                      self.npatchy * self.npatchz)
-        x = F.fold(x, output_size=self.size_in[3:], kernel_size=self.size_kernel, stride=self.stride)
+            x = x.permute(0, 1, 3, 2).reshape(
+                self.size_in[0],
+                self.size_in[1],
+                self.npatchx,
+                self.npatchy,
+                self.npatchz,
+                self.size_kernel,
+                self.size_kernel,
+                self.size_kernel,
+            )
+        x = x.permute(0, 1, 5, 2, 6, 7, 3, 4).reshape(
+            self.size_in[0],
+            self.size_in[1] * self.npatchx * self.size_kernel**3,
+            self.npatchy * self.npatchz,
+        )
+        x = F.fold(
+            x,
+            output_size=self.size_in[3:],
+            kernel_size=self.size_kernel,
+            stride=self.stride,
+        )
         # New shape: [nbatch, nchannel. kernel_size*npatchx, ny, nz]
         # Now let's move on to the first dimension
         x = x.reshape(self.size_in[0], self.size_in[1] * self.size_kernel, -1)
         # [nbatch, nchannel*kernel_size, npatchx*ny*nz]
-        x = F.fold(x, output_size=(self.size_in[2], self.size_in[3] * self.size_in[4]),
-                   kernel_size=(self.size_kernel, 1), stride=(self.stride, 1))
+        x = F.fold(
+            x,
+            output_size=(self.size_in[2], self.size_in[3] * self.size_in[4]),
+            kernel_size=(self.size_kernel, 1),
+            stride=(self.stride, 1),
+        )
         x = x.reshape(self.size_in)
         return x

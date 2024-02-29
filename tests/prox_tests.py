@@ -2,7 +2,7 @@ import unittest
 import sys, os
 
 path = os.path.dirname(os.path.abspath(__file__))
-path = path[:path.rfind('/')]
+path = path[: path.rfind("/")]
 sys.path.insert(0, path)
 import torch
 import numpy as np
@@ -11,7 +11,6 @@ import mirtorch
 
 
 class TestProx(unittest.TestCase):
-
     def test_l1(self):
         lambd = np.random.random()
         prox = mirtorch.prox.L1Regularizer(lambd)
@@ -126,6 +125,6 @@ class TestProx(unittest.TestCase):
         npt.assert_allclose(a.angle(), torch.atan2(a.imag, a.real))
 
 
-if __name__ == '__main__':
-    print(f'PyTorch version: {torch.__version__}')
+if __name__ == "__main__":
+    print(f"PyTorch version: {torch.__version__}")
     unittest.main()

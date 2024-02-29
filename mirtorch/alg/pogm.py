@@ -5,7 +5,7 @@ import torch
 from mirtorch.prox import Prox
 
 
-class POGM():
+class POGM:
     r"""
     Optimized Proximal Gradient Method (POGM)
     Ref: D. Kim and J. A. Fessler. “Adaptive restart of the optimized gradient method for convex optimization”.
@@ -28,14 +28,15 @@ class POGM():
     TODO: add the restart
     """
 
-    def __init__(self,
-                 f_grad: Callable,
-                 f_L: float,
-                 g_prox: Prox,
-                 max_iter: int = 10,
-                 restart=False,
-                 eval_func: Callable = None):
-
+    def __init__(
+        self,
+        f_grad: Callable,
+        f_L: float,
+        g_prox: Prox,
+        max_iter: int = 10,
+        restart=False,
+        eval_func: Callable = None,
+    ):
         self.max_iter = max_iter
         self.f_grad = f_grad
         self.f_L = f_L
@@ -46,8 +47,7 @@ class POGM():
         self.restart = restart
         self.eval_func = eval_func
 
-    def run(self,
-                x0: torch.Tensor):
+    def run(self, x0: torch.Tensor):
         r"""
         Run the algorithm
         Args:
@@ -67,12 +67,16 @@ class POGM():
             fgrad = self.f_grad(xold)
             omnew = xold - self._alpha * fgrad
             if i == self.max_iter:
-                tnew = 0.5 * (1 + np.sqrt(1 + 8 * told ** 2))
+                tnew = 0.5 * (1 + np.sqrt(1 + 8 * told**2))
             else:
-                tnew = 0.5 * (1 + np.sqrt(1 + 4 * told ** 2))
+                tnew = 0.5 * (1 + np.sqrt(1 + 4 * told**2))
             gamma_new = self._alpha * (2 * told + tnew - 1) / tnew
-            znew = omnew + (told - 1) / tnew * (omnew - omold) + told / tnew * (omnew - xold) + self._alpha * (
-                        told - 1) / gamma_old / tnew * (zold - xold)
+            znew = (
+                omnew
+                + (told - 1) / tnew * (omnew - omold)
+                + told / tnew * (omnew - xold)
+                + self._alpha * (told - 1) / gamma_old / tnew * (zold - xold)
+            )
             xnew = self.prox(znew, gamma_new)
             zold = znew
             told = tnew

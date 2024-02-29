@@ -227,7 +227,7 @@ class BoxConstraint(Prox):
         arg \min_{x \in [lower, upper]} \frac{1}{2} \| x - v \|_2^2
 
     Attributes:
-        Lambda: flaot, regularization parameter.
+        Lambda: float, regularization parameter.
         lower: float, minimum value
         upper: float, maximum value
         T: LinearMap, optional, unitary LinearMap
@@ -244,9 +244,9 @@ class BoxConstraint(Prox):
             x = torch.clamp(v, self.l, self.u)
         else:
             Lambda = self.P(self.Lambda * alpha * torch.ones(self.P.size_in))
-            l = self.l / Lambda
-            u = self.u / Lambda
-            x = torch.minimum(u, torch.minimum(v, l))
+            low = self.l / Lambda
+            up = self.u / Lambda
+            x = torch.minimum(up, torch.minimum(v, low))
         return x
 
 

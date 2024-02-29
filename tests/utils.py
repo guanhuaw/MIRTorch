@@ -43,7 +43,7 @@ def minibatch(X, batchsize=256, shuffle=True):
 
     def mb_generator():
         for i in range(n_batches):
-            yield ix[i * batchsize: (i + 1) * batchsize]
+            yield ix[i * batchsize : (i + 1) * batchsize]
 
     return mb_generator(), n_batches
 
@@ -856,7 +856,7 @@ def conv2D_naive(X, W, stride, pad, dilation=0):
                     i0, i1 = i * s, (i * s) + fr
                     j0, j1 = j * s, (j * s) + fc
 
-                    window = X_pad[m, i0: i1: (d + 1), j0: j1: (d + 1), :]
+                    window = X_pad[m, i0 : i1 : (d + 1), j0 : j1 : (d + 1), :]
                     Z[m, i, j, c] = np.sum(window * W[:, :, :, c])
     return Z
 

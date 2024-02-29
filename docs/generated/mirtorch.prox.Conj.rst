@@ -5,18 +5,12 @@
 
 .. autoclass:: Conj
 
-   
+
    .. automethod:: __init__
 
-   
+
    .. rubric:: Methods
 
    .. autosummary::
-   
-      ~Conj.__init__
-   
-   
 
-   
-   
-   
+      ~Conj.__init__

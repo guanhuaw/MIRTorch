@@ -19,5 +19,3 @@ This project is under active development.
    README.md
    API
    HISTORY.md
-
-

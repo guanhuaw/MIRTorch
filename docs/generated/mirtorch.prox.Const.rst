@@ -5,18 +5,12 @@
 
 .. autoclass:: Const
 
-   
+
    .. automethod:: __init__
 
-   
+
    .. rubric:: Methods
 
    .. autosummary::
-   
-      ~Const.__init__
-   
-   
 
-   
-   
-   
+      ~Const.__init__
