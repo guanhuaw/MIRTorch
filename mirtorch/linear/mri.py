@@ -4,7 +4,7 @@ Discrete-to-discreate system matrices for MRI.
 """
 
 import math
-from typing import Sequence, Union
+from typing import Sequence, Union, List
 
 import numpy as np
 import torch
@@ -31,20 +31,22 @@ class FFTCn(LinearMap):
         self,
         size_in: Sequence[int],
         size_out: Sequence[int],
-        dims: Union[int, Sequence[int]],
+        dims: Union[int, List[int]] | None = None,
         norm: str = "ortho",
     ):
         super(FFTCn, self).__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
 
-    def _apply(self, x: Tensor) -> Tensor:
+    @torch.jit.script
+    def _apply(self: LinearMap, x: Tensor) -> Tensor:
         x = ifftshift(x, self.dims)
         x = fftn(x, dim=self.dims, norm=self.norm)
         x = fftshift(x, self.dims)
         return x
 
-    def _apply_adjoint(self, x: Tensor) -> Tensor:
+    @torch.jit.script
+    def _apply_adjoint(self: LinearMap, x: Tensor) -> Tensor:
         x = ifftshift(x, self.dims)
         if self.norm == "ortho":
             x = ifftn(x, dim=self.dims, norm="ortho")
@@ -96,6 +98,7 @@ class Sense(LinearMap):
         self.smaps = smaps
         self.batchmode = batchmode
 
+    @torch.jit.script
     def _apply(self, x: Tensor) -> Tensor:
         r"""
         Args:
@@ -109,6 +112,7 @@ class Sense(LinearMap):
         k = fftshift(k, self.dims) * self.masks
         return k
 
+    @torch.jit.script
     def _apply_adjoint(self, k: Tensor) -> Tensor:
         r"""
         Args:

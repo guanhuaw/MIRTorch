@@ -60,8 +60,8 @@ class LinearMap:
         self.size_out = list(size_out)
 
     def __repr__(self):
-        return "<{oshape}x{ishape} {repr_str} Linop>".format(
-            oshape=self.size_out, ishape=self.size_in, repr_str=self.__class__.__name__
+        return "<LinearMap {repr_str} of {oshape}x{ishape}>".format(
+            repr_str=self.__class__.__name__, oshape=self.size_out, ishape=self.size_in
         )
 
     def __call__(self, x) -> Tensor:

@@ -63,7 +63,7 @@ class FISTA:
             beta = (told - 1) / tnew
             told = tnew
 
-        # initalize parameters
+        # initialize parameters
         xold = x0
         yold = x0
         told = 1.0

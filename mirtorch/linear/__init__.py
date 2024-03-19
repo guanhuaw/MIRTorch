@@ -20,7 +20,7 @@ from .basics import (
     Patch3D,
     Diffnd,
 )
-from .mri import FFTCn
+from .mri import FFTCn, NuSense, NuSenseGram, Gmri, GmriGram, Sense
 from .wavelets import Wavelet2D
 from .spect import SPECT
 
@@ -46,4 +46,9 @@ __all__ = [
     "Patch3D",
     "FFTCn",
     "SPECT",
+    "NuSense",
+    "NuSenseGram",
+    "Gmri",
+    "GmriGram",
+    "Sense",
 ]

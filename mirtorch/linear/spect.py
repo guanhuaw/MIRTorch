@@ -3,6 +3,7 @@
 SPECT forward-backward projector with parallel beam collimator.
 2023-06, Zongyu Li, University of Michigan
 """
+
 from typing import Sequence
 
 import torch

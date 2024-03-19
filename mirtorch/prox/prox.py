@@ -1,9 +1,8 @@
-""" Proximal operators, such as soft-thresholding, box-constraint and L2 norm.
+"""Proximal operators, such as soft-thresholding, box-constraint and L2 norm.
 
 Prox() class includes the common proximal operators used in iterative optimization.
 2021-02. Neel Shah and Guanhua Wang, University of Michigan
 """
-
 
 from mirtorch.linear import LinearMap
 import torch

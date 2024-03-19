@@ -5,7 +5,8 @@ Author: Zongyu Li, zonyul@umich.edu
 """
 
 import unittest
-import sys, os
+import sys
+import os
 
 path = os.path.dirname(os.path.abspath(__file__))
 path = path[: path.rfind("/")]
