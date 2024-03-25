@@ -1,4 +1,6 @@
-from typing import Sequence, TypeVar, Union
+from __future__ import annotations
+
+from typing import List, Union
 
 import numpy as np
 import torch
@@ -12,9 +14,6 @@ def check_device(x, y):
     check if two tensors are on the same device
     """
     assert x.device == y.device, "Tensors should be on the same device"
-
-
-T = TypeVar("T", bound="LinearMap")
 
 
 class LinearMap:
@@ -52,7 +51,7 @@ class LinearMap:
         size_out: the size of the output of the linear map (a list)
     """
 
-    def __init__(self, size_in: Sequence[int], size_out: Sequence[int]):
+    def __init__(self, size_in: List[int], size_out: List[int]):
         r"""
         Initiate the linear operator.
         """
@@ -60,8 +59,8 @@ class LinearMap:
         self.size_out = list(size_out)
 
     def __repr__(self):
-        return "<LinearMap {repr_str} of {oshape}x{ishape}>".format(
-            repr_str=self.__class__.__name__, oshape=self.size_out, ishape=self.size_in
+        return (
+            f"<LinearMap {self.__class__.__name__} of {self.size_out}x{self.size_in}>"
         )
 
     def __call__(self, x) -> Tensor:
@@ -96,19 +95,21 @@ class LinearMap:
         return self._apply_adjoint(x)
 
     @property
-    def H(self) -> T:
+    def H(self) -> LinearMap:
         r"""
         Apply the (Hermitian) transpose
         """
         return ConjTranspose(self)
 
-    def __add__(self: T, other: T) -> T:
+    def __add__(self: LinearMap, other: LinearMap) -> LinearMap:
         r"""
         Reload the + symbol.
         """
         return Add(self, other)
 
-    def __mul__(self: T, other) -> T:
+    def __mul__(
+        self: LinearMap, other: Union[str, int, LinearMap, Tensor]
+    ) -> LinearMap:
         r"""
         Reload the * symbol.
         """
@@ -116,49 +117,52 @@ class LinearMap:
             return Multiply(self, other)
         elif isinstance(other, LinearMap):
             return Matmul(self, other)
-        elif isinstance(other, torch.Tensor):
+        elif isinstance(other, Tensor):
             if not other.shape:
-                # raise ValueError(
-                #     "Input tensor has empty shape. If want to scale the linear map, please use the standard scalar")
                 return Multiply(self, other)
             return self.apply(other)
         else:
             raise NotImplementedError(
-                f"Only scalers, Linearmaps or Tensors, rather than '{type(other)}' are allowed as arguments for this function."
+                (
+                    f"Only scalers, Linearmaps or Tensors, rather than '{type(other)}' "
+                    "fare allowed as arguments for this function."
+                )
             )
 
-    def __rmul__(self: T, other) -> T:
+    def __rmul__(
+        self: LinearMap, other: Union[str, int, LinearMap, Tensor]
+    ) -> LinearMap:
         r"""
         Reload the * symbol.
         """
         if np.isscalar(other):
             return Multiply(self, other)
-        elif isinstance(other, torch.Tensor) and not other.shape:
+        elif isinstance(other, Tensor) and not other.shape:
             return Multiply(self, other)
         else:
             return NotImplemented
 
-    def __sub__(self: T, other: T) -> T:
+    def __sub__(self: LinearMap, other: LinearMap) -> LinearMap:
         r"""
         Reload the - symbol.
         """
         return self.__add__(-other)
 
-    def __neg__(self: T) -> T:
+    def __neg__(self: LinearMap) -> LinearMap:
         r"""
         Reload the - symbol.
         """
         return -1 * self
 
-    def to(self: T, *args, **kwargs):
+    def to(self: LinearMap, device: Union[torch.device, str]) -> LinearMap:
         r"""
         Copy to different devices
         """
         for prop in self.__dict__.keys():
-            if isinstance(self.__dict__[prop], torch.Tensor) or isinstance(
+            if isinstance(self.__dict__[prop], Tensor) or isinstance(
                 self.__dict__[prop], torch.nn.Module
             ):
-                self.__dict__[prop] = self.__dict__[prop].to(*args, **kwargs)
+                self.__dict__[prop] = self.__dict__[prop].to(device)
 
 
 class Add(LinearMap):
@@ -184,10 +188,10 @@ class Add(LinearMap):
         self.B = B
         super().__init__(self.A.size_in, self.B.size_out)
 
-    def _apply(self: T, x: Tensor) -> Tensor:
+    def _apply(self: LinearMap, x: Tensor) -> Tensor:
         return self.A(x) + self.B(x)
 
-    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
+    def _apply_adjoint(self: LinearMap, x: Tensor) -> Tensor:
         return self.A.H(x) + self.B.H(x)
 
 
@@ -208,11 +212,11 @@ class Multiply(LinearMap):
         self.A = A
         super().__init__(self.A.size_in, self.A.size_out)
 
-    def _apply(self: T, x: Tensor) -> Tensor:
+    def _apply(self: LinearMap, x: Tensor) -> Tensor:
         ax = x * self.a
         return self.A(ax)
 
-    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
+    def _apply_adjoint(self: LinearMap, x: Tensor) -> Tensor:
         ax = x * self.a
         return self.A.H(ax)
 
@@ -232,11 +236,11 @@ class Matmul(LinearMap):
         assert list(self.B.size_out) == list(self.A.size_in), "Shapes do not match"
         super().__init__(self.B.size_in, self.A.size_out)
 
-    def _apply(self: T, x: Tensor) -> Tensor:
+    def _apply(self: LinearMap, x: Tensor) -> Tensor:
         # TODO: add gram operator
         return self.A(self.B(x))
 
-    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
+    def _apply_adjoint(self: LinearMap, x: Tensor) -> Tensor:
         return self.B.H(self.A.H(x))
 
 
@@ -249,10 +253,10 @@ class ConjTranspose(LinearMap):
         self.A = A
         super().__init__(A.size_out, A.size_in)
 
-    def _apply(self: T, x: Tensor) -> Tensor:
+    def _apply(self: LinearMap, x: Tensor) -> Tensor:
         return self.A.adjoint(x)
 
-    def _apply_adjoint(self: T, x: Tensor) -> Tensor:
+    def _apply_adjoint(self: LinearMap, x: Tensor) -> Tensor:
         return self.A.apply(x)
 
 
@@ -265,7 +269,7 @@ class BlockDiagonal(LinearMap):
     A : List of 2D linear maps
     """
 
-    def __init__(self, A: Sequence[LinearMap]):
+    def __init__(self, A: List[LinearMap]):
         self.A = A
 
         # dimension checks
@@ -280,7 +284,7 @@ class BlockDiagonal(LinearMap):
         size_out = list(A[0].size_out) + [nz]
         super().__init__(tuple(size_in), tuple(size_out))
 
-    def _apply(self: T, x: Tensor) -> Tensor:
+    def _apply(self: LinearMap, x: Tensor) -> Tensor:
         out = torch.zeros(
             self.size_out, dtype=x.dtype, device=x.device, layout=x.layout
         )
@@ -291,7 +295,7 @@ class BlockDiagonal(LinearMap):
             out[..., k] = self.A[k].apply(x[..., k])
         return out
 
-    def _apply_adjoint(self: T, x: Tensor):
+    def _apply_adjoint(self: LinearMap, x: Tensor):
         out = torch.zeros(self.size_in, dtype=x.dtype, device=x.device, layout=x.layout)
         nz = self.size_in[-1]
 

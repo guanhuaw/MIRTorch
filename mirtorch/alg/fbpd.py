@@ -42,10 +42,10 @@ class FBPD:
         h_prox: Prox,
         g_L: float,
         G_norm: float,
-        G: LinearMap = None,
-        tau: float = None,
+        G: LinearMap | None = None,
+        tau: float | None = None,
         max_iter: int = 10,
-        eval_func: Callable = None,
+        eval_func: Callable | None = None,
         p: int = 1,
     ):
         self.max_iter = max_iter
@@ -87,7 +87,7 @@ class FBPD:
             if self.eval_func is not None:
                 saved.append(self.eval_func(xold))
                 logger.info(
-                    "The cost function at %dth iter in FBPD: %10.3e." % (i, saved[-1])
+                    "The cost function at %dth iter in FBPD: %10.3e.", i, saved[-1]
                 )
         if self.eval_func is not None:
             return xold, saved

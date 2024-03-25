@@ -165,7 +165,7 @@ class NuSense(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         sequential: bool = False,
     ):
@@ -328,7 +328,7 @@ class NuSenseGram(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
     ):
         self.smaps = smaps
@@ -433,7 +433,7 @@ class Gmri(LinearMap):
         L: int = 6,
         nbins: int = 20,
         dt: int = 4e-3,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         T: Tensor = None,
     ):
@@ -560,7 +560,7 @@ class GmriGram(LinearMap):
         L: int = 6,
         nbins: int = 20,
         dt: int = 4e-3,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         T: Tensor = None,
     ):
