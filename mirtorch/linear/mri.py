@@ -4,7 +4,7 @@ Discrete-to-discreate system matrices for MRI.
 """
 
 import math
-from typing import Sequence, Union, List
+from typing import Union, List
 
 import numpy as np
 import torch
@@ -29,8 +29,8 @@ class FFTCn(LinearMap):
 
     def __init__(
         self,
-        size_in: Sequence[int],
-        size_out: Sequence[int],
+        size_in: List[int],
+        size_out: List[int],
         dims: Union[int, List[int]] | None = None,
         norm: str = "ortho",
     ):
@@ -39,14 +39,17 @@ class FFTCn(LinearMap):
         self.dims = dims
 
     @torch.jit.script
-    def _apply(self: LinearMap, x: Tensor) -> Tensor:
-        x = ifftshift(x, self.dims)
-        x = fftn(x, dim=self.dims, norm=self.norm)
-        x = fftshift(x, self.dims)
+    def fwd(x: Tensor, dims: Union[int, List[int]], norm: str) -> Tensor:
+        x = ifftshift(x, dims)
+        x = fftn(x, dim=dims, norm=norm)
+        x = fftshift(x, dims)
+        return x
+
+    def _apply(self, x: Tensor) -> Tensor:
         return x
 
     @torch.jit.script
-    def _apply_adjoint(self: LinearMap, x: Tensor) -> Tensor:
+    def _apply_adjoint(self, x: Tensor) -> Tensor:
         x = ifftshift(x, self.dims)
         if self.norm == "ortho":
             x = ifftn(x, dim=self.dims, norm="ortho")
@@ -691,24 +694,3 @@ def mri_exp_approx(b0, bins, lseg, t):
     ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
 
     return b, ct, tl
-
-
-# def tukey_filer(LinearMap):
-#     r"""
-#     A Tukey filter to counteract Gibbs ringing artifacts
-#     Parameters:
-#         size_in: the signal size [nbatch, nchannel, nx (ny, nz ...)]
-#         width: the window length [wdx (wdy, wdz) ...]
-#         alpha(s): control parameters of the tukey window
-#     Returns:
-#
-#     """
-#
-#     def __init__(self,
-#                  size_in: Sequence[int],
-#                  width: Sequence[int],
-#                  alpha: Sequence[int]
-#                  ):
-#         self.width = width
-#         self.alpha = alpha
-#         super(tukey_filer, self).__init__(tuple(size_in), tuple(size_in))
