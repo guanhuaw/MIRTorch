@@ -1,4 +1,4 @@
-from typing import Sequence, Union
+from typing import Union, Tuple, List
 
 import numpy as np
 import torch
@@ -39,7 +39,7 @@ def finitediff_adj(y: Tensor, dim: int = -1, mode="reflexive"):
     Returns:
         y: the first-order finite difference of x
     """
-    if mode == "reflexibe":
+    if mode == "reflexive":
         len_dim = y.shape[dim]
         return torch.cat(
             (
@@ -90,29 +90,31 @@ class DiffFunc_adj(torch.autograd.Function):
         return finitediff(dx, ctx.dim, ctx.mode), None, None
 
 
-def fftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
+def fftshift(x: Tensor, dims: Union[int, List[int]] | None = None):
     """
     Similar to np.fft.fftshift but applies to PyTorch tensors. From fastMRI code.
     """
     if dims is None:
-        dims = tuple(range(x.dim()))
+        dims = list(range(x.dim()))
         shifts = [dim // 2 for dim in x.shape]
     elif isinstance(dims, int):
-        shifts = x.shape[dims] // 2
+        shifts = [x.shape[dims] // 2]
+        dims = [dims]
     else:
         shifts = [x.shape[i] // 2 for i in dims]
     return torch.roll(x, shifts, dims)
 
 
-def ifftshift(x: Tensor, dims: Union[int, Sequence[int]] = None):
+def ifftshift(x: Tensor, dims: Union[int, Tuple[int]] | None = None):
     """
     Similar to np.fft.ifftshift but applies to PyTorch tensors. From fastMRI code.
     """
     if dims is None:
-        dims = tuple(range(x.dims()))
+        dims = list(range(x.dim()))
         shifts = [(dim + 1) // 2 for dim in x.shape]
     elif isinstance(dims, int):
-        shifts = (x.shape[dims] + 1) // 2
+        shifts = [(x.shape[dims] + 1) // 2]
+        dims = [dims]
     else:
         shifts = [(x.shape[i] + 1) // 2 for i in dims]
     return torch.roll(x, shifts, dims)

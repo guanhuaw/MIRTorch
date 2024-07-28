@@ -4,7 +4,7 @@ Discrete-to-discreate system matrices for MRI.
 """
 
 import math
-from typing import Sequence, Union
+from typing import Union, List, Tuple
 
 import numpy as np
 import torch
@@ -29,9 +29,9 @@ class FFTCn(LinearMap):
 
     def __init__(
         self,
-        size_in: Sequence[int],
-        size_out: Sequence[int],
-        dims: Union[int, Sequence[int]],
+        size_in: List[int],
+        size_out: List[int],
+        dims: Tuple[int] | None = None,
         norm: str = "ortho",
     ):
         super(FFTCn, self).__init__(size_in, size_out)
@@ -161,7 +161,7 @@ class NuSense(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         sequential: bool = False,
     ):
@@ -324,7 +324,7 @@ class NuSenseGram(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
     ):
         self.smaps = smaps
@@ -429,7 +429,7 @@ class Gmri(LinearMap):
         L: int = 6,
         nbins: int = 20,
         dt: int = 4e-3,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         T: Tensor = None,
     ):
@@ -556,7 +556,7 @@ class GmriGram(LinearMap):
         L: int = 6,
         nbins: int = 20,
         dt: int = 4e-3,
-        numpoints: Union[int, Sequence[int]] = 6,
+        numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         T: Tensor = None,
     ):
@@ -687,24 +687,3 @@ def mri_exp_approx(b0, bins, lseg, t):
     ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
 
     return b, ct, tl
-
-
-# def tukey_filer(LinearMap):
-#     r"""
-#     A Tukey filter to counteract Gibbs ringing artifacts
-#     Parameters:
-#         size_in: the signal size [nbatch, nchannel, nx (ny, nz ...)]
-#         width: the window length [wdx (wdy, wdz) ...]
-#         alpha(s): control parameters of the tukey window
-#     Returns:
-#
-#     """
-#
-#     def __init__(self,
-#                  size_in: Sequence[int],
-#                  width: Sequence[int],
-#                  alpha: Sequence[int]
-#                  ):
-#         self.width = width
-#         self.alpha = alpha
-#         super(tukey_filer, self).__init__(tuple(size_in), tuple(size_in))

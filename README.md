@@ -7,7 +7,7 @@ A Py***Torch***-based differentiable ***I***mage ***R***econstruction ***T***ool
 
 The work is inspired by [MIRT](https://github.com/JeffFessler/mirt), a well-acclaimed toolbox for medical imaging reconstruction.
 
-The main objective is to facilitate rapid, data-driven image reconstruction using CPUs and GPUs through fast prototyping and iteration. Researchers can conveniently develop new model-based and learning-based methods (e.g., unrolled neural networks) with abstraction layers. The availability of auto-differentiation enables optimization of imaging protocols and reconstruction parameters using gradient methods.
+The main objective is to facilitate rapid, data-driven medical image reconstruction using CPUs and GPUs, for fast prototyping. Researchers can conveniently develop new model-based and learning-based methods (e.g., unrolled neural networks) with abstraction layers. The availability of auto-differentiation enables optimization of imaging protocols and reconstruction parameters using gradient methods.
 
 Documentation: https://mirtorch.readthedocs.io/en/latest/
 
@@ -16,7 +16,8 @@ Documentation: https://mirtorch.readthedocs.io/en/latest/
 ### Installation
 
 We recommend to [pre-install `PyTorch` first](https://pytorch.org/).
-To install the `MIRTorch` package, after cloning the repo, please try `pip install -e .`(one may modify the package locally with this option.)
+Use `pip install mirtorch` to install.
+To install the `MIRTorch` locally, after cloning the repo, please try `pip install -e .`(one may modify the package locally with this option.)
 
 ------
 
@@ -26,13 +27,13 @@ To install the `MIRTorch` package, after cloning the repo, please try `pip insta
 
 The `LinearMap` class overloads common matrix operations, such as `+, - , *`.
 
-Instances include basic linear operations (like convolution), classical imaging processing, and MRI system matrix (Cartesian and Non-Cartesian, sensitivity- and B0-informed system models). ***NEW!*** MIRTorch recently adds the support for SPPET and CT.
+Instances include basic linear operations (like convolution), classical imaging processing, and MRI system matrix (Cartesian and Non-Cartesian, sensitivity- and B0-informed system models). ***NEW!*** MIRTorch recently adds the support for SPECT and CT.
 
 Since the Jacobian matrix of a linear operator is itself, the toolbox can actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
 
 When defining linear operators, please make sure that all torch tensors are on the same device and compatible. For example, `torch.cfloat` are compatible with `torch.float` but not `torch.double`. Similarly, `torch.chalf` is compatible with `torch.half`.
 When the data is image, there are 2 empirical formats: `[num_batch, num_channel, nx, ny, (nz)]` and `[nx, ny, (nz)]`.
-For some LinearMaps, there is a boolean `batchmode` to control it.
+For some LinearMaps, there is a boolean `batchmode` to control the shape.
 
 #### Proximal operators
 
@@ -81,7 +82,7 @@ This work is inspired by (but not limited to):
 
 * PyLops: https://github.com/PyLops/pylops
 
-If the code is useful to your research, please cite:
+If the code is useful to your research, please consider citing:
 
 ```bibtex
 @article{wang:22:bjork,
@@ -102,6 +103,7 @@ If the code is useful to your research, please cite:
   year={2022}
 }
 ```
+If you use the SPECT code, please consider citing:
 
 ```bibtex
 @ARTICLE{li:23:tet,

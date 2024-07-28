@@ -4,6 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "MIRTorch"
+version = "0.1.0"
 authors = [{ name = "Guanhua Wang", email = "guanhuaw@umich.edu" }]
 description = "a PyTorch-based image reconstruction toolbox"
 readme = "README.md"
@@ -15,7 +16,7 @@ classifiers = [
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     'Development Status :: 2 - Pre-Alpha',
-    'Topic :: Signal Processing',
+    'Topic :: Scientific/Engineering :: Image Processing',
 ]
 dependencies = [
     "torch>=1.13",
@@ -29,9 +30,8 @@ dependencies = [
     'importlib-metadata; python_version<"3.8"',
     "einops",
     "matplotlib",
-    "pytorch_wavelets@git+https://github.com/fbcotter/pytorch_wavelets.git@8d2e3b4289beaea9aa89f7b1dbb290e448331197#egg=pytorch_wavelets",
 ]
-dynamic = ["version"]
+
 
 [project.urls] # Optional
 "repository" = "https://github.com/guanhuaw/MIRTorch"
@@ -42,3 +42,35 @@ test = ["coverage", "pytest"]
 
 [project.scripts]
 my-script = "my_package.module:function"
+
+[tool.ruff]
+exclude = [
+    "__pycache__",
+    ".github",
+    ".idea",
+    ".vscode",
+    "build",
+    "dist",
+    "docs",
+    "examples",
+    "tests",
+    "mirtorch/vendors/pytorch_wavelets",
+    "venv",
+    ".git",
+]
+
+[tool.pyright]
+exclude = [
+    "__pycache__",
+    ".github",
+    ".idea",
+    ".vscode",
+    "build",
+    "dist",
+    "docs",
+    "examples",
+    "tests",
+    "mirtorch/vendors/pytorch_wavelets",
+    "venv",
+    ".git",
+]
