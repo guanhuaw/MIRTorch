@@ -2,7 +2,7 @@ import sys
 from typing import Sequence, Tuple, List
 
 import torch
-from pytorch_wavelets import DWTForward, DWTInverse
+from mirtorch.vendors.pytorch_wavelets import DWTForward, DWTInverse
 from torch import Tensor
 
 from .linearmaps import LinearMap

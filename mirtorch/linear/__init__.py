@@ -6,6 +6,8 @@ from .linearmaps import (
     ConjTranspose,
     BlockDiagonal,
     Kron,
+    Vstack,
+    Hstack,
 )
 from .basics import (
     Diff1d,
@@ -51,4 +53,6 @@ __all__ = [
     "Gmri",
     "GmriGram",
     "Sense",
+    "Vstack",
+    "Hstack",
 ]

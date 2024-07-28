@@ -16,7 +16,8 @@ Documentation: https://mirtorch.readthedocs.io/en/latest/
 ### Installation
 
 We recommend to [pre-install `PyTorch` first](https://pytorch.org/).
-To install the `MIRTorch` package, after cloning the repo, please try `pip install -e .`(one may modify the package locally with this option.)
+Use `pip install mirtorch` to install.
+To install the `MIRTorch` locally, after cloning the repo, please try `pip install -e .`(one may modify the package locally with this option.)
 
 ------
 

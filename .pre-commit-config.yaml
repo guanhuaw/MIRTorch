@@ -28,4 +28,4 @@ repos:
     rev: v2.1.0
     hooks:
       - id: codespell
-        exclude: ^(?:tests|docs|examples)/
+        exclude: ^(?:tests|docs|examples|mirtorch/vendors)/

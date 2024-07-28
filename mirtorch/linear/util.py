@@ -1,4 +1,4 @@
-from typing import Union, List
+from typing import Union, Tuple, List
 
 import numpy as np
 import torch
@@ -39,7 +39,7 @@ def finitediff_adj(y: Tensor, dim: int = -1, mode="reflexive"):
     Returns:
         y: the first-order finite difference of x
     """
-    if mode == "reflexibe":
+    if mode == "reflexive":
         len_dim = y.shape[dim]
         return torch.cat(
             (
@@ -105,7 +105,7 @@ def fftshift(x: Tensor, dims: Union[int, List[int]] | None = None):
     return torch.roll(x, shifts, dims)
 
 
-def ifftshift(x: Tensor, dims: Union[int, List[int]] | None = None):
+def ifftshift(x: Tensor, dims: Union[int, Tuple[int]] | None = None):
     """
     Similar to np.fft.ifftshift but applies to PyTorch tensors. From fastMRI code.
     """
