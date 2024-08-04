@@ -74,3 +74,6 @@ exclude = [
     "venv",
     ".git",
 ]
+[tool.semantic_release]
+version_variables = ["setup.py:__version__"]
+upload_to_pypi = true
