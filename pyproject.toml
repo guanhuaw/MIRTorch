@@ -74,6 +74,9 @@ exclude = [
     "venv",
     ".git",
 ]
+
 [tool.semantic_release]
-version_variables = ["setup.py:__version__"]
-upload_to_pypi = true
+version_variable = ["pyproject.toml:project.version"]
+branch = "master"
+upload_to_pypi = false
+build_command = "python -m build"
