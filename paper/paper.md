@@ -8,26 +8,36 @@ tags:
   - PyTorch
 authors:
   - name: Guanhua Wang
-    affiliation: 1
+    affiliation: 2
+    orcid: 0000-0002-1622-5664
+    corresponding: true
   - name: Neel Shah
     affiliation: 1
   - name: Keyue Zhu
     affiliation: 1
   - name: Tianrui Luo
-    affiliation: 1
+    affiliation: 2
+    orcid: 0000-0003-4770-530X
   - name: Naveen Murthy
     affiliation: 1
+    orcid: 0000-0003-1365-3302
   - name: Zongyu Li
     affiliation: 1
+    orcid: 0000-0002-0661-0040
   - name: Sonia Kim
     affiliation: 1
   - name: Douglas C Noll
-    affiliation: 1
+    affiliation: 2
+    orcid: 0000-0002-0983-3805
   - name: Jeffrey A Fessler
     affiliation: 1
+    orcid: 0000-0001-9998-3315
 affiliations:
- - name: University of Michigan, USA
+ - name: Department of EECS, University of Michigan, USA
    index: 1
+ - name: Department of Biomeidcal Engineering, University of Michigan, USA
+   index: 2
+
 date: 3 August 2024
 bibliography: paper.bib
 
@@ -35,7 +45,7 @@ bibliography: paper.bib
 
 # Summary
 
-Image reconstruction converts raw signals into digitized images and is an essential part of modern medical imaging. High-quality image reconstruction provides powerful tools for radiologists in diagnosing. Fast and accurate image reconstruction is an active topic across many research fields, including optimization, signal processing, and computational imaging. Image reconstruction toolboxes support these researches with algorithmic infrastructures and baselines.
+Image reconstruction converts raw signals into digitized images and is an essential part of modern medical imaging. High-quality image reconstruction provides powerful tools for radiologists in diagnosing. Fast and accurate image reconstruction is an active topic across many research fields, including signal processing, computational imaging and machine learning. Image reconstruction toolboxes support these researches with algorithmic infrastructures and baselines.
 
 For many imaging modalities, such as magnetic resonance imaging (MRI), image reconstruction is an inverse problem that is often underdetermined and large-scale. Reconstruction toolboxes can model the imaging physics, implement the regularization, and provide corresponding solvers. Recent years have also seen a surge in deep learning-based reconstruction, which learns to solve the inverse problem [@deep_learning]. One may integrate physics modeling into deep learning frameworks to combine the best of both worlds [@physics_informed]. These model-based or physics-informed deep learning methods received wide attention because of their robustness and explainability.
 
@@ -43,7 +53,7 @@ The main goal of MIRTorch is to assist research on image reconstruction algorith
 
 Following the earlier MIRT (Michigan Image Reconstruction Toolbox) [@MIRT] and SigPy [@SigPy], MIRTorch has a clear and modular structure, facilitating fast prototyping of novel algorithms. The main features and components include:
 
-1. Generalization of linear operators as matrices. In many image modalities, the forward system model is linear; thus, one may regard these models as matrices (though they may have otherwise efficient implementations like FFTs). By overloading operators such as +, -, *, MIRTorch aids researchers in defining system models and avoiding erroneous hardcoding.
+1. Generalization of linear operators as matrices. In many image modalities such as MRI, the forward system model is linear; thus, one may regard these models as matrices (though they may have otherwise efficient implementations). By overloading operators such as +, -, *, MIRTorch aids researchers in defining system models and avoiding erroneous hardcoding.
 
 2. Efficient iterative solvers. MIRTorch includes various solvers, including CG [@CG], FISTA [@FISTA], and primal-dual [@primal_dual] to handle multiple scenarios. Users can easily combine learnable modules (such as CNNs) with numerical solvers to investigate model-based deep learning methods. Several common proximal operators [@proximal] are also provided.
 
@@ -57,10 +67,10 @@ With native PyTorch support, MIRTorch satisfies the following specific needs:
 
 2. Optimization of the imaging system. Since the toolbox is fully differentiable, it enables gradient methods for tuning imaging system parameters. For example, [@sampling1] and [@sampling2] use MIRTorch to optimize MRI sampling trajectories via stochastic gradient descent.
 
-3. User-friendly GPU-based fast reconstruction. Many applications, such as fMRI, are vectorized and large-dimensional. CPU-based computation can be very time-consuming for iterative algorithms [@fMRI]. Benefitting from PyTorch's intrinsic multi-GPU support, user-friendly installation, and cross-platform capability, MIRTorch provides researchers with fast reconstruction at a minimal switching cost.
+3. User-friendly fast reconstruction. Many applications, such as fMRI, are vectorized and large-dimensional. CPU-based computation can be very time-consuming for iterative algorithms [@fMRI]. Benefitting from PyTorch's intrinsic multi-GPU support, user-friendly installation, and cross-platform capability, MIRTorch provides researchers with fast reconstruction at a minimal switching cost.
 
 # Acknowledgements
 
-This work is partly supported by NIH Grants R01 EB023618 and U01 EB026977, and NSF Grant IIS 1838179.
+This work is supported by NIH Grants R01 EB023618 and U01 EB026977, and NSF Grant IIS 1838179.
 
 # References
