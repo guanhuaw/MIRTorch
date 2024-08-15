@@ -65,9 +65,9 @@ With native PyTorch support, MIRTorch satisfies the following specific needs:
 
 1. Fast prototyping of model-based deep learning. Many related projects hard-coded the physics-informed components, such as system operators and iterative solvers. This non-modular approach hampers reproducibility and comparability. MIRTorch provides a standardized and modular implementation. It also facilitates transferring algorithms across different imaging modalities. Additionally, the code using MIRTorch better matches the mathematical expressions, facilitating understanding.
 
-2. Optimization of the imaging system. Since the toolbox is fully differentiable, it enables gradient methods for tuning imaging system parameters. For example, [@sampling1] and [@sampling2] use MIRTorch to optimize MRI sampling trajectories via stochastic gradient descent.
+2. Optimization of the imaging system. Since the toolbox is fully differentiable, it enables gradient methods for tuning imaging system parameters. For example, [@sampling] uses MIRTorch to optimize MRI sampling trajectories via stochastic gradient descent.
 
-3. User-friendly fast reconstruction. Many applications, such as fMRI, are vectorized and large-dimensional. CPU-based computation can be very time-consuming for iterative algorithms [@fMRI]. Benefitting from PyTorch's intrinsic multi-GPU support, user-friendly installation, and cross-platform capability, MIRTorch provides researchers with fast reconstruction at a minimal switching cost.
+3. User-friendly fast reconstruction. Many applications, such as functional MRI (fMRI), are vectorized and large-dimensional. CPU-based computation can be very time-consuming for iterative algorithms. Benefitting from PyTorch's intrinsic multi-GPU support, user-friendly installation, and cross-platform capability, MIRTorch provides researchers with fast reconstruction at a minimal switching cost.
 
 # Acknowledgements
 
