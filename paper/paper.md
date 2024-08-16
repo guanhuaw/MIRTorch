@@ -23,9 +23,10 @@ authors:
     orcid: 0000-0003-1365-3302
   - name: Zongyu Li
     affiliation: 1
-    orcid: 0000-0002-0661-0040
-  - name: Sonia Kim
+    orcid: 0000-0003-1813-1722
+  - name: Minseo Kim
     affiliation: 1
+    orcid: 0009-0001-7404-8387
   - name: Douglas C Noll
     affiliation: 2
     orcid: 0000-0002-0983-3805
