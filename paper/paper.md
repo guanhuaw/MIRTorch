@@ -39,7 +39,7 @@ affiliations:
  - name: Department of Biomeidcal Engineering, University of Michigan, USA
    index: 2
 
-date: 3 August 2024
+date: 18 Sept 2024
 bibliography: paper.bib
 
 ---
@@ -54,7 +54,7 @@ The main goal of MIRTorch is to assist research on image reconstruction algorith
 
 Following the earlier MIRT (Michigan Image Reconstruction Toolbox) [@MIRT] and SigPy [@SigPy], MIRTorch has a clear and modular structure, facilitating fast prototyping of novel algorithms. The main features and components include:
 
-1. Generalization of linear operators as matrices. In many image modalities such as MRI, the forward system model is linear; thus, one may regard these models as matrices (though they may have otherwise efficient implementations). By overloading operators such as +, -, *, MIRTorch aids researchers in defining system models and avoiding erroneous hardcoding.
+1. Generalization of linear operators as matrices. In many image modalities such as MRI and SPECT, the forward system model is linear; thus, one may regard these models as matrices (though they may have otherwise efficient implementations). By overloading operators such as +, -, *, MIRTorch aids researchers in defining system models and avoiding erroneous hardcoding.
 
 2. Efficient iterative solvers. MIRTorch includes various solvers, including CG [@CG], FISTA [@FISTA], and primal-dual [@primal_dual] to handle multiple scenarios. Users can easily combine learnable modules (such as CNNs) with numerical solvers to investigate model-based deep learning methods. Several common proximal operators [@proximal] are also provided.
 
@@ -68,7 +68,7 @@ With native PyTorch support, MIRTorch satisfies the following specific needs:
 
 2. Optimization of the imaging system. Since the toolbox is fully differentiable, it enables gradient methods for tuning imaging system parameters. For example, [@sampling] uses MIRTorch to optimize MRI sampling trajectories via stochastic gradient descent.
 
-3. User-friendly fast reconstruction. Many applications, such as functional MRI (fMRI), are vectorized and large-dimensional. CPU-based computation can be very time-consuming for iterative algorithms. Benefitting from PyTorch's intrinsic multi-GPU support, user-friendly installation, and cross-platform capability, MIRTorch provides researchers with fast reconstruction at a minimal switching cost.
+3. User-friendly fast reconstruction. Many applications, such as functional MRI (fMRI) and multimodal imaging, are vectorized and large-dimensional. CPU-based computation can be very time-consuming for iterative algorithms. Benefitting from PyTorch's intrinsic GPU support, user-friendly installation, and cross-platform capability, MIRTorch provides researchers with fast prototyping tools at a minimal switching cost.
 
 # Acknowledgements
 
