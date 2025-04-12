@@ -59,13 +59,14 @@ class FFTCn(LinearMap):
 class Sense(LinearMap):
     r"""
     Cartesian sense operator, following "SENSE: Sensitivity encoding for fast MRI".
-    The input/ourput size depends on the sensitivity maps.
+    The input/output size depends on the sensitivity maps and masks.
     If we use the batch dimension, the input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, nx, ny, (nz)].
     Otherwise, the input dimension is [nx, ny, (nz)], and the output is [ncoil, nx, ny, (nz)].
 
     Attributes:
-        masks: tensor with dimension [(batch), nx, ny, (nz)]
-        sensitivity maps: tensor with dimension [(batch), ncoil, nx, ny, (nz)]. On the same device as masks
+        masks: tensor with dimension [(batch), nx, ny, (nz)]. Batch size will be determined from first dimension
+        sensitivity maps: tensor with dimension [(batch) or (1), ncoil, nx, ny, (nz)]. On the same device as masks.
+            If the sensitivity map is the same for all batch, the first dimension can be 1 to save memory
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
         norm: normalization of the fft ('ortho', 'forward' or 'backward')
     """
@@ -73,14 +74,18 @@ class Sense(LinearMap):
     def __init__(
         self, smaps: Tensor, masks: Tensor, norm: str = "ortho", batchmode: bool = True
     ):
+        nbatch = masks.shape[0]
+        ncoil = smaps.shape[1]
         if batchmode:
             # comform to [nbatch, 1, nx, ny, nz]
-            size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
-            size_out = list(smaps.shape)
+            size_in = [nbatch] + [1] + list(smaps.shape[2:])
+            size_out = [nbatch] + [ncoil] + list(smaps.shape[2:])
             dims = tuple(np.arange(2, len(smaps.shape)))
             self.masks = masks.unsqueeze(1)
             assert (
                 smaps.shape[2:] == masks.shape[1:]
+                and
+                (smaps.shape[0] == nbatch or smaps.shape[0] == 1)
             ), "size of sensitivity maps and mask not matched!"
         else:
             size_in = list(smaps.shape[1:])
@@ -117,8 +122,8 @@ class Sense(LinearMap):
             x:  tensor with dimension [batch, 1, nx, ny, (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
         assert (
-            k.shape == self.smaps.shape
-        ), "sensitivity maps and signal's shape mismatch"
+            list(k.shape) == list(self.size_out)
+        ), "mismatched shape"
         k = k * self.masks
         k = ifftshift(k, self.dims)
         if self.norm == "ortho":
