@@ -64,28 +64,32 @@ class Sense(LinearMap):
     Otherwise, the input dimension is [nx, ny, (nz)], and the output is [ncoil, nx, ny, (nz)].
 
     Attributes:
-        masks: tensor with dimension [(batch), nx, ny, (nz)]. Batch size will be determined from first dimension
+        masks: tensor with dimension [(batch) or (1), nx, ny, (nz)]
         sensitivity maps: tensor with dimension [(batch) or (1), ncoil, nx, ny, (nz)]. On the same device as masks.
-            If the sensitivity map is the same for all batch, the first dimension can be 1 to save memory
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
+        nbatch: int, number of batch (if None, the first dimension of masks or smaps, whichever is >1, will be used)
         norm: normalization of the fft ('ortho', 'forward' or 'backward')
     """
 
     def __init__(
-        self, smaps: Tensor, masks: Tensor, norm: str = "ortho", batchmode: bool = True
+        self, smaps: Tensor, masks: Tensor, norm: str = "ortho", batchmode: bool = True, nbatch: int = None
     ):
-        nbatch = masks.shape[0]
         ncoil = smaps.shape[1]
         if batchmode:
             # comform to [nbatch, 1, nx, ny, nz]
+            if nbatch is None:
+                nbatch = max(masks.shape[0], smaps.shape[0])
+            assert (
+                (masks.shape[0] == nbatch or masks.shape[0] == 1)
+                and
+                (smaps.shape[0] == nbatch or smaps.shape[0] == 1)
+            )
             size_in = [nbatch] + [1] + list(smaps.shape[2:])
             size_out = [nbatch] + [ncoil] + list(smaps.shape[2:])
             dims = tuple(np.arange(2, len(smaps.shape)))
             self.masks = masks.unsqueeze(1)
             assert (
                 smaps.shape[2:] == masks.shape[1:]
-                and
-                (smaps.shape[0] == nbatch or smaps.shape[0] == 1)
             ), "size of sensitivity maps and mask not matched!"
         else:
             size_in = list(smaps.shape[1:])
@@ -152,7 +156,8 @@ class NuSense(LinearMap):
 
     Attributes:
         traj: tensor with dimension [(batch), ndim, nshot*npoints]. Note that traj can have no batch dimension even x have. ref: https://github.com/mmuckley/torchkbnufft/pull/24
-        sensitivity maps: tensor with dimension [(batch), ncoil, nx, ny, (nz)]. On the same device as traj.
+        sensitivity maps: tensor with dimension [(batch) or (1), ncoil, nx, ny, (nz)]. On the same device as masks.
+            If the sensitivity map is the same for all batch, the first dimension can be 1 to save memory
         sequential: bool, memory saving mode
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
         norm: normalization of the fft ('ortho' or None)
