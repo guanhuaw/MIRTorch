@@ -59,24 +59,35 @@ class FFTCn(LinearMap):
 class Sense(LinearMap):
     r"""
     Cartesian sense operator, following "SENSE: Sensitivity encoding for fast MRI".
-    The input/ourput size depends on the sensitivity maps.
+    The input/output size depends on the sensitivity maps and masks.
     If we use the batch dimension, the input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, nx, ny, (nz)].
     Otherwise, the input dimension is [nx, ny, (nz)], and the output is [ncoil, nx, ny, (nz)].
 
     Attributes:
-        masks: tensor with dimension [(batch), nx, ny, (nz)]
-        sensitivity maps: tensor with dimension [(batch), ncoil, nx, ny, (nz)]. On the same device as masks
+        masks: tensor with dimension [(batch) or (1), nx, ny, (nz)]
+        sensitivity maps: tensor with dimension [(batch) or (1), ncoil, nx, ny, (nz)]. On the same device as masks.
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
+        nbatch: int, number of batch (if None, the first dimension of masks or smaps, whichever is >1, will be used)
         norm: normalization of the fft ('ortho', 'forward' or 'backward')
     """
 
     def __init__(
-        self, smaps: Tensor, masks: Tensor, norm: str = "ortho", batchmode: bool = True
+        self, smaps: Tensor, masks: Tensor, norm: str = "ortho", batchmode: bool = True, nbatch: int = None
     ):
+        ncoil = smaps.shape[1]
         if batchmode:
             # comform to [nbatch, 1, nx, ny, nz]
-            size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
-            size_out = list(smaps.shape)
+            if nbatch is None:
+                self.nbatch = max(traj.shape[0], smaps.shape[0])
+            else:
+                self.nbatch = nbatch
+            assert (
+                (masks.shape[0] == self.nbatch or masks.shape[0] == 1)
+                and
+                (smaps.shape[0] == self.nbatch or smaps.shape[0] == 1)
+            ), f"batch size mismatch: masks.shape[0]={masks.shape[0]}, smaps.shape[0]={smaps.shape[0]}, nbatch={self.nbatch}"
+            size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
+            size_out = [self.nbatch] + [ncoil] + list(smaps.shape[2:])
             dims = tuple(np.arange(2, len(smaps.shape)))
             self.masks = masks.unsqueeze(1)
             assert (
@@ -117,8 +128,8 @@ class Sense(LinearMap):
             x:  tensor with dimension [batch, 1, nx, ny, (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
         assert (
-            k.shape == self.smaps.shape
-        ), "sensitivity maps and signal's shape mismatch"
+            list(k.shape) == list(self.size_out)
+        ), "mismatched shape"
         k = k * self.masks
         k = ifftshift(k, self.dims)
         if self.norm == "ortho":
@@ -150,6 +161,7 @@ class NuSense(LinearMap):
         sensitivity maps: tensor with dimension [(batch), ncoil, nx, ny, (nz)]. On the same device as traj.
         sequential: bool, memory saving mode
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
+        nbatch: int, number of batch (if None, the first dimension of traj or smaps, whichever is >1, will be used)
         norm: normalization of the fft ('ortho' or None)
         numpoints: int, number of interpolation points in gridding.
         grid_size: float, oversampling ratio (>1)
@@ -161,6 +173,7 @@ class NuSense(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
+        nbatch: int = None,
         numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         sequential: bool = False,
@@ -171,7 +184,18 @@ class NuSense(LinearMap):
         self.batchmode = batchmode
         self.sequential = sequential
         assert grid_size >= 1, "grid size should be greater than 1"
+        ncoil = smaps.shape[1]
+
         if batchmode:
+            if nbatch is None:
+                self.nbatch = max(traj.shape[0], smaps.shape[0])
+            else:
+                self.nbatch = nbatch
+            assert (
+                (traj.shape[0] == self.nbatch or traj.shape[0] == 1)
+                and
+                (smaps.shape[0] == self.nbatch or smaps.shape[0] == 1)
+            ), f"batch size mismatch: traj.shape[0]={traj.shape[0]}, smaps.shape[0]={smaps.shape[0]}, nbatch={self.nbatch}"
             self.grid_size = tuple(
                 np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
             )
@@ -185,8 +209,8 @@ class NuSense(LinearMap):
                 grid_size=self.grid_size,
                 numpoints=numpoints,
             ).to(smaps)
-            size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
-            size_out = list(smaps.shape[0:2]) + [traj.shape[-1]]
+            size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
+            size_out = [self.nbatch] + [ncoil] + [traj.shape[-1]]
             super(NuSense, self).__init__(tuple(size_in), tuple(size_out))
         else:
             self.grid_size = tuple(
@@ -314,6 +338,7 @@ class NuSenseGram(LinearMap):
         sensitivity maps: tensor with dimension [(batch), ncoil, nx, ny, (nz)]. On the same device with traj.
         norm: normalization of the fft ('ortho' or None)
         numpoints: int, number of interpolation points in gridding.
+        nbatch: int, number of batch (if None, the first dimension of traj or smaps, whichever is >1, will be used)
         grid_size: float, oversampling ratio (>1)
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
     """
@@ -325,6 +350,7 @@ class NuSenseGram(LinearMap):
         norm="ortho",
         batchmode=True,
         kweights: Tensor = None,
+        nbatch: int = None,
         numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
     ):
@@ -338,6 +364,15 @@ class NuSenseGram(LinearMap):
             kweights = torch.ones_like(traj)
 
         if batchmode:
+            if nbatch is None:
+                self.nbatch = max(traj.shape[0], smaps.shape[0])
+            else:
+                self.nbatch = nbatch
+            assert (
+                (traj.shape[0] == self.nbatch or traj.shape[0] == 1)
+                and
+                (smaps.shape[0] == self.nbatch or smaps.shape[0] == 1)
+            ), f"batch size mismatch: traj.shape[0]={traj.shape[0]}, smaps.shape[0]={smaps.shape[0]}, nbatch={self.nbatch}"
             self.grid_size = tuple(
                 np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
             )
@@ -349,7 +384,7 @@ class NuSenseGram(LinearMap):
                 norm=self.norm,
                 weights=kweights,
             )
-            size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
+            size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
         else:
             self.grid_size = tuple(
@@ -415,6 +450,7 @@ class Gmri(LinearMap):
         smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
         zmap: tensor with dimension [batch, nx, ny, (nz)]. Off-resonance effects in Hz. ref: DOI: 10.1109/TSP.2005.853152
         traj: tensor with dimension [nbatch (or 1), ndimension, nshot, nreadout]
+        nbatch: int, number of batch (if None, the first dimension of traj or smaps, whichever is >1, will be used)
         numpoints: int, number of interpolation points in gridding.
         grid_size: float, oversampling ratio (>1)
         L: int, number of segmentation
@@ -431,6 +467,7 @@ class Gmri(LinearMap):
         smaps: Tensor,
         zmap: Tensor,
         traj: Tensor,
+        nbatch: int = None,
         norm: str = "ortho",
         L: int = 6,
         nbins: int = 20,
@@ -445,7 +482,15 @@ class Gmri(LinearMap):
         self.L = L
         self.nbins = nbins
         self.dt = dt
-        self.nbatch = self.smaps.shape[0]
+        if nbatch is None:
+            self.nbatch = max(traj.shape[0], smaps.shape[0])
+        else:
+            self.nbatch = nbatch
+        assert (
+            (traj.shape[0] == self.nbatch or traj.shape[0] == 1)
+            and
+            (smaps.shape[0] == self.nbatch or smaps.shape[0] == 1)
+        ), f"batch size mismatch: traj.shape[0]={traj.shape[0]}, smaps.shape[0]={smaps.shape[0]}, nbatch={self.nbatch}"
         self.nc = self.smaps.shape[1]
         self.traj = traj
         _, self.ndim, self.nshot, self.npoints = self.traj.shape
@@ -542,6 +587,7 @@ class GmriGram(LinearMap):
         smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
         zmap: tensor with dimension [batch, nx, ny, (nz)]. Off-resonance effects in Hz. ref: DOI: 10.1109/TSP.2005.853152
         traj: tensor with dimension [nbatch (or 1), ndimension, nshot, nreadout]
+        nbatch: int, number of batch (if None, the first dimension of traj or smaps, whichever is >1, will be used)
         numpoints: int, number of interpolation points in gridding.
         grid_size: float, oversampling ratio (>1)
         L: int, number of segmentation
@@ -558,6 +604,7 @@ class GmriGram(LinearMap):
         smaps: Tensor,
         zmap: Tensor,
         traj: Tensor,
+        nbatch: int = None,
         norm: str = "ortho",
         L: int = 6,
         nbins: int = 20,
@@ -572,7 +619,15 @@ class GmriGram(LinearMap):
         self.L = L
         self.nbins = nbins
         self.dt = dt
-        self.nbatch = self.smaps.shape[0]
+        if nbatch is None:
+            self.nbatch = max(traj.shape[0], smaps.shape[0])
+        else:
+            self.nbatch = nbatch
+        assert (
+            (traj.shape[0] == self.nbatch or traj.shape[0] == 1)
+            and
+            (smaps.shape[0] == self.nbatch or smaps.shape[0] == 1)
+        ), f"batch size mismatch: traj.shape[0]={traj.shape[0]}, smaps.shape[0]={smaps.shape[0]}, nbatch={self.nbatch}"
         self.nc = self.smaps.shape[1]
         self.traj = traj
         _, self.ndim, self.nshot, self.npoints = self.traj.shape
