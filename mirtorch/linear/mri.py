@@ -83,7 +83,7 @@ class Sense(LinearMap):
                 (masks.shape[0] == nbatch or masks.shape[0] == 1)
                 and
                 (smaps.shape[0] == nbatch or smaps.shape[0] == 1)
-            )
+            ), f"batch size mismatch: masks.shape[0]={masks.shape[0]}, smaps.shape[0]={smaps.shape[0]}, nbatch={nbatch}"
             size_in = [nbatch] + [1] + list(smaps.shape[2:])
             size_out = [nbatch] + [ncoil] + list(smaps.shape[2:])
             dims = tuple(np.arange(2, len(smaps.shape)))
@@ -156,8 +156,7 @@ class NuSense(LinearMap):
 
     Attributes:
         traj: tensor with dimension [(batch), ndim, nshot*npoints]. Note that traj can have no batch dimension even x have. ref: https://github.com/mmuckley/torchkbnufft/pull/24
-        sensitivity maps: tensor with dimension [(batch) or (1), ncoil, nx, ny, (nz)]. On the same device as masks.
-            If the sensitivity map is the same for all batch, the first dimension can be 1 to save memory
+        sensitivity maps: tensor with dimension [(batch), ncoil, nx, ny, (nz)]. On the same device as traj.
         sequential: bool, memory saving mode
         batchmode: bool, determining if there exist batch and channel dimension (should always be 1).
         norm: normalization of the fft ('ortho' or None)
@@ -171,6 +170,7 @@ class NuSense(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
+        nbatch: int = None,
         numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
         sequential: bool = False,
@@ -181,7 +181,16 @@ class NuSense(LinearMap):
         self.batchmode = batchmode
         self.sequential = sequential
         assert grid_size >= 1, "grid size should be greater than 1"
+        ncoil = smaps.shape[1]
+
         if batchmode:
+            if nbatch is None:
+                nbatch = max(traj.shape[0], smaps.shape[0])
+            assert (
+                (traj.shape[0] == nbatch or traj.shape[0] == 1)
+                and
+                (smaps.shape[0] == nbatch or smaps.shape[0] == 1)
+            ), f"batch size mismatch: traj.shape[0]={traj.shape[0]}, smaps.shape[0]={smaps.shape[0]}, nbatch={nbatch}"
             self.grid_size = tuple(
                 np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
             )
@@ -195,8 +204,8 @@ class NuSense(LinearMap):
                 grid_size=self.grid_size,
                 numpoints=numpoints,
             ).to(smaps)
-            size_in = [smaps.shape[0]] + [1] + list(smaps.shape[2:])
-            size_out = list(smaps.shape[0:2]) + [traj.shape[-1]]
+            size_in = [nbatch] + [1] + list(smaps.shape[2:])
+            size_out = [nbatch] + [ncoil] + [traj.shape[-1]]
             super(NuSense, self).__init__(tuple(size_in), tuple(size_out))
         else:
             self.grid_size = tuple(
