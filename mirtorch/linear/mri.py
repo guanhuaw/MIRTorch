@@ -349,6 +349,7 @@ class NuSenseGram(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
+        kweights: Tensor = None,
         nbatch: int = None,
         numpoints: Union[int, List[int]] = 6,
         grid_size: float = 2,
@@ -358,6 +359,10 @@ class NuSenseGram(LinearMap):
         self.traj = traj
         self.batchmode = batchmode
         self.toep_op = tkbn.ToepNufft()
+
+        if kweights is None:
+            kweights = torch.ones_like(traj)
+
         if batchmode:
             if nbatch is None:
                 self.nbatch = max(traj.shape[0], smaps.shape[0])
@@ -377,6 +382,7 @@ class NuSenseGram(LinearMap):
                 grid_size=self.grid_size,
                 numpoints=numpoints,
                 norm=self.norm,
+                weights=kweights,
             )
             size_in = [self.nbatch] + [1] + list(smaps.shape[2:])
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
@@ -390,6 +396,7 @@ class NuSenseGram(LinearMap):
                 grid_size=self.grid_size,
                 numpoints=numpoints,
                 norm=self.norm,
+                weights=kweights,
             )
             size_in = list(smaps.shape[1:])
             super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
@@ -660,6 +667,8 @@ class GmriGram(LinearMap):
         )
         self.toep_op = tkbn.ToepNufft()
         self.kernel = []
+        if kweights is None:
+            kweights = torch.ones_like(traj)
         for il in range(self.L):
             self.kernel.append(
                 tkbn.calc_toeplitz_kernel(
@@ -668,7 +677,7 @@ class GmriGram(LinearMap):
                     grid_size=self.grid_size,
                     numpoints=numpoints,
                     norm=self.norm,
-                    weights=self.B[il]
+                    weights=kweights*self.B[il]
                     .repeat(1, 1, self.nshot, 1)
                     .reshape(self.nbatch, 1, self.nshot * self.npoints),
                 )
