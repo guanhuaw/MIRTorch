@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.0.1 # Use the latest version
+    rev: v4.6.0  # Updated to latest
     hooks:
       - id: trailing-whitespace
       - id: check-yaml
@@ -8,24 +8,24 @@ repos:
       - id: check-added-large-files
 
   - repo: https://github.com/psf/black
-    rev: 22.3.0 # Use the latest version
+    rev: 24.10.0  # Stable version, compatible with Python 3.10-3.13
     hooks:
       - id: black
-        language_version: python3
+        language_version: python3.10  # FIXED: Moved to correct indentation
         exclude: ^(?:tests|docs|examples)/
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.3.3
+    rev: v0.8.4  # Updated to latest
     hooks:
-      # Run the linter.
       - id: ruff
         types_or: [python, pyi, jupyter]
         args: [--fix]
         exclude: ^(?:tests|docs|examples)/
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.1.0
+    rev: v2.3.0  # Updated to latest
     hooks:
       - id: codespell
         exclude: ^(?:tests|docs|examples|mirtorch/vendors)/
+        # Add ignore list for variable names that look like typos
+        args: [--ignore-words-list=dout]
