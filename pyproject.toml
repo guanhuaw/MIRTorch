@@ -8,7 +8,7 @@ version = "0.1.2"
 authors = [{ name = "Guanhua Wang", email = "guanhuaw@umich.edu" }]
 description = "a PyTorch-based image reconstruction toolbox"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["signal processing", "inverse problems"]
 license = { text = "BSD-3-Clause" }
 classifiers = [
@@ -32,12 +32,11 @@ dependencies = [
     "matplotlib",
 ]
 
-
-[project.urls] # Optional
+[project.urls]
 "repository" = "https://github.com/guanhuaw/MIRTorch"
 
-[project.optional-dependencies] # Optional
-dev = ["check-manifest"]
+[dependency-groups]
+dev = ["h5py", "check-manifest"]
 test = ["coverage", "pytest"]
 
 [project.scripts]
