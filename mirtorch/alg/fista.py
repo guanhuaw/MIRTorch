@@ -54,7 +54,7 @@ class FISTA:
 
         Returns:
             xk: results
-            saved: (optional) a list of intermediate results, calcuated by the eval_func.
+            saved: (optional) a list of intermediate results, calculated by the eval_func.
         """
 
         def _update_momentum():

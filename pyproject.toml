@@ -32,12 +32,26 @@ dependencies = [
     "matplotlib",
 ]
 
+[project.optional-dependencies]
+test = [
+    "coverage",
+    "pytest",
+]
+dev = [
+    "jupyterlab",
+    "ipywidgets",
+    "h5py",
+    "gdown",
+    "wget",
+    "scikit-image",
+    "scikit-learn",
+    "coverage",
+    "pytest",
+    "check-manifest",
+]
+
 [project.urls]
 "repository" = "https://github.com/guanhuaw/MIRTorch"
-
-[dependency-groups]
-dev = ["h5py", "check-manifest"]
-test = ["coverage", "pytest"]
 
 [project.scripts]
 my-script = "my_package.module:function"
@@ -75,7 +89,11 @@ exclude = [
 ]
 
 [tool.semantic_release]
-version_variable = ["pyproject.toml:project.version"]
+version_toml = ["pyproject.toml:project.version"]
 branch = "master"
 upload_to_pypi = false
 build_command = "python -m build"
+
+[tool.pytest.ini_options]
+python_files = "*_tests.py"
+testpaths = ["tests"]

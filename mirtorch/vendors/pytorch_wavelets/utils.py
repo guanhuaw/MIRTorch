@@ -76,7 +76,6 @@ def drawedge(theta, r, w, N):
 
 
 def drawcirc(r, w, du, dv, N):
-
     """Generate an image of size N*N pels, containing a circle
     radius r pels and centred at du,dv relative
     to the centre of the image.  The edge of the circle is a cosine shaped

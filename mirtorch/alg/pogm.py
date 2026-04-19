@@ -54,7 +54,7 @@ class POGM:
             x0: initialization
         Returns:
             xk: results
-            saved: (optional) a list of intermediate results, calcuated by the eval_func.
+            saved: (optional) a list of intermediate results, calculated by the eval_func.
         """
         told = 1
         gamma_old = 1
