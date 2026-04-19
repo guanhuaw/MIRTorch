@@ -17,7 +17,13 @@ Documentation: https://mirtorch.readthedocs.io/en/latest/
 
 We recommend to [pre-install `PyTorch` first](https://pytorch.org/).
 Use `pip install mirtorch` to install.
-To install the `MIRTorch` locally, after cloning the repo, please try `pip install -e .`(one may modify the package locally with this option.)
+
+To install the `MIRTorch` locally, after cloning the repo, please try `pip install -e .` (one may modify the package locally with this option).
+
+To install the development version (including all notebook and testing dependencies), use:
+```bash
+pip install -e ".[dev]"
+```
 
 ------
 
