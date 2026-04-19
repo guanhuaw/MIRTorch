@@ -71,7 +71,7 @@ class FBPD:
             x0: tensor, initialization
         Returns:
             xk: tensor, results
-            saved: (optional) a list of intermediate results, calcuated by the eval_func.
+            saved: (optional) a list of intermediate results, calculated by the eval_func.
         """
         uold = self.G * x0
         xold = x0

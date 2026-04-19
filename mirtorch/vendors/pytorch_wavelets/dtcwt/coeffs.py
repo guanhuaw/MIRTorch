@@ -1,6 +1,7 @@
 """Functions to load standard wavelet coefficients.
 
 """
+
 from __future__ import absolute_import
 
 from numpy import load

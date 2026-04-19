@@ -2,6 +2,7 @@
 ultimately slower than the original implementation, but it is a nice
 reference point for doing a DTCWT directly as 4 separate DWTs.
 """
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
