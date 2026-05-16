@@ -92,6 +92,7 @@ exclude = [
 version_toml = ["pyproject.toml:project.version"]
 branch = "master"
 upload_to_pypi = false
+major_on_zero = false
 
 [tool.pytest.ini_options]
 python_files = "*_tests.py"
