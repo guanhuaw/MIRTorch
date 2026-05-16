@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "MIRTorch"
-version = "0.1.2"
+version = "0.1.3"
 authors = [{ name = "Guanhua Wang", email = "guanhuaw@umich.edu" }]
 description = "a PyTorch-based image reconstruction toolbox"
 readme = "README.md"
@@ -92,7 +92,6 @@ exclude = [
 version_toml = ["pyproject.toml:project.version"]
 branch = "master"
 upload_to_pypi = false
-build_command = "python -m build"
 
 [tool.pytest.ini_options]
 python_files = "*_tests.py"
