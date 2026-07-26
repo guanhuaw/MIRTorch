@@ -316,6 +316,7 @@ def test_gmri_and_toeplitz_gram_run_on_mps():
     gram = GmriGram(smaps, zmap, traj, **kwargs)
     gram_image = gram(image)
 
+    assert forward.backend == gram.backend == "torchkbnufft"
     assert forward.B.dtype == forward.C.dtype == torch.complex64
     assert gram.B.dtype == gram.C.dtype == torch.complex64
     assert samples.shape == (1, 2, 2, 8)

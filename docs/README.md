@@ -57,8 +57,10 @@ operator = NuSense(smaps, traj)
 normal = NuSenseGram(smaps, traj.detach())
 ```
 
-FINUFFT is selected automatically on supported CPU and CUDA systems.
-Apple Metal and macOS CPU use torchkbnufft.
+FINUFFT is selected automatically on supported CPU and CUDA systems,
+including for B0-informed `Gmri` and `GmriGram`. Apple Metal and macOS CPU
+use torchkbnufft. `GmriGram` uses Hermitian autocorrelation time segmentation
+by default.
 
 #### Proximal operators
 

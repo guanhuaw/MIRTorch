@@ -3,7 +3,6 @@ Discrete-to-discrete system matrices for MRI.
 2021-02. Guanhua Wang, University of Michigan
 """
 
-import math
 import sys
 
 import numpy as np
@@ -595,7 +594,7 @@ class NuSenseGram(LinearMap):
                 "was constructed; create a new NuSenseGram operator."
             )
 
-    def to(self, device):
+    def to(self, device: torch.device | str):
         if self.backend == "finufft":
             self._check_fixed_trajectory()
         result = super().to(device)
@@ -652,7 +651,11 @@ class NuSenseGram(LinearMap):
 
 class Gmri(LinearMap):
     r"""
-    B0-informed mri reconstruction, the name follows MIRT.
+    B0-informed MRI encoding operator, following MIRT.
+
+    FINUFFT is used by default on supported CPU systems and cuFINUFFT on
+    CUDA. Apple Metal and macOS CPU use torchkbnufft.
+
     Note that the data format is a little different from NuSENSE.
     The input/output size depends on the sensitivity maps.
     The input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, nshot, nfe].
@@ -669,6 +672,8 @@ class Gmri(LinearMap):
         grid_size: float, oversampling ratio (>1)
         T: tensor with dimension [nfe]. Describe the time (in ms) of readout after excitation. When T is none,
            the readout is supposed to start immediately after the excitation.
+        backend: ``"auto"`` (default), ``"finufft"``, or ``"torchkbnufft"``
+        eps: requested FINUFFT relative precision
     """
 
     def __init__(
@@ -683,6 +688,8 @@ class Gmri(LinearMap):
         numpoints: int | list[int] = 6,
         grid_size: float = 2,
         T: Tensor | None = None,
+        backend: str = "auto",
+        eps: float = 1e-6,
     ):
         self.norm = norm
         self.smaps = smaps
@@ -690,6 +697,14 @@ class Gmri(LinearMap):
         self.L = L
         self.nbins = nbins
         self.dt = dt
+        self.backend = _resolve_nufft_backend(backend, smaps.device)
+        self.eps = eps
+        backend = self.backend
+
+        if smaps.device != zmap.device or smaps.device != traj.device:
+            raise ValueError(
+                "sensitivity maps, field map, and trajectory must be on one device"
+            )
 
         # Determine batch size from inputs
         smaps_batch = smaps.shape[0]
@@ -706,6 +721,11 @@ class Gmri(LinearMap):
                 f"Incompatible batch sizes: smaps.shape[0]={smaps_batch}, "
                 f"traj.shape[0]={traj_batch}. Must be equal or one must be 1."
             )
+        if zmap.shape[0] not in (1, self.nbatch):
+            raise ValueError(
+                f"Incompatible zmap batch size: zmap.shape[0]={zmap.shape[0]}, "
+                f"expected 1 or {self.nbatch}."
+            )
 
         self.nc = self.smaps.shape[1]
         self.traj = traj
@@ -713,16 +733,26 @@ class Gmri(LinearMap):
         self.grid_size = tuple(
             np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
         )
-        self.A = tkbn.KbNufft(
-            im_size=tuple(smaps.shape[2:]),
-            grid_size=self.grid_size,
-            numpoints=numpoints,
-        ).to(smaps)
-        self.AT = tkbn.KbNufftAdjoint(
-            im_size=tuple(smaps.shape[2:]),
-            grid_size=self.grid_size,
-            numpoints=numpoints,
-        ).to(smaps)
+        if backend == "torchkbnufft":
+            self.A = tkbn.KbNufft(
+                im_size=tuple(smaps.shape[2:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
+            self.AT = tkbn.KbNufftAdjoint(
+                im_size=tuple(smaps.shape[2:]),
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
+        else:
+            self._finufft_backend = FinufftSenseBackend(
+                im_size=tuple(smaps.shape[2:]),
+                grid_size=self.grid_size,
+                norm=norm,
+                batchmode=True,
+                sequential=False,
+                eps=eps,
+            )
 
         size_in = (
             self.nbatch,
@@ -787,9 +817,21 @@ class Gmri(LinearMap):
         """
         y = torch.zeros(self.size_out, dtype=x.dtype, device=x.device)
         for il in range(self.L):
-            y = y + self.B[il] * self.A(
-                x * self.C[il], self.traj, smaps=self.smaps, norm=self.norm
-            ).reshape(self.size_out)
+            if self.backend == "finufft":
+                segment = finufft_sense_forward(
+                    x * self.C[il],
+                    self.smaps,
+                    self.traj,
+                    self._finufft_backend,
+                )
+            else:
+                segment = self.A(
+                    x * self.C[il],
+                    self.traj,
+                    smaps=self.smaps,
+                    norm=self.norm,
+                )
+            y = y + self.B[il] * segment.reshape(self.size_out)
         return y
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
@@ -801,23 +843,41 @@ class Gmri(LinearMap):
         """
         x = torch.zeros(self.size_in, dtype=y.dtype, device=y.device)
         for il in range(self.L):
-            x = x + self.C[il].conj() * self.AT(
-                (y * self.B[il].conj()).reshape(
-                    self.nbatch, self.nc, self.nshot * self.npoints
-                ),
-                self.traj,
-                smaps=self.smaps,
-                norm=self.norm,
+            samples = (y * self.B[il].conj()).reshape(
+                self.nbatch,
+                self.nc,
+                self.nshot * self.npoints,
             )
+            if self.backend == "finufft":
+                segment = finufft_sense_adjoint(
+                    samples,
+                    self.smaps,
+                    self.traj,
+                    self._finufft_backend,
+                )
+            else:
+                segment = self.AT(
+                    samples,
+                    self.traj,
+                    smaps=self.smaps,
+                    norm=self.norm,
+                )
+            x = x + self.C[il].conj() * segment
         return x
 
 
 class GmriGram(LinearMap):
     r"""
-    B0-informed mri reconstruction, the name follows MIRT.
-    Note that the data format is a little different from NuSENSE.
-    The input/output size depends on the sensitivity maps.
-    The input dimension is [nbatch, 1, nx, ny, (nz)], and the output is [nbatch, ncoil, nshot, nfe].
+    Toeplitz approximation to the B0-informed MRI normal operator.
+
+    The default autocorrelation time-segmentation method follows MIRT and
+    Fessler et al., IEEE TSP 2005. It preserves a Hermitian O(L) Toeplitz
+    approximation. ``gram_approximation="legacy"`` reproduces the previous
+    MIRTorch coefficient construction for migration comparisons.
+
+    FINUFFT is used by default on supported CPU systems and cuFINUFFT on
+    CUDA. Apple Metal and macOS CPU use torchkbnufft. The input and output
+    dimensions are both [nbatch, 1, nx, ny, (nz)].
 
     Attributes:
         smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
@@ -831,6 +891,9 @@ class GmriGram(LinearMap):
         grid_size: float, oversampling ratio (>1)
         T: tensor with dimension [nfe]. Describe the time (in ms) of readout after excitation. When T is none,
            the readout is supposed to start immediately after the excitation.
+        backend: ``"auto"`` (default), ``"finufft"``, or ``"torchkbnufft"``
+        eps: requested FINUFFT relative precision for kernel construction
+        gram_approximation: ``"autocorrelation"`` (default) or ``"legacy"``
     """
 
     def __init__(
@@ -845,6 +908,9 @@ class GmriGram(LinearMap):
         numpoints: int | list[int] = 6,
         grid_size: float = 2,
         T: Tensor | None = None,
+        backend: str = "auto",
+        eps: float = 1e-6,
+        gram_approximation: str = "autocorrelation",
     ):
         self.norm = norm
         self.smaps = smaps
@@ -852,6 +918,17 @@ class GmriGram(LinearMap):
         self.L = L
         self.nbins = nbins
         self.dt = dt
+        self.backend = _resolve_nufft_backend(backend, smaps.device)
+        self.eps = eps
+        if gram_approximation not in ("autocorrelation", "legacy"):
+            raise ValueError("gram_approximation must be 'autocorrelation' or 'legacy'")
+        self.gram_approximation = gram_approximation
+        backend = self.backend
+
+        if smaps.device != zmap.device or smaps.device != traj.device:
+            raise ValueError(
+                "sensitivity maps, field map, and trajectory must be on one device"
+            )
 
         # Determine batch size from inputs
         smaps_batch = smaps.shape[0]
@@ -867,6 +944,11 @@ class GmriGram(LinearMap):
             raise ValueError(
                 f"Incompatible batch sizes: smaps.shape[0]={smaps_batch}, "
                 f"traj.shape[0]={traj_batch}. Must be equal or one must be 1."
+            )
+        if zmap.shape[0] not in (1, self.nbatch):
+            raise ValueError(
+                f"Incompatible zmap batch size: zmap.shape[0]={zmap.shape[0]}, "
+                f"expected 1 or {self.nbatch}."
             )
 
         self.nc = self.smaps.shape[1]
@@ -910,6 +992,7 @@ class GmriGram(LinearMap):
                 nbins,
                 L,
                 t,
+                autocorrelation=gram_approximation == "autocorrelation",
             )
 
             self.B[:, ib, ...] = torch.as_tensor(
@@ -931,24 +1014,68 @@ class GmriGram(LinearMap):
         self.traj = self.traj.reshape(
             (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
         )
-        self.toep_op = tkbn.ToepNufft()
         self.kernel = []
 
-        for il in range(self.L):
-            self.kernel.append(
-                tkbn.calc_toeplitz_kernel(
-                    self.traj,
-                    list(smaps.shape[2:]),
-                    grid_size=self.grid_size,
-                    numpoints=numpoints,
-                    norm=self.norm,
-                    weights=self.B[il]
-                    .expand(-1, -1, self.nshot, -1)
-                    .reshape(self.nbatch, 1, self.nshot * self.npoints),
+        if backend == "torchkbnufft":
+            self.toep_op = tkbn.ToepNufft()
+            for il in range(self.L):
+                self.kernel.append(
+                    tkbn.calc_toeplitz_kernel(
+                        self.traj,
+                        list(smaps.shape[2:]),
+                        grid_size=self.grid_size,
+                        numpoints=numpoints,
+                        norm=self.norm,
+                        weights=self._segment_weights(il),
+                    )
                 )
+        else:
+            self._finufft_backend = FinufftSenseBackend(
+                im_size=tuple(smaps.shape[2:]),
+                grid_size=self.grid_size,
+                norm=norm,
+                batchmode=True,
+                sequential=False,
+                eps=eps,
             )
+            for il in range(self.L):
+                self.kernel.append(
+                    self._finufft_backend.toeplitz_kernel(
+                        self.traj,
+                        smaps.dtype,
+                        weights=self._segment_weights(il),
+                    )
+                )
+            self._trajectory_version = self.traj._version
 
         super().__init__(tuple(size_in), tuple(size_in))
+
+    def _segment_weights(self, segment: int) -> Tensor:
+        return (
+            self.B[segment]
+            .expand(-1, -1, self.nshot, -1)
+            .reshape(self.nbatch, 1, self.nshot * self.npoints)
+        )
+
+    def _check_fixed_trajectory(self) -> None:
+        if self.traj.requires_grad:
+            raise RuntimeError(
+                "The FINUFFT Toeplitz backend currently supports fixed "
+                "trajectories only."
+            )
+        if self.traj._version != self._trajectory_version:
+            raise RuntimeError(
+                "The trajectory changed after the FINUFFT Toeplitz kernel "
+                "was constructed; create a new GmriGram operator."
+            )
+
+    def to(self, device: torch.device | str):
+        if self.backend == "finufft":
+            self._check_fixed_trajectory()
+        result = super().to(device)
+        if self.backend == "finufft":
+            self._trajectory_version = self.traj._version
+        return result
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -958,12 +1085,26 @@ class GmriGram(LinearMap):
         Returns:
             y: [nbatch, 1, nx, ny (nz)]
         """
+        if self.backend == "finufft":
+            self._check_fixed_trajectory()
+
         y = torch.zeros_like(x)
         for il in range(self.L):
-            D = torch.exp(-2 * math.pi * 1j * self.zmap.unsqueeze(1) * self.tl[il])
-            y = y + D.conj() * self.toep_op(
-                x * D, self.kernel[il], smaps=self.smaps, norm=self.norm
-            )
+            D = self.C[il]
+            if self.backend == "finufft":
+                segment = self._finufft_backend.sense_gram(
+                    x * D,
+                    self.smaps,
+                    self.kernel[il],
+                )
+            else:
+                segment = self.toep_op(
+                    x * D,
+                    self.kernel[il],
+                    smaps=self.smaps,
+                    norm=self.norm,
+                )
+            y = y + D.conj() * segment
         return y
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
@@ -974,16 +1115,10 @@ class GmriGram(LinearMap):
         Returns:
             y: [nbatch, 1, nx, ny (nz)]
         """
-        y = torch.zeros_like(x)
-        for il in range(self.L):
-            D = torch.exp(-2 * math.pi * 1j * self.zmap.unsqueeze(1) * self.tl[il])
-            y = y + D.conj() * self.toep_op(
-                x * D, self.kernel[il], smaps=self.smaps, norm=self.norm
-            )
-        return y
+        return self._apply(x)
 
 
-def mri_exp_approx(b0, bins, lseg, t):
+def mri_exp_approx(b0, bins, lseg, t, autocorrelation: bool = False):
     r"""
     From Sigpy: https://github.com/mikgroup/sigpy and MIRT (mri_exp_approx.m): https://web.eecs.umich.edu/~fessler/code/
     Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2i*pi*b0*t) [M*N]
@@ -991,7 +1126,9 @@ def mri_exp_approx(b0, bins, lseg, t):
         b0: numpy array in dimension [nx, ny, nz], inhomogeneity matrix in Hz.
         bins: int, number of histogram bins to use.
         lseg: int, number of time segments.
-        t: float, describing the readout time (ms).
+        t: array, describing the readout times (ms).
+        autocorrelation: use the field-map histogram autocorrelation for
+            a Hermitian O(L) Gram approximation.
     Returns:
         3-element tuple containing:
             b: temporal interpolator [M, L]
@@ -1005,7 +1142,12 @@ def mri_exp_approx(b0, bins, lseg, t):
     )
 
     # build B and Ct
-    bin_centers = bin_edges[1:] - (bin_edges[1] - bin_edges[0]) / 2
+    bin_width = bin_edges[1] - bin_edges[0]
+    if autocorrelation:
+        hist_wt = np.correlate(hist_wt, hist_wt, mode="full")
+        bin_centers = np.arange(1 - bins, bins) * bin_width
+    else:
+        bin_centers = bin_edges[1:] - bin_width / 2
     zk = 0 + 1j * bin_centers
     tl = np.linspace(t[0], t[-1], lseg) / 1000  # time seg centers
     # calculate off-resonance phase @ each time seg, for histogram bins
@@ -1014,6 +1156,8 @@ def mri_exp_approx(b0, bins, lseg, t):
     p = np.linalg.pinv(w @ np.transpose(ch)) @ w
     b = p @ np.exp(-np.expand_dims(zk, axis=1) @ np.expand_dims(t, axis=0) / 1000)
     b = np.transpose(b)
+    if autocorrelation:
+        b = np.real(b)
     b0_v = np.expand_dims(2j * np.pi * np.ndarray.flatten(b0), axis=0)
     ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
 

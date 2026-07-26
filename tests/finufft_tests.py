@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from mirtorch.alg import CG
-from mirtorch.linear import Identity, NuSense, NuSenseGram
+from mirtorch.linear import Gmri, GmriGram, Identity, NuSense, NuSenseGram
 from mirtorch.linear._finufft import FinufftSenseBackend
 
 
@@ -62,6 +62,109 @@ def _exact_type1(
         mode_size
     )
     return (samples.reshape(sample_shape) * phase.unsqueeze(1)).sum(dim=2)
+
+
+def _exact_type2(
+    backend: FinufftSenseBackend,
+    modes: torch.Tensor,
+    traj: torch.Tensor,
+) -> torch.Tensor:
+    image = torch.ones(
+        modes.shape[0],
+        1,
+        *modes.shape[2:],
+        dtype=modes.dtype,
+        device=modes.device,
+    )
+    return _direct_sense(image, modes, traj, scale=1)
+
+
+def _direct_gmri_phases(
+    zmap: torch.Tensor,
+    traj: torch.Tensor,
+    dt: float,
+    im_size: tuple[int, ...],
+) -> torch.Tensor:
+    mode_vectors = [
+        torch.arange(
+            -(size // 2),
+            (size - 1) // 2 + 1,
+            dtype=traj.dtype,
+            device=traj.device,
+        )
+        for size in im_size
+    ]
+    mode_grids = torch.meshgrid(*mode_vectors, indexing="ij")
+    spatial_phase = sum(
+        traj[:, dimension].reshape(
+            traj.shape[0],
+            *traj.shape[2:],
+            *([1] * len(im_size)),
+        )
+        * mode_grids[dimension]
+        for dimension in range(len(im_size))
+    )
+    times = (
+        torch.linspace(
+            0,
+            dt * traj.shape[-1],
+            traj.shape[-1],
+            dtype=traj.dtype,
+            device=traj.device,
+        )
+        / 1000
+    )
+    field_shape = (zmap.shape[0], 1, 1, 1) + im_size
+    time_shape = (1, 1, 1, traj.shape[-1]) + (1,) * len(im_size)
+    field_phase = 2 * math.pi * zmap.reshape(field_shape) * times.reshape(time_shape)
+    return spatial_phase.unsqueeze(1) + field_phase
+
+
+def _direct_gmri(
+    image: torch.Tensor,
+    smaps: torch.Tensor,
+    zmap: torch.Tensor,
+    traj: torch.Tensor,
+    dt: float,
+    scale: float,
+) -> torch.Tensor:
+    batch = image.shape[0]
+    if smaps.shape[0] == 1:
+        smaps = smaps.expand(batch, *smaps.shape[1:])
+    if zmap.shape[0] == 1:
+        zmap = zmap.expand(batch, *zmap.shape[1:])
+    if traj.shape[0] == 1:
+        traj = traj.expand(batch, *traj.shape[1:])
+
+    im_size = tuple(image.shape[2:])
+    phase = torch.exp(-1j * _direct_gmri_phases(zmap, traj, dt, im_size))
+    spatial_dims = tuple(range(4, 4 + len(im_size)))
+    return ((image * smaps).unsqueeze(2).unsqueeze(2) * phase).sum(
+        dim=spatial_dims
+    ) * scale
+
+
+def _direct_gmri_adjoint(
+    samples: torch.Tensor,
+    smaps: torch.Tensor,
+    zmap: torch.Tensor,
+    traj: torch.Tensor,
+    dt: float,
+    im_size: tuple[int, ...],
+    scale: float,
+) -> torch.Tensor:
+    batch = samples.shape[0]
+    if smaps.shape[0] == 1:
+        smaps = smaps.expand(batch, *smaps.shape[1:])
+    if zmap.shape[0] == 1:
+        zmap = zmap.expand(batch, *zmap.shape[1:])
+    if traj.shape[0] == 1:
+        traj = traj.expand(batch, *traj.shape[1:])
+
+    phase = torch.exp(1j * _direct_gmri_phases(zmap, traj, dt, im_size))
+    sample_shape = samples.shape + (1,) * len(im_size)
+    coil_images = (samples.reshape(sample_shape) * phase).sum(dim=(2, 3)) * scale
+    return (smaps.conj() * coil_images).sum(dim=1, keepdim=True)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS wheel-specific check")
@@ -804,3 +907,274 @@ def test_finufft_toeplitz_nonbatch_mode_matches_direct_gram():
     )
 
     assert _relative_error(gram(image), direct.H(direct(image))) < 3e-5
+
+
+def test_finufft_gmri_matches_legacy_and_exact_segment_gradients(monkeypatch):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    monkeypatch.setattr(FinufftSenseBackend, "type2", _exact_type2)
+    torch.manual_seed(45)
+    dtype = torch.complex128
+    batch, coils, height, width, shots, points = 2, 3, 12, 10, 3, 31
+    image_data = torch.randn(batch, 1, height, width, dtype=dtype)
+    smaps_data = torch.randn(1, coils, height, width, dtype=dtype)
+    zmap = torch.linspace(-180, 150, height * width, dtype=torch.float64).reshape(
+        1,
+        height,
+        width,
+    )
+    traj_data = (
+        torch.rand(batch, 2, shots, points, dtype=torch.float64) * 2 - 1
+    ) * torch.pi
+    upstream = torch.randn(batch, coils, shots, points, dtype=dtype)
+    kwargs = {
+        "L": 5,
+        "nbins": 24,
+        "dt": 0.02,
+        "grid_size": 2,
+        "numpoints": 6,
+        "norm": "ortho",
+    }
+
+    legacy = Gmri(
+        smaps_data,
+        zmap,
+        traj_data,
+        backend="torchkbnufft",
+        **kwargs,
+    )
+    legacy_output = legacy(image_data)
+
+    image = image_data.clone().requires_grad_()
+    smaps = smaps_data.clone().requires_grad_()
+    traj = traj_data.clone().requires_grad_()
+    operator = Gmri(
+        smaps,
+        zmap,
+        traj,
+        backend="finufft",
+        eps=1e-12,
+        **kwargs,
+    )
+    actual = operator(image)
+    actual_gradients = torch.autograd.grad(
+        (upstream.conj() * actual).sum().real,
+        (image, smaps, traj),
+    )
+
+    direct_image = image_data.clone().requires_grad_()
+    direct_smaps = smaps_data.clone().requires_grad_()
+    direct_traj = traj_data.clone().requires_grad_()
+    flat_traj = direct_traj.flatten(2)
+    scale = 1 / math.sqrt((2 * height) * (2 * width))
+    expected = torch.zeros_like(actual)
+    for segment in range(operator.L):
+        segment_output = _direct_sense(
+            direct_image * operator.C[segment],
+            direct_smaps,
+            flat_traj,
+            scale,
+        ).reshape(actual.shape)
+        expected = expected + operator.B[segment] * segment_output
+    expected_gradients = torch.autograd.grad(
+        (upstream.conj() * expected).sum().real,
+        (direct_image, direct_smaps, direct_traj),
+    )
+
+    assert _relative_error(actual, legacy_output) < 2e-3
+    assert _relative_error(actual, expected) < 2e-12
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        assert _relative_error(actual_gradient, expected_gradient) < 2e-12
+
+    adjoint_input = torch.randn_like(upstream)
+    assert (
+        _relative_error(
+            operator.H(adjoint_input),
+            legacy.H(adjoint_input),
+        )
+        < 2e-3
+    )
+
+
+def test_finufft_gmri_runs_on_supported_cpu_or_cuda():
+    device = _finufft_device()
+    torch.manual_seed(47)
+    dtype = torch.complex64
+    batch, coils, height, width, shots, points = 1, 2, 12, 10, 3, 41
+    image = torch.randn(
+        batch,
+        1,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    smaps = torch.randn(
+        batch,
+        coils,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    zmap = torch.linspace(
+        -180,
+        150,
+        height * width,
+        dtype=torch.float32,
+        device=device,
+    ).reshape(batch, height, width)
+    traj = (
+        torch.rand(
+            batch,
+            2,
+            shots,
+            points,
+            dtype=torch.float32,
+            device=device,
+        )
+        * 2
+        - 1
+    ) * torch.pi
+    kwargs = {
+        "L": 5,
+        "nbins": 24,
+        "dt": 0.02,
+        "grid_size": 2,
+        "numpoints": 6,
+        "norm": "ortho",
+    }
+    finufft = Gmri(
+        smaps,
+        zmap,
+        traj,
+        backend="finufft",
+        eps=1e-6,
+        **kwargs,
+    )
+    legacy = Gmri(
+        smaps,
+        zmap,
+        traj,
+        backend="torchkbnufft",
+        **kwargs,
+    )
+
+    assert _relative_error(finufft(image), legacy(image)) < 3e-3
+    samples = torch.randn(
+        batch,
+        coils,
+        shots,
+        points,
+        dtype=dtype,
+        device=device,
+    )
+    assert _relative_error(finufft.H(samples), legacy.H(samples)) < 3e-3
+
+    finufft_gram = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        backend="finufft",
+        eps=1e-6,
+        **kwargs,
+    )
+    legacy_gram = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        backend="torchkbnufft",
+        **kwargs,
+    )
+    assert _relative_error(finufft_gram(image), legacy_gram(image)) < 3e-3
+
+
+def test_finufft_gmri_gram_autocorrelation_improves_b0_normal(monkeypatch):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    torch.manual_seed(46)
+    dtype = torch.complex128
+    batch, coils, height, width, shots, points = 1, 2, 9, 8, 4, 39
+    image = torch.randn(batch, 1, height, width, dtype=dtype)
+    smaps = torch.randn(batch, coils, height, width, dtype=dtype)
+    smaps = smaps / torch.sqrt((smaps.abs() ** 2).sum(dim=1, keepdim=True))
+    zmap = (torch.rand(batch, height, width, dtype=torch.float64) * 2 - 1) * 350
+    traj = (torch.rand(batch, 2, shots, points, dtype=torch.float64) * 2 - 1) * torch.pi
+    dt = 0.08
+    scale = 1 / math.sqrt((2 * height) * (2 * width))
+    samples = _direct_gmri(image, smaps, zmap, traj, dt, scale)
+    expected = _direct_gmri_adjoint(
+        samples,
+        smaps,
+        zmap,
+        traj,
+        dt,
+        (height, width),
+        scale,
+    )
+    kwargs = {
+        "L": 8,
+        "nbins": 40,
+        "dt": dt,
+        "grid_size": 2,
+        "numpoints": 6,
+        "norm": "ortho",
+        "backend": "finufft",
+        "eps": 1e-12,
+    }
+    gram = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        gram_approximation="autocorrelation",
+        **kwargs,
+    )
+    legacy = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        gram_approximation="legacy",
+        **kwargs,
+    )
+    actual = gram(image)
+    legacy_error = _relative_error(legacy(image), expected)
+
+    assert gram.B.imag.abs().max() == 0
+    assert _relative_error(actual, expected) < 2e-3
+    assert _relative_error(actual, expected) < legacy_error / 4
+
+    torchkbnufft_gram = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        gram_approximation="autocorrelation",
+        backend="torchkbnufft",
+        **{key: value for key, value in kwargs.items() if key != "backend"},
+    )
+    assert _relative_error(actual, torchkbnufft_gram(image)) < 2e-3
+
+    probe = torch.randn_like(image)
+    lhs = (probe.conj() * gram(image)).sum()
+    rhs = (gram(probe).conj() * image).sum()
+    assert torch.allclose(lhs, rhs, rtol=2e-12, atol=2e-12)
+
+
+def test_finufft_gmri_gram_rejects_changed_trajectory(monkeypatch):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    zmap = torch.zeros(1, 4, 4)
+    traj = torch.zeros(1, 2, 2, 7)
+    gram = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        L=2,
+        nbins=4,
+        backend="finufft",
+    )
+
+    traj.add_(0.1)
+    with pytest.raises(RuntimeError, match="trajectory changed"):
+        gram(torch.ones(1, 1, 4, 4, dtype=torch.complex64))

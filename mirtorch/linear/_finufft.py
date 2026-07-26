@@ -85,7 +85,7 @@ def _real_dtype(dtype: torch.dtype) -> torch.dtype:
 
 @dataclass
 class FinufftSenseBackend:
-    """Plan-caching FINUFFT implementation used by :class:`NuSense`."""
+    """Plan-caching FINUFFT implementation for non-Cartesian SENSE operators."""
 
     im_size: tuple[int, ...]
     grid_size: tuple[int, ...]
@@ -99,7 +99,7 @@ class FinufftSenseBackend:
         if not 1 <= len(self.im_size) <= 3:
             raise ValueError("FINUFFT supports one-, two-, and three-dimensional data")
         if self.norm not in (None, "ortho"):
-            raise ValueError("NuSense norm must be None or 'ortho'")
+            raise ValueError("FINUFFT norm must be None or 'ortho'")
         if self.eps <= 0:
             raise ValueError("FINUFFT eps must be positive")
 
@@ -305,14 +305,20 @@ class FinufftSenseBackend:
     ) -> Tensor:
         return self._transform(1, samples, traj, mode_size=mode_size)
 
-    def toeplitz_kernel(self, traj: Tensor, dtype: torch.dtype) -> Tensor:
-        """Build the FFT response for a fixed-trajectory normal operator."""
+    def toeplitz_kernel(
+        self,
+        traj: Tensor,
+        dtype: torch.dtype,
+        weights: Tensor | None = None,
+    ) -> Tensor:
+        """Build the FFT response for a fixed-trajectory weighted normal operator."""
         _complex_dtype_name(dtype)
         if traj.requires_grad:
             raise ValueError(
                 "The FINUFFT Toeplitz backend currently supports fixed "
-                "trajectories only; detach the trajectory or use NuSense.H * "
-                "NuSense when trajectory gradients are required."
+                "trajectories only; detach the trajectory or compose the "
+                "forward and adjoint operators when trajectory gradients are "
+                "required."
             )
 
         traj_b = _as_batched_traj(traj, self.batchmode)
@@ -324,13 +330,31 @@ class FinufftSenseBackend:
             )
 
         difference_size = tuple(2 * size - 1 for size in self.im_size)
-        strengths = torch.ones(
-            traj_b.shape[0],
-            1,
-            traj_b.shape[-1],
-            dtype=dtype,
-            device=traj_b.device,
-        )
+        if weights is None:
+            strengths = torch.ones(
+                traj_b.shape[0],
+                1,
+                traj_b.shape[-1],
+                dtype=dtype,
+                device=traj_b.device,
+            )
+        else:
+            if weights.ndim != 3 or weights.shape[1] != 1:
+                raise ValueError("Toeplitz weights must have shape [batch, 1, samples]")
+            if weights.shape[-1] != traj_b.shape[-1]:
+                raise ValueError(
+                    "Toeplitz weights and trajectory must have the same "
+                    "number of samples"
+                )
+            batch = max(weights.shape[0], traj_b.shape[0])
+            if traj_b.shape[0] not in (1, batch):
+                raise ValueError(
+                    "Toeplitz weights and trajectory have incompatible batch sizes"
+                )
+            strengths = _expand_batch(
+                weights.to(device=traj_b.device, dtype=dtype),
+                batch,
+            )
         kernel = self.type1(
             strengths,
             traj_b,
