@@ -11,6 +11,10 @@ The main objective is to facilitate rapid, data-driven image reconstruction usin
 
 Documentation: https://mirtorch.readthedocs.io/en/latest/
 
+> **New:** Automatic FINUFFT and `torch.compile` acceleration measured up to
+> **5.2× faster NUFFT**, **9.4× faster Toeplitz normal operations**, and
+> **12.3× faster iterative solvers** on an NVIDIA A10.
+
 ------
 
 ### Installation
