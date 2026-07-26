@@ -2,7 +2,7 @@ import logging
 
 import torch
 
-from mirtorch._norm import l2_norm
+from mirtorch.util import l2_norm
 
 logger = logging.getLogger(__name__)
 

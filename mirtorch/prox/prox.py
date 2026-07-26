@@ -8,8 +8,8 @@ from collections.abc import Sequence
 
 import torch
 
-from mirtorch._norm import l2_norm
 from mirtorch.linear import LinearMap
+from mirtorch.util import l2_norm
 
 FloatLike = float | torch.Tensor
 EPS = 1e-15

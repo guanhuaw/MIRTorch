@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from mirtorch._compile import compile_callable, should_compile
+from mirtorch.util import compile_callable, should_compile
 
 from .linearmaps import LinearMap
 from .util import DiffFunc, DiffFunc_adj, dim_conv

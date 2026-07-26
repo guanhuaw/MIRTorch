@@ -3,7 +3,7 @@ import logging
 import torch
 from torch import Tensor
 
-from mirtorch._norm import squared_l2_norm
+from mirtorch.util import squared_l2_norm
 
 logger = logging.getLogger(__name__)
 

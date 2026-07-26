@@ -4,8 +4,8 @@ from collections.abc import Callable
 
 import torch
 
-from mirtorch._compile import compile_callable, should_compile
 from mirtorch.prox import Prox
+from mirtorch.util import compile_callable, should_compile
 
 logger = logging.getLogger(__name__)
 
