@@ -38,8 +38,30 @@ Instances include basic linear operations (like convolution), classical imaging 
 Since the Jacobian matrix of a linear operator is itself, the toolbox can actively calculate such Jacobians during backpropagation, avoiding the large cache cost required by auto-differentiation.
 
 When defining linear operators, please make sure that all torch tensors are on the same device and compatible. For example, `torch.cfloat` are compatible with `torch.float` but not `torch.double`. Similarly, `torch.chalf` is compatible with `torch.half`.
+Both linear and proximal operators can move their nested tensors and operators recursively:
+
+```python
+operator = operator.to("cuda")
+regularizer = regularizer.to("cuda")
+```
+
 When the data is image, there are 2 empirical formats: `[num_batch, num_channel, nx, ny, (nz)]` and `[nx, ny, (nz)]`.
 For some LinearMaps, there is a boolean `batchmode` to control the shape.
+
+#### NUFFT
+
+```bash
+# NVIDIA CUDA
+pip install "MIRTorch[cufinufft]"
+```
+
+```python
+operator = NuSense(smaps, traj)
+normal = NuSenseGram(smaps, traj.detach())
+```
+
+FINUFFT is selected automatically on supported CPU and CUDA systems.
+Apple Metal and macOS CPU use torchkbnufft.
 
 #### Proximal operators
 
@@ -48,6 +70,12 @@ The toolbox contains common proximal operators such as soft thresholding. These 
 #### Iterative reconstruction (MBIR) algorithms
 
 Currently, the package includes the conjugate gradient (CG), fast iterative thresholding (FISTA), optimized gradient method (POGM), forward-backward primal-dual (FBPD) algorithms for image reconstruction.
+
+#### Automatic compilation
+
+On PyTorch 2 or newer, real-valued CUDA `Diff2dgram`, FISTA, and POGM paths
+use `torch.compile` automatically. Pass `compile=False` to those constructors
+to use eager execution.
 
 #### Dictionary learning
 

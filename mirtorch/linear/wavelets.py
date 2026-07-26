@@ -1,16 +1,17 @@
 import sys
-from typing import Sequence, Tuple, List
+from collections.abc import Sequence
 
 import torch
-from mirtorch.vendors.pytorch_wavelets import DWTForward, DWTInverse
 from torch import Tensor
+
+from mirtorch.vendors.pytorch_wavelets import DWTForward, DWTInverse
 
 from .linearmaps import LinearMap
 
 # TODO: 3d wavelets
 
 
-def coeffs_to_tensor(yl: Tensor, yh: Sequence[Tensor]) -> Tuple[Tensor, List[int]]:
+def coeffs_to_tensor(yl: Tensor, yh: Sequence[Tensor]) -> tuple[Tensor, list[int]]:
     """
     Assemble 2D DWT array into a tensor
     Args:
@@ -49,7 +50,7 @@ def coeffs_to_tensor(yl: Tensor, yh: Sequence[Tensor]) -> Tuple[Tensor, List[int
 
 def tensor_to_coeffs(
     wl_cat: Tensor, dic_size: Sequence[int]
-) -> Tuple[Tensor, List[int]]:
+) -> tuple[Tensor, list[int]]:
     """
     Args:
         wl_cat:
@@ -129,7 +130,7 @@ class Wavelet2D(LinearMap):
             Yl, Yh = self.Fop(torch.zeros(size_in).to(device).unsqueeze(0).unsqueeze(0))
             wl_cat, self.dic_size = coeffs_to_tensor(Yl, Yh)
             size_out = wl_cat.shape[2:]
-        super(Wavelet2D, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
 
     def _apply(self, x: Tensor) -> Tensor:
         if x.is_complex():

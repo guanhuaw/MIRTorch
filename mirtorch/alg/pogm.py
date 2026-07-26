@@ -1,7 +1,9 @@
-import numpy as np
-from typing import Callable
+import math
+from collections.abc import Callable
 
 import torch
+
+from mirtorch._compile import compile_callable, should_compile
 from mirtorch.prox import Prox
 
 
@@ -24,6 +26,7 @@ class POGM:
         g_prox (Prox): proximal operator g. For plain OGM, you could call Const() as a place-holder here
         restart (Union[...]): restart strategy, not yet implemented
         eval_func: user-defined function to calculate the loss at each iteration.
+        compile: use automatic compilation for real-valued CUDA runs.
 
     TODO: add the restart
     """
@@ -35,8 +38,13 @@ class POGM:
         g_prox: Prox,
         max_iter: int = 10,
         restart=False,
-        eval_func: Callable = None,
+        eval_func: Callable | None = None,
+        compile: bool = True,
     ):
+        if f_L <= 0:
+            raise ValueError("f_L must be positive")
+        if not isinstance(max_iter, int) or max_iter < 0:
+            raise ValueError("max_iter must be a non-negative integer")
         self.max_iter = max_iter
         self.f_grad = f_grad
         self.f_L = f_L
@@ -46,30 +54,22 @@ class POGM:
             raise NotImplementedError
         self.restart = restart
         self.eval_func = eval_func
+        self.compile = compile
+        self._compiled_run = None
 
-    def run(self, x0: torch.Tensor):
-        r"""
-        Run the algorithm
-        Args:
-            x0: initialization
-        Returns:
-            xk: results
-            saved: (optional) a list of intermediate results, calculated by the eval_func.
-        """
+    def _run(self, x0: torch.Tensor) -> torch.Tensor:
         told = 1
         gamma_old = 1
         xold = x0
         omold = x0
         zold = x0
-        if self.eval_func is not None:
-            saved = []
         for i in range(1, self.max_iter + 1):
             fgrad = self.f_grad(xold)
             omnew = xold - self._alpha * fgrad
             if i == self.max_iter:
-                tnew = 0.5 * (1 + np.sqrt(1 + 8 * told**2))
+                tnew = 0.5 * (1 + math.sqrt(1 + 8 * told**2))
             else:
-                tnew = 0.5 * (1 + np.sqrt(1 + 4 * told**2))
+                tnew = 0.5 * (1 + math.sqrt(1 + 4 * told**2))
             gamma_new = self._alpha * (2 * told + tnew - 1) / tnew
             znew = (
                 omnew
@@ -83,11 +83,52 @@ class POGM:
             omold = omnew
             xold = xnew
             gamma_old = gamma_new
+        return xold
 
-            if self.eval_func is not None:
-                saved.append(self.eval_func(xold))
+    def _run_with_evaluation(self, x0: torch.Tensor):
+        assert self.eval_func is not None
+        told = 1
+        gamma_old = 1
+        xold = x0
+        omold = x0
+        zold = x0
+        saved = []
+        for i in range(1, self.max_iter + 1):
+            fgrad = self.f_grad(xold)
+            omnew = xold - self._alpha * fgrad
+            if i == self.max_iter:
+                tnew = 0.5 * (1 + math.sqrt(1 + 8 * told**2))
+            else:
+                tnew = 0.5 * (1 + math.sqrt(1 + 4 * told**2))
+            gamma_new = self._alpha * (2 * told + tnew - 1) / tnew
+            znew = (
+                omnew
+                + (told - 1) / tnew * (omnew - omold)
+                + told / tnew * (omnew - xold)
+                + self._alpha * (told - 1) / gamma_old / tnew * (zold - xold)
+            )
+            xnew = self.prox(znew, gamma_new)
+            zold = znew
+            told = tnew
+            omold = omnew
+            xold = xnew
+            gamma_old = gamma_new
+            saved.append(self.eval_func(xold))
+        return xold, saved
 
+    def run(self, x0: torch.Tensor):
+        r"""
+        Run the algorithm
+        Args:
+            x0: initialization
+        Returns:
+            xk: results
+            saved: (optional) a list of intermediate results, calculated by the eval_func.
+        """
         if self.eval_func is not None:
-            return xold, saved
-        else:
-            return xold
+            return self._run_with_evaluation(x0)
+        if should_compile(self.compile, x0):
+            if self._compiled_run is None:
+                self._compiled_run = compile_callable(self._run)
+            return self._compiled_run(x0)
+        return self._run(x0)

@@ -1,0 +1,814 @@
+import importlib.util
+import math
+import sys
+from pathlib import Path
+
+import pytest
+import torch
+
+from mirtorch.alg import CG
+from mirtorch.linear import Identity, NuSense, NuSenseGram
+from mirtorch.linear._finufft import FinufftSenseBackend
+
+
+def _finufft_device() -> torch.device:
+    if torch.cuda.is_available() and importlib.util.find_spec("cufinufft"):
+        return torch.device("cuda")
+    if sys.platform == "darwin":
+        pytest.skip(
+            "The PyPI FINUFFT and PyTorch wheels load duplicate OpenMP "
+            "runtimes on macOS; CPU execution is disabled until a supported "
+            "packaging solution is available."
+        )
+    if importlib.util.find_spec("finufft"):
+        return torch.device("cpu")
+    pytest.skip("FINUFFT/cuFINUFFT is not installed")
+
+
+def _relative_error(actual: torch.Tensor, expected: torch.Tensor) -> torch.Tensor:
+    return torch.linalg.vector_norm(actual - expected) / torch.linalg.vector_norm(
+        expected
+    )
+
+
+def _exact_type1(
+    backend: FinufftSenseBackend,
+    samples: torch.Tensor,
+    traj: torch.Tensor,
+    mode_size: tuple[int, ...] | None = None,
+) -> torch.Tensor:
+    mode_size = backend.im_size if mode_size is None else mode_size
+    mode_vectors = [
+        torch.arange(
+            -(size // 2),
+            (size - 1) // 2 + 1,
+            dtype=traj.dtype,
+            device=traj.device,
+        )
+        for size in mode_size
+    ]
+    mode_grids = torch.meshgrid(*mode_vectors, indexing="ij")
+    phase_argument = sum(
+        traj[:, dimension].reshape(
+            traj.shape[0],
+            traj.shape[-1],
+            *([1] * len(mode_size)),
+        )
+        * mode_grids[dimension]
+        for dimension in range(len(mode_size))
+    )
+    phase = torch.exp(1j * phase_argument)
+    sample_shape = (samples.shape[0], samples.shape[1], samples.shape[2]) + (
+        1,
+    ) * len(mode_size)
+    return (samples.reshape(sample_shape) * phase.unsqueeze(1)).sum(dim=2)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS wheel-specific check")
+def test_finufft_macos_duplicate_openmp_fails_safely():
+    finufft_spec = importlib.util.find_spec("finufft")
+    if finufft_spec is None or finufft_spec.origin is None:
+        pytest.skip("FINUFFT is not installed")
+
+    torch_omp = Path(torch.__file__).resolve().parent / "lib" / "libomp.dylib"
+    finufft_omp = (
+        Path(finufft_spec.origin).resolve().parent / ".dylibs" / "libomp.dylib"
+    )
+    if not torch_omp.exists() or not finufft_omp.exists():
+        pytest.skip("The installed wheels do not bundle duplicate OpenMP runtimes")
+
+    image = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    smaps = torch.ones_like(image)
+    traj = torch.zeros(1, 2, 3)
+    operator = NuSense(smaps, traj, backend="finufft")
+
+    with pytest.raises(RuntimeError, match="separate OpenMP runtimes"):
+        operator(image)
+
+
+@pytest.mark.parametrize("norm", [None, "ortho"])
+@pytest.mark.parametrize("shared_traj", [False, True])
+def test_finufft_toeplitz_embedding_matches_exact_normal(
+    monkeypatch,
+    norm,
+    shared_traj,
+):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    torch.manual_seed(26)
+    dtype = torch.complex128
+    batch, coils, height, width, count = 2, 3, 5, 4, 23
+    image = torch.randn(batch, 1, height, width, dtype=dtype)
+    smaps_batch = batch if shared_traj else 1
+    traj_batch = 1 if shared_traj else batch
+    smaps = torch.randn(smaps_batch, coils, height, width, dtype=dtype)
+    traj = (
+        torch.rand(traj_batch, 2, count, dtype=torch.float64) * 2 - 1
+    ) * torch.pi
+
+    gram = NuSenseGram(
+        smaps,
+        traj,
+        backend="finufft",
+        norm=norm,
+        grid_size=2,
+        eps=1e-12,
+    )
+    scale = 1 if norm is None else 1 / math.sqrt((2 * height) * (2 * width))
+    samples = _direct_sense(image, smaps, traj, scale)
+    expected = _direct_sense_adjoint(
+        samples,
+        smaps,
+        traj,
+        (height, width),
+        scale,
+    )
+
+    assert _relative_error(gram(image), expected) < 2e-14
+    assert _relative_error(gram.H(image), expected) < 2e-14
+
+
+def test_finufft_toeplitz_rejects_trainable_or_changed_trajectory(monkeypatch):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    trainable_traj = torch.zeros(1, 2, 7, requires_grad=True)
+
+    with pytest.raises(ValueError, match="fixed trajectories"):
+        NuSenseGram(smaps, trainable_traj, backend="finufft")
+
+    traj = torch.zeros(1, 2, 7)
+    gram = NuSenseGram(smaps, traj, backend="finufft")
+    traj.add_(0.1)
+    with pytest.raises(RuntimeError, match="trajectory changed"):
+        gram(torch.ones(1, 1, 4, 4, dtype=torch.complex64))
+
+
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(),
+    reason="Metal is not available",
+)
+def test_cached_finufft_toeplitz_kernel_runs_on_metal(monkeypatch):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    torch.manual_seed(27)
+    image = torch.randn(1, 1, 4, 4, dtype=torch.complex64)
+    smaps = torch.randn(1, 2, 4, 4, dtype=torch.complex64)
+    traj = (torch.rand(1, 2, 17) * 2 - 1) * torch.pi
+    traj.add_(0.01)
+    gram = NuSenseGram(smaps, traj, backend="finufft")
+    expected = gram(image)
+
+    gram.to("mps")
+    actual = gram(image.to("mps")).cpu()
+
+    assert _relative_error(actual, expected) < 2e-6
+
+
+def _direct_sense(
+    image: torch.Tensor,
+    smaps: torch.Tensor,
+    traj: torch.Tensor,
+    scale: float,
+) -> torch.Tensor:
+    batch = image.shape[0]
+    if smaps.shape[0] == 1:
+        smaps = smaps.expand(batch, *smaps.shape[1:])
+    if traj.shape[0] == 1:
+        traj = traj.expand(batch, *traj.shape[1:])
+
+    im_size = image.shape[2:]
+    mode_vectors = [
+        torch.arange(
+            -(size // 2),
+            (size - 1) // 2 + 1,
+            dtype=traj.dtype,
+            device=traj.device,
+        )
+        for size in im_size
+    ]
+    mode_grids = torch.meshgrid(*mode_vectors, indexing="ij")
+    phase_argument = sum(
+        traj[:, dimension].reshape(
+            batch,
+            traj.shape[-1],
+            *([1] * len(im_size)),
+        )
+        * mode_grids[dimension]
+        for dimension in range(len(im_size))
+    )
+    phase = torch.exp(-1j * phase_argument)
+    coil_images = image * smaps
+    spatial_dims = tuple(range(3, 3 + len(im_size)))
+    return (coil_images.unsqueeze(2) * phase.unsqueeze(1)).sum(
+        dim=spatial_dims
+    ) * scale
+
+
+def _direct_sense_adjoint(
+    samples: torch.Tensor,
+    smaps: torch.Tensor,
+    traj: torch.Tensor,
+    im_size: tuple[int, ...],
+    scale: float,
+) -> torch.Tensor:
+    batch = samples.shape[0]
+    if smaps.shape[0] == 1:
+        smaps = smaps.expand(batch, *smaps.shape[1:])
+    if traj.shape[0] == 1:
+        traj = traj.expand(batch, *traj.shape[1:])
+
+    mode_vectors = [
+        torch.arange(
+            -(size // 2),
+            (size - 1) // 2 + 1,
+            dtype=traj.dtype,
+            device=traj.device,
+        )
+        for size in im_size
+    ]
+    mode_grids = torch.meshgrid(*mode_vectors, indexing="ij")
+    phase_argument = sum(
+        traj[:, dimension].reshape(
+            batch,
+            traj.shape[-1],
+            *([1] * len(im_size)),
+        )
+        * mode_grids[dimension]
+        for dimension in range(len(im_size))
+    )
+    phase = torch.exp(1j * phase_argument)
+    sample_shape = (batch, samples.shape[1], samples.shape[2]) + (1,) * len(
+        im_size
+    )
+    coil_images = (
+        samples.reshape(sample_shape) * phase.unsqueeze(1)
+    ).sum(dim=2) * scale
+    return (smaps.conj() * coil_images).sum(dim=1, keepdim=True)
+
+
+def test_finufft_matches_legacy_forward_adjoint_and_tensor_gradients():
+    device = _finufft_device()
+    torch.manual_seed(21)
+    dtype = torch.complex64
+    real_dtype = torch.float32
+    batch, coils, height, width, samples = 2, 3, 16, 12, 173
+
+    image_data = torch.randn(
+        batch,
+        1,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    smaps_data = torch.randn(
+        1,
+        coils,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    traj = (
+        torch.rand(
+            batch,
+            2,
+            samples,
+            dtype=real_dtype,
+            device=device,
+        )
+        * 2
+        - 1
+    ) * torch.pi
+    upstream = torch.randn(
+        batch,
+        coils,
+        samples,
+        dtype=dtype,
+        device=device,
+    )
+
+    legacy_image = image_data.clone().requires_grad_()
+    legacy_smaps = smaps_data.clone().requires_grad_()
+    legacy = NuSense(
+        legacy_smaps,
+        traj,
+        backend="torchkbnufft",
+        grid_size=2,
+        numpoints=6,
+        norm="ortho",
+    )
+    legacy_samples = legacy(legacy_image)
+    legacy_loss = (upstream.conj() * legacy_samples).sum().real
+    legacy_grad_image, legacy_grad_smaps = torch.autograd.grad(
+        legacy_loss,
+        (legacy_image, legacy_smaps),
+    )
+
+    finufft_image = image_data.clone().requires_grad_()
+    finufft_smaps = smaps_data.clone().requires_grad_()
+    finufft = NuSense(
+        finufft_smaps,
+        traj,
+        backend="finufft",
+        grid_size=2,
+        norm="ortho",
+        eps=1e-6,
+    )
+    finufft_samples = finufft(finufft_image)
+    finufft_loss = (upstream.conj() * finufft_samples).sum().real
+    finufft_grad_image, finufft_grad_smaps = torch.autograd.grad(
+        finufft_loss,
+        (finufft_image, finufft_smaps),
+    )
+
+    assert _relative_error(finufft_samples, legacy_samples) < 2e-3
+    assert _relative_error(finufft_grad_image, legacy_grad_image) < 2e-3
+    assert _relative_error(finufft_grad_smaps, legacy_grad_smaps) < 2e-3
+
+    adjoint_input = torch.randn_like(upstream)
+    finufft_adjoint = finufft.H(adjoint_input)
+    legacy_adjoint = legacy.H(adjoint_input)
+    assert _relative_error(finufft_adjoint, legacy_adjoint) < 2e-3
+
+    lhs = (finufft_samples.conj() * adjoint_input).sum()
+    rhs = (finufft_image.conj() * finufft_adjoint).sum()
+    assert torch.allclose(lhs, rhs, rtol=2e-5, atol=2e-5)
+
+
+def test_finufft_forward_and_snopy_vjp_match_direct_nudft():
+    device = _finufft_device()
+    torch.manual_seed(22)
+    dtype = torch.complex128
+    batch, coils, height, width, samples = 2, 2, 6, 5, 19
+
+    image_data = torch.randn(
+        batch,
+        1,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    smaps_data = torch.randn(
+        1,
+        coils,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    shared_traj = (
+        torch.rand(1, 2, samples, dtype=torch.float64, device=device) * 2 - 1
+    ) * torch.pi
+    traj_data = shared_traj.expand(batch, -1, -1).clone()
+    upstream = torch.randn(
+        batch,
+        coils,
+        samples,
+        dtype=dtype,
+        device=device,
+    )
+
+    image = image_data.clone().requires_grad_()
+    smaps = smaps_data.clone().requires_grad_()
+    traj = traj_data.clone().requires_grad_()
+    operator = NuSense(
+        smaps,
+        traj,
+        backend="finufft",
+        norm=None,
+        eps=1e-12,
+    )
+    actual = operator(image)
+    actual_loss = (upstream.conj() * actual).sum().real
+    actual_gradients = torch.autograd.grad(
+        actual_loss,
+        (image, smaps, traj),
+    )
+
+    direct_image = image_data.clone().requires_grad_()
+    direct_smaps = smaps_data.clone().requires_grad_()
+    direct_traj = traj_data.clone().requires_grad_()
+    expected = _direct_sense(
+        direct_image,
+        direct_smaps,
+        direct_traj,
+        scale=1,
+    )
+    expected_loss = (upstream.conj() * expected).sum().real
+    expected_gradients = torch.autograd.grad(
+        expected_loss,
+        (direct_image, direct_smaps, direct_traj),
+    )
+
+    assert _relative_error(actual, expected) < 2e-11
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        assert _relative_error(actual_gradient, expected_gradient) < 2e-11
+
+
+def test_finufft_adjoint_vjp_matches_direct_nudft():
+    device = _finufft_device()
+    torch.manual_seed(23)
+    dtype = torch.complex128
+    batch, coils, height, width, count = 2, 2, 6, 5, 17
+
+    samples_data = torch.randn(
+        batch,
+        coils,
+        count,
+        dtype=dtype,
+        device=device,
+    )
+    shared_smaps = torch.randn(
+        1,
+        coils,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    smaps_data = shared_smaps.expand(batch, -1, -1, -1).clone()
+    traj_data = (
+        torch.rand(1, 2, count, dtype=torch.float64, device=device) * 2 - 1
+    ) * torch.pi
+    upstream = torch.randn(
+        batch,
+        1,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+
+    samples = samples_data.clone().requires_grad_()
+    smaps = smaps_data.clone().requires_grad_()
+    traj = traj_data.clone().requires_grad_()
+    operator = NuSense(
+        smaps,
+        traj,
+        backend="finufft",
+        norm=None,
+        eps=1e-12,
+    )
+    actual = operator.H(samples)
+    actual_loss = (upstream.conj() * actual).sum().real
+    actual_gradients = torch.autograd.grad(
+        actual_loss,
+        (samples, smaps, traj),
+    )
+
+    direct_samples = samples_data.clone().requires_grad_()
+    direct_smaps = smaps_data.clone().requires_grad_()
+    direct_traj = traj_data.clone().requires_grad_()
+    expected = _direct_sense_adjoint(
+        direct_samples,
+        direct_smaps,
+        direct_traj,
+        (height, width),
+        scale=1,
+    )
+    expected_loss = (upstream.conj() * expected).sum().real
+    expected_gradients = torch.autograd.grad(
+        expected_loss,
+        (direct_samples, direct_smaps, direct_traj),
+    )
+
+    assert _relative_error(actual, expected) < 2e-11
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        assert _relative_error(actual_gradient, expected_gradient) < 2e-11
+
+
+@pytest.mark.parametrize("sequential", [False, True])
+def test_finufft_nonbatch_mode_matches_legacy(sequential):
+    device = _finufft_device()
+    torch.manual_seed(24)
+    dtype = torch.complex64
+    coils, height, width, count = 2, 10, 8, 79
+    image = torch.randn(height, width, dtype=dtype, device=device)
+    smaps = torch.randn(coils, height, width, dtype=dtype, device=device)
+    traj = (torch.rand(2, count, dtype=torch.float32, device=device) * 2 - 1) * torch.pi
+
+    legacy = NuSense(
+        smaps,
+        traj,
+        batchmode=False,
+        sequential=sequential,
+        backend="torchkbnufft",
+    )
+    finufft = NuSense(
+        smaps,
+        traj,
+        batchmode=False,
+        sequential=sequential,
+        backend="finufft",
+        eps=1e-6,
+    )
+
+    assert _relative_error(finufft(image), legacy(image)) < 2e-3
+    samples = torch.randn(coils, count, dtype=dtype, device=device)
+    assert _relative_error(finufft.H(samples), legacy.H(samples)) < 2e-3
+
+
+def test_finufft_legacy_ortho_scale_uses_oversampled_grid():
+    device = _finufft_device()
+    torch.manual_seed(25)
+    dtype = torch.complex128
+    height, width, count = 6, 5, 13
+    image = torch.randn(1, 1, height, width, dtype=dtype, device=device)
+    smaps = torch.ones(1, 1, height, width, dtype=dtype, device=device)
+    traj = (
+        torch.rand(1, 2, count, dtype=torch.float64, device=device) * 2 - 1
+    ) * torch.pi
+
+    operator = NuSense(
+        smaps,
+        traj,
+        backend="finufft",
+        grid_size=2,
+        norm="ortho",
+        eps=1e-12,
+    )
+    actual = operator(image)
+    grid_size = (math.floor(height * 2), math.floor(width * 2))
+    expected = _direct_sense(
+        image,
+        smaps,
+        traj,
+        scale=1 / math.sqrt(math.prod(grid_size)),
+    )
+    assert _relative_error(actual, expected) < 2e-11
+
+
+def test_finufft_and_legacy_cg_reconstructions_match():
+    device = _finufft_device()
+    torch.manual_seed(41)
+    dtype = torch.complex64
+    batch, coils, height, width, count = 1, 4, 16, 16, 800
+
+    truth = torch.randn(
+        batch,
+        1,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    smaps = torch.randn(
+        batch,
+        coils,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    smaps = smaps / torch.sqrt((smaps.abs() ** 2).sum(dim=1, keepdim=True))
+    traj = (
+        torch.rand(batch, 2, count, dtype=torch.float32, device=device) * 2 - 1
+    ) * torch.pi
+
+    legacy = NuSense(
+        smaps,
+        traj,
+        backend="torchkbnufft",
+        grid_size=2,
+        numpoints=6,
+    )
+    finufft = NuSense(
+        smaps,
+        traj,
+        backend="finufft",
+        grid_size=2,
+        eps=1e-6,
+    )
+    measurements = legacy(truth)
+    regularization = 0.05
+    identity = Identity(legacy.size_in)
+    legacy_normal = legacy.H * legacy + regularization * identity
+    finufft_normal = finufft.H * finufft + regularization * identity
+    finufft_toeplitz_normal = (
+        NuSenseGram(
+            smaps,
+            traj,
+            backend="finufft",
+            grid_size=2,
+            eps=1e-6,
+        )
+        + regularization * identity
+    )
+
+    legacy_reconstruction = CG(
+        legacy_normal,
+        max_iter=12,
+        tol=0,
+    ).run(
+        torch.zeros_like(truth),
+        legacy.H(measurements),
+    )
+    finufft_reconstruction = CG(
+        finufft_normal,
+        max_iter=12,
+        tol=0,
+    ).run(
+        torch.zeros_like(truth),
+        finufft.H(measurements),
+    )
+    finufft_toeplitz_reconstruction = CG(
+        finufft_toeplitz_normal,
+        max_iter=12,
+        tol=0,
+    ).run(
+        torch.zeros_like(truth),
+        finufft.H(measurements),
+    )
+
+    assert _relative_error(finufft_reconstruction, legacy_reconstruction) < 1e-3
+    assert (
+        _relative_error(
+            finufft_toeplitz_reconstruction,
+            finufft_reconstruction,
+        )
+        < 2e-4
+    )
+
+
+def test_finufft_toeplitz_matches_direct_gram_legacy_and_gradients():
+    device = _finufft_device()
+    torch.manual_seed(42)
+    dtype = torch.complex64
+    batch, coils, height, width, count = 2, 3, 12, 10, 211
+
+    image_data = torch.randn(
+        batch,
+        1,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    smaps_data = torch.randn(
+        1,
+        coils,
+        height,
+        width,
+        dtype=dtype,
+        device=device,
+    )
+    traj = (
+        torch.rand(batch, 2, count, dtype=torch.float32, device=device) * 2 - 1
+    ) * torch.pi
+    upstream = torch.randn_like(image_data)
+
+    direct_image = image_data.clone().requires_grad_()
+    direct_smaps = smaps_data.clone().requires_grad_()
+    direct = NuSense(
+        direct_smaps,
+        traj,
+        backend="finufft",
+        norm="ortho",
+        grid_size=2,
+        eps=1e-6,
+    )
+    direct_output = direct.H(direct(direct_image))
+    direct_loss = (upstream.conj() * direct_output).sum().real
+    direct_gradients = torch.autograd.grad(
+        direct_loss,
+        (direct_image, direct_smaps),
+    )
+
+    gram_image = image_data.clone().requires_grad_()
+    gram_smaps = smaps_data.clone().requires_grad_()
+    gram = NuSenseGram(
+        gram_smaps,
+        traj,
+        backend="finufft",
+        norm="ortho",
+        grid_size=2,
+        eps=1e-6,
+    )
+    gram_output = gram(gram_image)
+    gram_loss = (upstream.conj() * gram_output).sum().real
+    gram_gradients = torch.autograd.grad(
+        gram_loss,
+        (gram_image, gram_smaps),
+    )
+
+    legacy = NuSenseGram(
+        smaps_data,
+        traj,
+        backend="torchkbnufft",
+        norm="ortho",
+        grid_size=2,
+        numpoints=6,
+    )
+    legacy_output = legacy(image_data)
+
+    assert _relative_error(gram_output, direct_output) < 2e-5
+    assert _relative_error(gram_output, legacy_output) < 3e-3
+    for gram_gradient, direct_gradient in zip(
+        gram_gradients,
+        direct_gradients,
+        strict=True,
+    ):
+        assert _relative_error(gram_gradient, direct_gradient) < 3e-5
+
+    probe = torch.randn_like(image_data)
+    lhs = (probe.conj() * gram(image_data)).sum()
+    rhs = (gram(probe).conj() * image_data).sum()
+    assert torch.allclose(lhs, rhs, rtol=2e-5, atol=2e-5)
+
+
+@pytest.mark.parametrize("im_size", [(7,), (5, 4), (4, 3, 3)])
+def test_finufft_toeplitz_matches_direct_gram_in_each_dimension(im_size):
+    device = _finufft_device()
+    torch.manual_seed(43)
+    batch, coils, count = 1, 2, 19
+    image = torch.randn(
+        batch,
+        1,
+        *im_size,
+        dtype=torch.complex64,
+        device=device,
+    )
+    smaps = torch.randn(
+        batch,
+        coils,
+        *im_size,
+        dtype=torch.complex64,
+        device=device,
+    )
+    traj = (
+        torch.rand(
+            batch,
+            len(im_size),
+            count,
+            dtype=torch.float32,
+            device=device,
+        )
+        * 2
+        - 1
+    ) * torch.pi
+
+    direct = NuSense(
+        smaps,
+        traj,
+        backend="finufft",
+        norm=None,
+        eps=1e-6,
+    )
+    gram = NuSenseGram(
+        smaps,
+        traj,
+        backend="finufft",
+        norm=None,
+        eps=1e-6,
+    )
+
+    assert _relative_error(gram(image), direct.H(direct(image))) < 3e-5
+
+
+def test_finufft_toeplitz_nonbatch_mode_matches_direct_gram():
+    device = _finufft_device()
+    torch.manual_seed(44)
+    coils, height, width, count = 2, 7, 6, 31
+    image = torch.randn(
+        height,
+        width,
+        dtype=torch.complex64,
+        device=device,
+    )
+    smaps = torch.randn(
+        coils,
+        height,
+        width,
+        dtype=torch.complex64,
+        device=device,
+    )
+    traj = (
+        torch.rand(2, count, dtype=torch.float32, device=device) * 2 - 1
+    ) * torch.pi
+
+    direct = NuSense(
+        smaps,
+        traj,
+        batchmode=False,
+        backend="finufft",
+        norm="ortho",
+        eps=1e-6,
+    )
+    gram = NuSenseGram(
+        smaps,
+        traj,
+        batchmode=False,
+        backend="finufft",
+        norm="ortho",
+        eps=1e-6,
+    )
+
+    assert _relative_error(gram(image), direct.H(direct(image))) < 3e-5

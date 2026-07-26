@@ -1,6 +1,7 @@
+import math
+
 import numpy as np
 from scipy.fft import idct
-import math
 
 
 def idct_basis_2d(len_basis, num_basis):

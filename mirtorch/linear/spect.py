@@ -4,7 +4,7 @@ SPECT forward-backward projector with parallel beam collimator.
 2023-06, Zongyu Li, University of Michigan
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import torch
 from torch import Tensor
@@ -31,15 +31,15 @@ class SPECT(LinearMap):
         psfs: Tensor,
         dy: float,
     ):
-        super(SPECT, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
         self.mumap = mumap
         self.psfs = psfs
-        assert (
-            mumap.device == psfs.device
-        ), "mumap and psfs should be on the same device!"
-        assert (
-            mumap.dtype == psfs.dtype
-        ), "mumap and psfs should have the same datatype!"
+        assert mumap.device == psfs.device, (
+            "mumap and psfs should be on the same device!"
+        )
+        assert mumap.dtype == psfs.dtype, (
+            "mumap and psfs should have the same datatype!"
+        )
         assert mumap.shape == torch.Size(size_in), "mumap shape mismatched!"
         assert psfs.shape[-1] == size_out[-1], "psfs nview mismatched!"
 
@@ -93,7 +93,7 @@ def project(image, mumap, psfs, dy):
         psfs: px * pz * ny * nview
         dy: floating point
     """
-    nx, ny, nz = image.shape
+    nx, _, nz = image.shape
     nview = psfs.shape[-1]
     views = torch.zeros(nx, nz, nview).to(image.device).to(image.dtype)
     anglelist = torch.linspace(0, 360, nview + 1)[0:-1]

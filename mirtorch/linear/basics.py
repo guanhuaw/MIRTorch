@@ -4,13 +4,17 @@ More on the way ...
 2021-02. Guanhua Wang and Keyue Zhu, University of Michigan
 """
 
+import copy
+from collections.abc import Sequence
+
+import numpy as np
 import torch
 import torch.nn.functional as F
-import copy
-import numpy as np
-from .linearmaps import LinearMap
-from typing import Sequence
 from torch import Tensor
+
+from mirtorch._compile import compile_callable, should_compile
+
+from .linearmaps import LinearMap
 from .util import DiffFunc, DiffFunc_adj, dim_conv
 
 
@@ -26,12 +30,12 @@ class Diff1d(LinearMap):
         # TODO: determine size_out by size in
         size_out = copy.copy(size_in)
         size_out[dim] -= 1
-        super(Diff1d, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
         self.dim = dim
         self.mode = mode
-        assert np.isscalar(
-            dim
-        ), "Please denote 1 dimension for a 1D finite difference operator"
+        assert np.isscalar(dim), (
+            "Please denote 1 dimension for a 1D finite difference operator"
+        )
 
     def _apply(self, x):
         return DiffFunc.apply(x, self.dim, self.mode)
@@ -52,7 +56,7 @@ class Diffnd(LinearMap):
         self.dims = sorted(dims)
         size_out = copy.copy(list(size_in))
         size_out[self.dims[0]] = size_out[self.dims[0]] * len(dims)
-        super(Diffnd, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
 
     def _apply(self, x):
         diff = []
@@ -80,10 +84,13 @@ class Diff2dgram(LinearMap):
     """
     A little more efficient way to implement the gram operator for the Gram (A'A) of finite difference.
     Apply to last two dimensions, with the reflexive boundary condition.
+    Real-valued CUDA inputs are compiled automatically by default.
     """
 
-    def __init__(self, size_in: Sequence[int]):
-        super(Diff2dgram, self).__init__(size_in, size_in)
+    def __init__(self, size_in: Sequence[int], compile: bool = True):
+        super().__init__(size_in, size_in)
+        self.compile = compile
+        self._compiled_rtr = None
 
     def RtR(self, x):
         return torch.cat(
@@ -103,10 +110,14 @@ class Diff2dgram(LinearMap):
         )
 
     def _apply(self, x):
+        if should_compile(self.compile, x):
+            if self._compiled_rtr is None:
+                self._compiled_rtr = compile_callable(self.RtR)
+            return self._compiled_rtr(x)
         return self.RtR(x)
 
     def _apply_adjoint(self, x):
-        return self.RtR(x)
+        return self._apply(x)
 
 
 class Diff3dgram(LinearMap):
@@ -116,7 +127,7 @@ class Diff3dgram(LinearMap):
     """
 
     def __init__(self, size_in: Sequence[int]):
-        super(Diff3dgram, self).__init__(size_in, size_in)
+        super().__init__(size_in, size_in)
 
     def RtR(self, x):
         return (
@@ -165,7 +176,7 @@ class Diag(LinearMap):
     """
 
     def __init__(self, P: Tensor):
-        super(Diag, self).__init__(list(P.shape), list(P.shape))
+        super().__init__(list(P.shape), list(P.shape))
         self.P = P
 
     def _apply(self, x):
@@ -183,7 +194,7 @@ class Identity(LinearMap):
 
     def __init__(self, size_in):
         size_out = size_in
-        super(Identity, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
 
     def _apply(self, x):
         return x
@@ -208,18 +219,18 @@ class Convolve1d(LinearMap):
         dilation: int = 1,
     ):
         # only weight and input size
-        assert (
-            len(list(size_in)) == 3
-        ), "input must have the shape (minibatch, in_channels, iW)"
-        assert (
-            len(list(weight.shape)) == 3
-        ), "weight must have the shape (out_channels, in_channels, kW)"
+        assert len(list(size_in)) == 3, (
+            "input must have the shape (minibatch, in_channels, iW)"
+        )
+        assert len(list(weight.shape)) == 3, (
+            "weight must have the shape (out_channels, in_channels, kW)"
+        )
         minimatch, _, iW = size_in
         out_channel, _, kW = weight.shape
         assert iW >= kW, "Kernel size can't be greater than actual input size"
         Lout = (iW + 2 * padding - dilation * (kW - 1) - 1) // stride + 1
         size_out = (minimatch, out_channel, Lout)
-        super(Convolve1d, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
         self.weight = weight
         self.bias = bias
         self.stride = stride
@@ -262,17 +273,17 @@ class Convolve2d(LinearMap):
         padding: int = 0,
         dilation: int = 1,
     ):
-        assert (
-            len(list(size_in)) == 4
-        ), "input must have the shape (minibatch, in_channels, iH, iW)"
-        assert (
-            len(list(weight.shape)) == 4
-        ), "weight must have the shape (out_channels, in_channels, kH, kW)"
+        assert len(list(size_in)) == 4, (
+            "input must have the shape (minibatch, in_channels, iH, iW)"
+        )
+        assert len(list(weight.shape)) == 4, (
+            "weight must have the shape (out_channels, in_channels, kH, kW)"
+        )
         minimatch, _, iH, iW = size_in
         out_channel, _, kH, kW = weight.shape
-        assert (
-            iH >= kH and iW >= kW
-        ), "Kernel size can't be greater than actual input size"
+        assert iH >= kH and iW >= kW, (
+            "Kernel size can't be greater than actual input size"
+        )
 
         if isinstance(stride, int):
             stride = tuple([stride] * 2)
@@ -285,7 +296,7 @@ class Convolve2d(LinearMap):
         Wout = (iW + 2 * padding[1] - dilation[1] * (kW - 1) - 1) // stride[1] + 1
         size_out = (minimatch, out_channel, Hout, Wout)
 
-        super(Convolve2d, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
         self.weight = weight
         self.bias = bias
         self.stride = stride
@@ -328,17 +339,17 @@ class Convolve3d(LinearMap):
         padding: int = 0,
         dilation: int = 1,
     ):
-        assert (
-            len(list(size_in)) == 5
-        ), "input must have the shape (minibatch, in_channels, iD, iH, iW)"
-        assert (
-            len(list(weight.shape)) == 5
-        ), "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
+        assert len(list(size_in)) == 5, (
+            "input must have the shape (minibatch, in_channels, iD, iH, iW)"
+        )
+        assert len(list(weight.shape)) == 5, (
+            "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
+        )
         minimatch, _, iD, iH, iW = size_in
         out_channel, _, kD, kH, kW = weight.shape
-        assert (
-            iD >= kD and iH >= kH and iW >= kW
-        ), "Kernel size can't be greater than actual input size"
+        assert iD >= kD and iH >= kH and iW >= kW, (
+            "Kernel size can't be greater than actual input size"
+        )
 
         if isinstance(stride, int):
             stride = tuple([stride] * 3)
@@ -352,7 +363,7 @@ class Convolve3d(LinearMap):
         Wout = (iW + 2 * padding[2] - dilation[2] * (kW - 1) - 1) // stride[2] + 1
         size_out = (minimatch, out_channel, Dout, Hout, Wout)
 
-        super(Convolve3d, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
         self.weight = weight
         self.bias = bias
         self.stride = stride
@@ -418,7 +429,7 @@ class Patch2D(LinearMap):
                 size_kernel,
                 size_kernel,
             )
-        super(Patch2D, self).__init__(self.size_in, self.size_out)
+        super().__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
         """
@@ -503,7 +514,7 @@ class Patch3D(LinearMap):
                 size_kernel,
                 size_kernel,
             )
-        super(Patch3D, self).__init__(self.size_in, self.size_out)
+        super().__init__(self.size_in, self.size_out)
 
     def _apply(self, x) -> Tensor:
         """

@@ -151,4 +151,5 @@ def test_patch3d_adjoint(device):
                 exp[:, :, ix:ix+2, iy:iy+2, iz:iz+2] += x[:, :, ix, iy, iz, :, :, :]
     P = basics.Patch3D(exp.shape, kernel_size, stride)
     out = P.H * x
-    assert torch.allclose(out, exp, rtol=1e-3)
+    # CUDA may accumulate overlapping patches in a different order.
+    assert torch.allclose(out, exp, rtol=1e-3, atol=1e-5)

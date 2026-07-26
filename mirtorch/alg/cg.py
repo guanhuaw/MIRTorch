@@ -1,5 +1,6 @@
-import torch
 import logging
+
+import torch
 from torch import Tensor
 
 logger = logging.getLogger(__name__)
@@ -7,24 +8,34 @@ logger = logging.getLogger(__name__)
 
 class CG_func(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, b: Tensor, A, max_iter, tol, alert, x0, eval_func, P):
-        ctx.save_for_backward(b)
+    def forward(ctx, b: Tensor, A, max_iter, tol, alert, x0, eval_func, P, saved):
         ctx.A = A
         ctx.max_iter = max_iter
         ctx.tol = tol
         ctx.alert = alert
-        ctx.eval_func = eval_func
         ctx.P = P
-        return cg_block(x0, b, A, tol, max_iter, alert, eval_func, P)
+        result = cg_block(x0, b, A, tol, max_iter, alert, eval_func, P)
+        if eval_func is None:
+            return result
+        solution, evaluations = result
+        saved.extend(evaluations)
+        return solution
 
     @staticmethod
-    def backward(ctx, dx):
-        b = ctx.saved_tensors[0]
-        # a better initialization?
+    def backward(ctx, *grad_outputs):
+        dx = grad_outputs[0]
         return (
             cg_block(
-                b, dx, ctx.A, ctx.tol, ctx.max_iter, ctx.alert, ctx.eval_func, ctx.P
+                torch.zeros_like(dx),
+                dx,
+                ctx.A,
+                ctx.tol,
+                ctx.max_iter,
+                ctx.alert,
+                None,
+                ctx.P,
             ),
+            None,
             None,
             None,
             None,
@@ -45,8 +56,7 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
         xk = x0.detach().clone()
         rktrk = torch.square(torch.norm(rk))
         num_loop = 0
-        if eval_func is not None:
-            saved = []
+        saved = []
         while rktrk.item() > tol and num_loop < max_iter:
             pktapk = torch.sum(pk.conj() * (A * pk)).abs()
             alpha = rktrk / pktapk
@@ -64,7 +74,9 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
                 saved.append(eval_func(rk))
             if alert:
                 logger.info(
-                    "Residual at %dth iter in forward CG: %10.3e." % (num_loop, rktrk)
+                    "Residual at %dth iter in forward CG: %10.3e.",
+                    num_loop,
+                    rktrk,
                 )
     else:
         r0 = b - A * x0
@@ -74,8 +86,7 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
         xk = x0.detach().clone()
         rktzk = (rk.conj() * zk).sum().abs()
         num_loop = 0
-        if eval_func is not None:
-            saved = []
+        saved = []
         while torch.square(torch.norm(rk)).item() > tol and num_loop < max_iter:
             pktapk = torch.sum(pk.conj() * (A * pk)).abs()
             alpha = rktzk / pktapk
@@ -94,13 +105,15 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
                 saved.append(eval_func(rk))
             if alert:
                 logger.info(
-                    "Residual at %dth iter in CG backpropagation: %10.3e."
-                    % (num_loop, rktzk)
+                    "Residual at %dth iter in CG backpropagation: %10.3e.",
+                    num_loop,
+                    rktzk,
                 )
                 if torch.cuda.is_available():
-                    logging.info(
-                        "GPU memory usage at %dth iter in CG backpropagation: %10.3e."
-                        % (num_loop, torch.cuda.memory_allocated() / 1024 / 1024 / 1024)
+                    logger.info(
+                        "GPU memory usage at %dth iter in CG backpropagation: %10.3e.",
+                        num_loop,
+                        torch.cuda.memory_allocated() / 1024**3,
                     )
 
     if eval_func is not None:
@@ -127,11 +140,16 @@ class CG:
     """
 
     def __init__(self, A, max_iter=20, tol=1e-2, P=None, alert=False, eval_func=None):
+        if A.size_in != A.size_out:
+            raise ValueError("CG requires a square LinearMap")
+        if not isinstance(max_iter, int) or max_iter < 0:
+            raise ValueError("max_iter must be a non-negative integer")
+        if tol < 0:
+            raise ValueError("tol must be non-negative")
         self.solver = CG_func.apply
         self.A = A
         self.max_iter = max_iter
         self.tol = tol
-        self.solver = CG_func.apply
         self.alert = alert
         self.eval_func = eval_func
         self.P = P
@@ -148,6 +166,20 @@ class CG:
         """
         if list(self.A.size_out) != list(b.shape):
             raise ValueError("The size of A and b do not match.")
-        return self.solver(
-            b, self.A, self.max_iter, self.tol, self.alert, x0, self.eval_func, self.P
+        if list(self.A.size_in) != list(x0.shape):
+            raise ValueError("The size of A and x0 do not match.")
+        saved = []
+        solution = self.solver(
+            b,
+            self.A,
+            self.max_iter,
+            self.tol,
+            self.alert,
+            x0,
+            self.eval_func,
+            self.P,
+            saved,
         )
+        if self.eval_func is not None:
+            return solution, saved
+        return solution

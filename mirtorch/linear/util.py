@@ -1,10 +1,9 @@
-from typing import Union, Tuple, List
+from collections.abc import Sequence
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torchvision
-from torch import Tensor
+from torch import Tensor, nn
 
 
 def finitediff(x: Tensor, dim: int = -1, mode="reflexive"):
@@ -90,7 +89,7 @@ class DiffFunc_adj(torch.autograd.Function):
         return finitediff(dx, ctx.dim, ctx.mode), None, None
 
 
-def fftshift(x: Tensor, dims: Union[int, List[int]] | None = None):
+def fftshift(x: Tensor, dims: int | Sequence[int] | None = None):
     """
     Similar to np.fft.fftshift but applies to PyTorch tensors. From fastMRI code.
     """
@@ -105,7 +104,7 @@ def fftshift(x: Tensor, dims: Union[int, List[int]] | None = None):
     return torch.roll(x, shifts, dims)
 
 
-def ifftshift(x: Tensor, dims: Union[int, Tuple[int]] | None = None):
+def ifftshift(x: Tensor, dims: int | Sequence[int] | None = None):
     """
     Similar to np.fft.ifftshift but applies to PyTorch tensors. From fastMRI code.
     """

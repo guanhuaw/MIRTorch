@@ -16,6 +16,7 @@
 !*.yml
 !*.yaml
 !*.toml
+!*.in
 
 
 # even if in sub-dirs

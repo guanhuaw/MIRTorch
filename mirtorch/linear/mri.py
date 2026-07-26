@@ -4,7 +4,7 @@ Discrete-to-discrete system matrices for MRI.
 """
 
 import math
-from typing import Union, List, Tuple
+import sys
 
 import numpy as np
 import torch
@@ -12,8 +12,28 @@ import torchkbnufft as tkbn
 from torch import Tensor
 from torch.fft import fftn, ifftn
 
+from ._finufft import (
+    FinufftSenseBackend,
+    finufft_sense_adjoint,
+    finufft_sense_forward,
+)
 from .linearmaps import LinearMap
 from .util import fftshift, ifftshift
+
+
+def _resolve_nufft_backend(backend: str, device: torch.device) -> str:
+    if backend == "auto":
+        if device.type == "cuda":
+            return "finufft"
+        if device.type == "cpu" and sys.platform != "darwin":
+            return "finufft"
+        return "torchkbnufft"
+    if backend not in ("torchkbnufft", "finufft"):
+        raise ValueError(
+            "NUFFT backend must be 'auto', 'torchkbnufft', or 'finufft', "
+            f"not {backend!r}."
+        )
+    return backend
 
 
 class FFTCn(LinearMap):
@@ -29,12 +49,12 @@ class FFTCn(LinearMap):
 
     def __init__(
         self,
-        size_in: List[int],
-        size_out: List[int],
-        dims: Tuple[int] | None = None,
+        size_in: list[int],
+        size_out: list[int],
+        dims: tuple[int, ...] | None = None,
         norm: str = "ortho",
     ):
-        super(FFTCn, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
 
@@ -120,23 +140,23 @@ class Sense(LinearMap):
             # Set sizes
             size_in = (nbatch, 1) + tuple(smaps.shape[2:])
             size_out = (nbatch, ncoil) + tuple(smaps.shape[2:])
-            dims = tuple(np.arange(2, len(smaps.shape)))
+            dims = tuple(range(2, len(smaps.shape)))
             self.masks = masks.unsqueeze(1)  # Add channel dimension
 
-            assert (
-                smaps.shape[2:] == masks.shape[1:]
-            ), f"Spatial dimensions mismatch: smaps {smaps.shape[2:]}, masks {masks.shape[1:]}"
+            assert smaps.shape[2:] == masks.shape[1:], (
+                f"Spatial dimensions mismatch: smaps {smaps.shape[2:]}, masks {masks.shape[1:]}"
+            )
         else:
             size_in = tuple(smaps.shape[1:])
             size_out = tuple(smaps.shape)
-            dims = tuple(np.arange(1, len(smaps.shape)))
+            dims = tuple(range(1, len(smaps.shape)))
             self.masks = masks
 
-            assert (
-                smaps.shape[1:] == masks.shape
-            ), f"Spatial dimensions mismatch: smaps {smaps.shape[1:]}, masks {masks.shape}"
+            assert smaps.shape[1:] == masks.shape, (
+                f"Spatial dimensions mismatch: smaps {smaps.shape[1:]}, masks {masks.shape}"
+            )
 
-        super(Sense, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
         self.smaps = smaps
@@ -175,9 +195,9 @@ class Sense(LinearMap):
         Returns:
             x:  tensor with dimension [batch, 1, nx, ny, (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
-        assert list(k.shape) == list(
-            self.size_out
-        ), f"Shape mismatch: expected {self.size_out}, got {k.shape}"
+        assert list(k.shape) == list(self.size_out), (
+            f"Shape mismatch: expected {self.size_out}, got {k.shape}"
+        )
 
         k = k * self.masks
         k = ifftshift(k, self.dims)
@@ -202,8 +222,9 @@ class Sense(LinearMap):
 class NuSense(LinearMap):
     r"""
     Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
-    The implementation calls Matthew Muckley's Torchkbnufft toolbox:
-    https://github.com/mmuckley/torchkbnufft
+    The default implementation calls Matthew Muckley's Torchkbnufft toolbox:
+    https://github.com/mmuckley/torchkbnufft. MIRTorch uses FINUFFT on
+    supported CPUs, cuFINUFFT on CUDA, and torchkbnufft on Apple Metal.
 
     Broadcasting behavior:
     - If smaps or traj have shape [1, ...], they will be broadcast to the batch size
@@ -240,6 +261,8 @@ class NuSense(LinearMap):
         sequential: bool, memory saving mode
         numpoints: int, number of interpolation points in gridding
         grid_size: float, oversampling ratio (>1)
+        backend: ``"auto"`` (default), ``"finufft"``, or ``"torchkbnufft"``
+        eps: requested FINUFFT relative precision
     """
 
     def __init__(
@@ -248,15 +271,20 @@ class NuSense(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
-        numpoints: Union[int, List[int]] = 6,
+        numpoints: int | list[int] = 6,
         grid_size: float = 2,
         sequential: bool = False,
+        backend: str = "auto",
+        eps: float = 1e-6,
     ):
         self.smaps = smaps
         self.norm = norm
         self.traj = traj
         self.batchmode = batchmode
         self.sequential = sequential
+        self.backend = _resolve_nufft_backend(backend, smaps.device)
+        self.eps = eps
+        backend = self.backend
         assert grid_size >= 1, "grid size should be greater than 1"
 
         ncoil = smaps.shape[1] if batchmode else smaps.shape[0]
@@ -281,41 +309,54 @@ class NuSense(LinearMap):
             self.grid_size = tuple(
                 np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
             )
-            self.A = tkbn.KbNufft(
-                im_size=tuple(smaps.shape[2:]),
-                grid_size=self.grid_size,
-                numpoints=numpoints,
-            ).to(smaps)
-            self.AT = tkbn.KbNufftAdjoint(
-                im_size=tuple(smaps.shape[2:]),
-                grid_size=self.grid_size,
-                numpoints=numpoints,
-            ).to(smaps)
+            if backend == "torchkbnufft":
+                self.A = tkbn.KbNufft(
+                    im_size=tuple(smaps.shape[2:]),
+                    grid_size=self.grid_size,
+                    numpoints=numpoints,
+                ).to(smaps)
+                self.AT = tkbn.KbNufftAdjoint(
+                    im_size=tuple(smaps.shape[2:]),
+                    grid_size=self.grid_size,
+                    numpoints=numpoints,
+                ).to(smaps)
 
             size_in = (
                 nbatch,
                 1,
             ) + tuple(smaps.shape[2:])
             size_out = (nbatch, ncoil, traj.shape[-1])
-            super(NuSense, self).__init__(size_in, size_out)
+            super().__init__(size_in, size_out)
         else:
             self.grid_size = tuple(
                 np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int)
             )
-            self.A = tkbn.KbNufft(
-                im_size=tuple(smaps.shape[1:]),
-                grid_size=self.grid_size,
-                numpoints=numpoints,
-            ).to(smaps)
-            self.AT = tkbn.KbNufftAdjoint(
-                im_size=tuple(smaps.shape[1:]),
-                grid_size=self.grid_size,
-                numpoints=numpoints,
-            ).to(smaps)
+            if backend == "torchkbnufft":
+                self.A = tkbn.KbNufft(
+                    im_size=tuple(smaps.shape[1:]),
+                    grid_size=self.grid_size,
+                    numpoints=numpoints,
+                ).to(smaps)
+                self.AT = tkbn.KbNufftAdjoint(
+                    im_size=tuple(smaps.shape[1:]),
+                    grid_size=self.grid_size,
+                    numpoints=numpoints,
+                ).to(smaps)
 
             size_in = smaps.shape[1:]
             size_out = (smaps.shape[0], traj.shape[-1])
-            super(NuSense, self).__init__(size_in, size_out)
+            super().__init__(size_in, size_out)
+
+        if backend == "finufft":
+            im_size = tuple(smaps.shape[2:] if batchmode else smaps.shape[1:])
+            self._finufft_backend = FinufftSenseBackend(
+                im_size=im_size,
+                grid_size=self.grid_size,
+                norm=norm,
+                batchmode=batchmode,
+                sequential=sequential,
+                eps=eps,
+            )
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -324,6 +365,14 @@ class NuSense(LinearMap):
         Returns:
             k： tensor with dimension [batch, ncoil, nshot*npoints] or [ncoil, nshot*npoints]
         """
+        if self.backend == "finufft":
+            return finufft_sense_forward(
+                x,
+                self.smaps,
+                self.traj,
+                self._finufft_backend,
+            )
+
         if self.sequential:
             k = torch.zeros(self.size_out, dtype=x.dtype, device=x.device)
             if self.batchmode:
@@ -357,9 +406,7 @@ class NuSense(LinearMap):
                     self.traj,
                     smaps=self.smaps.unsqueeze(0),
                     norm=self.norm,
-                ).squeeze(
-                    0
-                )  # Remove batch dimension only, keep [ncoil, npoints]
+                ).squeeze(0)  # Remove batch dimension only, keep [ncoil, npoints]
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
         r"""
@@ -368,6 +415,14 @@ class NuSense(LinearMap):
         Returns:
             x:  tensor with dimension [nbatch, 1, nx, ny (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
+        if self.backend == "finufft":
+            return finufft_sense_adjoint(
+                y,
+                self.smaps,
+                self.traj,
+                self._finufft_backend,
+            )
+
         if self.sequential:
             x = torch.zeros(self.size_in, dtype=y.dtype, device=y.device)
             if self.batchmode:
@@ -411,8 +466,10 @@ class NuSense(LinearMap):
 class NuSenseGram(LinearMap):
     r"""
     Gram operator (A'A) of the Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
-    The implementation calls Matthew Muckley's Torchkbnufft toolbox:
-    https://github.com/mmuckley/torchkbnufft
+    The default implementation calls Matthew Muckley's Torchkbnufft toolbox.
+    On CPU and CUDA, the default backend constructs a Toeplitz embedding for a
+    fixed trajectory with FINUFFT or cuFINUFFT and applies it using PyTorch
+    FFTs.
 
     Broadcasting behavior:
     - If smaps or traj have shape [1, ...], they will be broadcast to the batch size
@@ -447,6 +504,8 @@ class NuSenseGram(LinearMap):
         batchmode: bool, determining if there exist batch and channel dimension
         numpoints: int, number of interpolation points in gridding
         grid_size: float, oversampling ratio (>1)
+        backend: ``"auto"`` (default), ``"finufft"``, or ``"torchkbnufft"``
+        eps: requested FINUFFT relative precision for kernel construction
     """
 
     def __init__(
@@ -455,14 +514,20 @@ class NuSenseGram(LinearMap):
         traj: Tensor,
         norm="ortho",
         batchmode=True,
-        numpoints: Union[int, List[int]] = 6,
+        numpoints: int | list[int] = 6,
         grid_size: float = 2,
+        backend: str = "auto",
+        eps: float = 1e-6,
     ):
         self.smaps = smaps
         self.norm = norm
         self.traj = traj
         self.batchmode = batchmode
-        self.toep_op = tkbn.ToepNufft()
+        self.backend = _resolve_nufft_backend(backend, smaps.device)
+        self.eps = eps
+        backend = self.backend
+        if backend == "torchkbnufft":
+            self.toep_op = tkbn.ToepNufft()
 
         if batchmode:
             # Determine batch size from inputs
@@ -484,33 +549,68 @@ class NuSenseGram(LinearMap):
             self.grid_size = tuple(
                 np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
             )
-            self.kernel = tkbn.calc_toeplitz_kernel(
-                traj,
-                list(smaps.shape[2:]),
-                grid_size=self.grid_size,
-                numpoints=numpoints,
-                norm=self.norm,
-            )
+            im_size = tuple(smaps.shape[2:])
 
             size_in = (
                 nbatch,
                 1,
             ) + tuple(smaps.shape[2:])
-            super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
+            super().__init__(tuple(size_in), tuple(size_in))
         else:
             self.grid_size = tuple(
                 np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int)
             )
+            im_size = tuple(smaps.shape[1:])
+
+            size_in = list(smaps.shape[1:])
+            super().__init__(tuple(size_in), tuple(size_in))
+
+        if backend == "torchkbnufft":
             self.kernel = tkbn.calc_toeplitz_kernel(
                 traj,
-                list(smaps.shape[1:]),
+                list(im_size),
                 grid_size=self.grid_size,
                 numpoints=numpoints,
                 norm=self.norm,
             )
+        else:
+            if smaps.device != traj.device:
+                raise ValueError(
+                    "sensitivity maps and trajectory must be on one device"
+                )
+            self._finufft_backend = FinufftSenseBackend(
+                im_size=im_size,
+                grid_size=self.grid_size,
+                norm=norm,
+                batchmode=batchmode,
+                sequential=False,
+                eps=eps,
+            )
+            self.kernel = self._finufft_backend.toeplitz_kernel(
+                traj,
+                smaps.dtype,
+            )
+            self._trajectory_version = traj._version
 
-            size_in = list(smaps.shape[1:])
-            super(NuSenseGram, self).__init__(tuple(size_in), tuple(size_in))
+    def _check_fixed_trajectory(self) -> None:
+        if self.traj.requires_grad:
+            raise RuntimeError(
+                "The FINUFFT Toeplitz backend currently supports fixed "
+                "trajectories only."
+            )
+        if self.traj._version != self._trajectory_version:
+            raise RuntimeError(
+                "The trajectory changed after the FINUFFT Toeplitz kernel "
+                "was constructed; create a new NuSenseGram operator."
+            )
+
+    def to(self, device):
+        if self.backend == "finufft":
+            self._check_fixed_trajectory()
+        result = super().to(device)
+        if self.backend == "finufft":
+            self._trajectory_version = self.traj._version
+        return result
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -519,6 +619,14 @@ class NuSenseGram(LinearMap):
         Returns:
             x:  tensor with dimension [nbatch, 1, nx, ny (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
+        if self.backend == "finufft":
+            self._check_fixed_trajectory()
+            return self._finufft_backend.sense_gram(
+                x,
+                self.smaps,
+                self.kernel,
+            )
+
         if self.batchmode:
             return self.toep_op(x, self.kernel, smaps=self.smaps, norm=self.norm)
         else:
@@ -534,6 +642,8 @@ class NuSenseGram(LinearMap):
             )
 
     def _apply_adjoint(self, y: Tensor) -> Tensor:
+        if self.backend == "finufft":
+            return self._apply(y)
         if self.batchmode:
             return self.toep_op(y, self.kernel, smaps=self.smaps, norm=self.norm)
         else:
@@ -579,7 +689,7 @@ class Gmri(LinearMap):
         L: int = 6,
         nbins: int = 20,
         dt: int = 4e-3,
-        numpoints: Union[int, List[int]] = 6,
+        numpoints: int | list[int] = 6,
         grid_size: float = 2,
         T: Tensor = None,
     ):
@@ -664,7 +774,7 @@ class Gmri(LinearMap):
         self.traj = self.traj.reshape(
             (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
         )
-        super(Gmri, self).__init__(size_in, size_out)
+        super().__init__(size_in, size_out)
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -731,7 +841,7 @@ class GmriGram(LinearMap):
         L: int = 6,
         nbins: int = 20,
         dt: int = 4e-3,
-        numpoints: Union[int, List[int]] = 6,
+        numpoints: int | list[int] = 6,
         grid_size: float = 2,
         T: Tensor = None,
     ):
@@ -823,7 +933,7 @@ class GmriGram(LinearMap):
                 )
             )
 
-        super(GmriGram, self).__init__(tuple(size_in), tuple(size_in))
+        super().__init__(tuple(size_in), tuple(size_in))
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""

@@ -1,58 +1,73 @@
-from .linearmaps import (
-    LinearMap,
-    Add,
-    Multiply,
-    Matmul,
-    ConjTranspose,
-    BlockDiagonal,
-    Kron,
-    Vstack,
-    Hstack,
-)
+from importlib import import_module
+
 from .basics import (
-    Diff1d,
-    Diff2dgram,
-    Diff3dgram,
-    Diag,
     Convolve1d,
     Convolve2d,
     Convolve3d,
+    Diag,
+    Diff1d,
+    Diff2dgram,
+    Diff3dgram,
+    Diffnd,
     Identity,
     Patch2D,
     Patch3D,
-    Diffnd,
 )
-from .mri import FFTCn, NuSense, NuSenseGram, Gmri, GmriGram, Sense
-from .wavelets import Wavelet2D
+from .linearmaps import (
+    Add,
+    BlockDiagonal,
+    ConjTranspose,
+    Hstack,
+    Kron,
+    LinearMap,
+    Matmul,
+    Multiply,
+    Vstack,
+)
 from .spect import SPECT
+from .wavelets import Wavelet2D
+
+_MRI_EXPORTS = frozenset(
+    {"FFTCn", "Gmri", "GmriGram", "NuSense", "NuSenseGram", "Sense"}
+)
+
+
+def __getattr__(name):
+    """Load the optional, comparatively expensive MRI module on first use."""
+    if name in _MRI_EXPORTS:
+        value = getattr(import_module(".mri", __name__), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
-    "LinearMap",
-    "Multiply",
+    "SPECT",
     "Add",
-    "Matmul",
-    "ConjTranspose",
     "BlockDiagonal",
-    "Kron",
-    "Identity",
-    "Diff1d",
-    "Diffnd",
-    "Diff2dgram",
-    "Diff3dgram",
-    "Diag",
+    "ConjTranspose",
     "Convolve1d",
     "Convolve2d",
     "Convolve3d",
-    "Wavelet2D",
-    "Patch2D",
-    "Patch3D",
+    "Diag",
+    "Diff1d",
+    "Diff2dgram",
+    "Diff3dgram",
+    "Diffnd",
     "FFTCn",
-    "SPECT",
-    "NuSense",
-    "NuSenseGram",
     "Gmri",
     "GmriGram",
+    "Hstack",
+    "Identity",
+    "Kron",
+    "LinearMap",
+    "Matmul",
+    "Multiply",
+    "NuSense",
+    "NuSenseGram",
+    "Patch2D",
+    "Patch3D",
     "Sense",
     "Vstack",
-    "Hstack",
+    "Wavelet2D",
 ]

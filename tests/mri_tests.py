@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 import torch
 import numpy as np
@@ -142,6 +144,16 @@ def test_nusense_forward_backward(complex_tensor, smaps, traj):
     assert image.shape == (2, 1, 16, 16)
     # Note: Due to non-Cartesian sampling, forward-adjoint is not perfect inverse
     assert not torch.allclose(complex_tensor, image, atol=1e-6)
+
+
+def test_nusense_selects_default_backend_for_platform(smaps, traj):
+    expected = "torchkbnufft" if sys.platform == "darwin" else "finufft"
+    assert NuSense(smaps, traj).backend == expected
+    assert NuSense(smaps, traj, backend="torchkbnufft").backend == "torchkbnufft"
+    assert NuSense(smaps, traj, backend="finufft").backend == "finufft"
+
+    with pytest.raises(ValueError, match="NUFFT backend"):
+        NuSense(smaps, traj, backend="invalid")
 
 
 def test_nusense_adjoint_property(complex_tensor, smaps, traj):
@@ -347,8 +359,11 @@ def test_nusense_vs_nusense_gram_consistency():
     # A'Ax via Gram operator
     gram = nusense_gram(x)
 
-    # They should be very close (small numerical differences expected)
-    assert torch.allclose(composed, gram, rtol=1e-4, atol=1e-6)
+    # Kernel accumulation order can differ near individual zero-valued elements.
+    relative_error = torch.linalg.vector_norm(composed - gram) / torch.linalg.vector_norm(
+        composed
+    )
+    assert relative_error < 1e-5
 
 
 def test_broadcasting_use_case_fmri():
@@ -457,7 +472,7 @@ def test_shape_mismatch_during_forward():
     # Wrong input shape
     x = torch.complex(torch.randn(3, 1, 16, 16), torch.randn(3, 1, 16, 16))
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="forward linear op"):
         k_space = nusense(x)
 
 
@@ -471,7 +486,7 @@ def test_shape_mismatch_during_adjoint():
     # Wrong k-space shape
     k_space = torch.randn(3, 4, 1000, dtype=torch.complex64)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="forward linear op"):
         image = nusense.H(k_space)
 
 
