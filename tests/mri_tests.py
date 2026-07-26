@@ -2,8 +2,8 @@ import sys
 
 import pytest
 import torch
-import numpy as np
-from mirtorch.linear import FFTCn, Sense, NuSense, NuSenseGram
+
+from mirtorch.linear import FFTCn, Gmri, GmriGram, NuSense, NuSenseGram, Sense
 
 
 @pytest.fixture
@@ -30,6 +30,7 @@ def traj():
 # FFTCn Tests
 # ============================================================================
 
+
 def test_fftcn_forward_backward(complex_tensor):
     """Test that FFT and inverse FFT are inverses of each other"""
     fftcn = FFTCn([2, 1, 16, 16], [2, 1, 16, 16], dims=(2, 3))
@@ -50,6 +51,7 @@ def test_fftcn_adjoint_property(complex_tensor):
 # ============================================================================
 # Sense Tests
 # ============================================================================
+
 
 def test_sense_forward_backward(complex_tensor, smaps, masks):
     """Test Sense forward and adjoint operations"""
@@ -80,7 +82,9 @@ def test_sense_broadcast_smaps():
     sense = Sense(smaps, masks)
     k_space = sense(x)
 
-    assert k_space.shape == (10, 4, 16, 16), f"Expected (10,4,16,16), got {k_space.shape}"
+    assert k_space.shape == (10, 4, 16, 16), (
+        f"Expected (10,4,16,16), got {k_space.shape}"
+    )
     assert sense.size_in == [10, 1, 16, 16]
     assert sense.size_out == [10, 4, 16, 16]
 
@@ -119,7 +123,7 @@ def test_sense_incompatible_batch_sizes():
     masks = torch.randint(0, 2, (10, 16, 16)).float()
 
     with pytest.raises(ValueError, match="Incompatible batch sizes"):
-        sense = Sense(smaps, masks)
+        Sense(smaps, masks)
 
 
 def test_sense_spatial_dimension_mismatch():
@@ -128,12 +132,13 @@ def test_sense_spatial_dimension_mismatch():
     masks = torch.randint(0, 2, (2, 32, 32)).float()  # Wrong spatial size
 
     with pytest.raises(AssertionError, match="Spatial dimensions mismatch"):
-        sense = Sense(smaps, masks)
+        Sense(smaps, masks)
 
 
 # ============================================================================
 # NuSense Tests
 # ============================================================================
+
 
 def test_nusense_forward_backward(complex_tensor, smaps, traj):
     """Test NuSense forward and adjoint operations"""
@@ -213,7 +218,7 @@ def test_nusense_incompatible_batch_sizes():
     traj = torch.rand(10, 2, 1000) * 2 - 1
 
     with pytest.raises(ValueError, match="Incompatible batch sizes"):
-        nusense = NuSense(smaps, traj)
+        NuSense(smaps, traj)
 
 
 def test_nusense_sequential_mode(smaps, traj):
@@ -260,6 +265,7 @@ def test_nusense_non_batchmode_adjoint_property():
 # NuSenseGram Tests
 # ============================================================================
 
+
 def test_nusense_gram_forward(complex_tensor, smaps, traj):
     """Test NuSenseGram forward operation"""
     nusense_gram = NuSenseGram(smaps, traj)
@@ -290,6 +296,32 @@ def test_nusense_gram_self_adjoint():
     forward = nusense_gram(x)
     adjoint = nusense_gram.H(x)
     assert torch.allclose(forward, adjoint, atol=1e-6)
+
+
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(),
+    reason="Apple Metal is unavailable",
+)
+def test_gmri_and_toeplitz_gram_run_on_mps():
+    device = torch.device("mps")
+    smaps = torch.ones((1, 2, 8, 8), dtype=torch.complex64, device=device) / 2**0.5
+    zmap = torch.linspace(-20, 20, 64, device=device).reshape(1, 8, 8)
+    traj = (torch.rand((1, 2, 2, 8), device=device) - 0.5) * 2 * torch.pi
+    image = torch.randn((1, 1, 8, 8), dtype=torch.complex64, device=device)
+    kwargs = {"L": 2, "nbins": 4, "numpoints": 2, "grid_size": 1.25}
+
+    forward = Gmri(smaps, zmap, traj, **kwargs)
+    samples = forward(image)
+    adjoint = forward.H(samples)
+    gram = GmriGram(smaps, zmap, traj, **kwargs)
+    gram_image = gram(image)
+
+    assert forward.B.dtype == forward.C.dtype == torch.complex64
+    assert gram.B.dtype == gram.C.dtype == torch.complex64
+    assert samples.shape == (1, 2, 2, 8)
+    assert adjoint.shape == gram_image.shape == image.shape
+    assert torch.isfinite(adjoint).all().item()
+    assert torch.isfinite(gram_image).all().item()
 
 
 def test_nusense_gram_broadcast_smaps():
@@ -324,7 +356,7 @@ def test_nusense_gram_incompatible_batch_sizes():
     traj = torch.rand(10, 2, 1000) * 2 - 1
 
     with pytest.raises(ValueError, match="Incompatible batch sizes"):
-        nusense_gram = NuSenseGram(smaps, traj)
+        NuSenseGram(smaps, traj)
 
 
 def test_nusense_gram_non_batchmode():
@@ -343,6 +375,7 @@ def test_nusense_gram_non_batchmode():
 # Integration Tests
 # ============================================================================
 
+
 def test_nusense_vs_nusense_gram_consistency():
     """Test that NuSenseGram = NuSense.H * NuSense"""
     smaps = torch.complex(torch.randn(2, 4, 16, 16), torch.randn(2, 4, 16, 16))
@@ -360,9 +393,9 @@ def test_nusense_vs_nusense_gram_consistency():
     gram = nusense_gram(x)
 
     # Kernel accumulation order can differ near individual zero-valued elements.
-    relative_error = torch.linalg.vector_norm(composed - gram) / torch.linalg.vector_norm(
-        composed
-    )
+    relative_error = torch.linalg.vector_norm(
+        composed - gram
+    ) / torch.linalg.vector_norm(composed)
     assert relative_error < 1e-5
 
 
@@ -379,8 +412,7 @@ def test_broadcasting_use_case_fmri():
 
     # Single sensitivity map (doesn't change over time)
     smaps = torch.complex(
-        torch.randn(1, n_coils, 32, 32),
-        torch.randn(1, n_coils, 32, 32)
+        torch.randn(1, n_coils, 32, 32), torch.randn(1, n_coils, 32, 32)
     )
 
     # Single trajectory (same sampling pattern for all frames)
@@ -396,8 +428,7 @@ def test_broadcasting_use_case_fmri():
 
     # Different images at each time frame
     x = torch.complex(
-        torch.randn(n_frames, 1, 32, 32),
-        torch.randn(n_frames, 1, 32, 32)
+        torch.randn(n_frames, 1, 32, 32), torch.randn(n_frames, 1, 32, 32)
     )
 
     # Forward pass
@@ -416,7 +447,9 @@ def test_same_batch_sizes():
     """Test the common case where all inputs have same batch size"""
     n_batch = 5
 
-    smaps = torch.complex(torch.randn(n_batch, 4, 16, 16), torch.randn(n_batch, 4, 16, 16))
+    smaps = torch.complex(
+        torch.randn(n_batch, 4, 16, 16), torch.randn(n_batch, 4, 16, 16)
+    )
     traj = torch.rand(n_batch, 2, 1000) * 2 - 1
     x = torch.complex(torch.randn(n_batch, 1, 16, 16), torch.randn(n_batch, 1, 16, 16))
 
@@ -462,6 +495,7 @@ def test_both_batch_one_requires_repeat():
 # Error Handling Tests
 # ============================================================================
 
+
 def test_shape_mismatch_during_forward():
     """Test that shape mismatch during forward pass is caught"""
     smaps = torch.complex(torch.randn(5, 4, 16, 16), torch.randn(5, 4, 16, 16))
@@ -473,7 +507,7 @@ def test_shape_mismatch_during_forward():
     x = torch.complex(torch.randn(3, 1, 16, 16), torch.randn(3, 1, 16, 16))
 
     with pytest.raises(ValueError, match="forward linear op"):
-        k_space = nusense(x)
+        nusense(x)
 
 
 def test_shape_mismatch_during_adjoint():
@@ -487,12 +521,13 @@ def test_shape_mismatch_during_adjoint():
     k_space = torch.randn(3, 4, 1000, dtype=torch.complex64)
 
     with pytest.raises(ValueError, match="forward linear op"):
-        image = nusense.H(k_space)
+        nusense.H(k_space)
 
 
 # ============================================================================
 # Performance / Memory Tests
 # ============================================================================
+
 
 def test_broadcasting_memory_efficiency():
     """
@@ -506,8 +541,10 @@ def test_broadcasting_memory_efficiency():
     smaps_replicated = smaps_single.repeat(100, 1, 1, 1)
 
     # Memory usage should be very different
-    assert smaps_single.element_size() * smaps_single.nelement() * 100 == \
-           smaps_replicated.element_size() * smaps_replicated.nelement()
+    assert (
+        smaps_single.element_size() * smaps_single.nelement() * 100
+        == smaps_replicated.element_size() * smaps_replicated.nelement()
+    )
 
     # But both should work the same way
     traj = torch.rand(100, 2, 500) * 2 - 1

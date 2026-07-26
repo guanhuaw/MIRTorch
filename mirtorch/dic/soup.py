@@ -1,5 +1,6 @@
 import logging
 import time
+import warnings
 
 import numpy as np
 import scipy.sparse as sp
@@ -88,7 +89,7 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
             [idx_row_new] = np.nonzero(cj_new)
 
             # Update of the dictionary
-            if ~only_sp:
+            if not only_sp:
                 if np.abs(cj_new).sum() == 0:
                     if rnd:
                         h = random.randn(len_atom).astype(D.dtype)
@@ -114,8 +115,12 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
 
             # avoid column slicing, again
             # remember to eliminate untracked zeros in the end
-            C[idx_row_j, iatom] = 0
-            C[idx_row_new, iatom] = cj_new[idx_row_new]
+            # CSR keeps the repeated matrix products fast. Its structural updates
+            # are intentional here, so keep SciPy's generic format warning local.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", sp.SparseEfficiencyWarning)
+                C[idx_row_j, iatom] = 0
+                C[idx_row_new, iatom] = cj_new[idx_row_new]
             if alert:
                 logger.info(
                     "Update of %dth atom costs %4f s, sparse ratio from %5f to %5f",

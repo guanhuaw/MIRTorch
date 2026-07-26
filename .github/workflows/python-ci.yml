@@ -34,8 +34,8 @@ jobs:
 
       - name: Lint with Ruff
         run: |
-          ruff check mirtorch benchmarks
-          ruff format --check mirtorch benchmarks
+          ruff check mirtorch tests examples
+          ruff format --check mirtorch tests examples
 
       - name: Type-check core APIs
         run: pyright

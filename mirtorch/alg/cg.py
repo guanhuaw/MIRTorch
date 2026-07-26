@@ -3,6 +3,8 @@ import logging
 import torch
 from torch import Tensor
 
+from mirtorch._norm import squared_l2_norm
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +56,7 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
         p0 = r0.detach().clone()
         pk = p0
         xk = x0.detach().clone()
-        rktrk = torch.square(torch.norm(rk))
+        rktrk = squared_l2_norm(rk)
         num_loop = 0
         saved = []
         while rktrk.item() > tol and num_loop < max_iter:
@@ -62,7 +64,7 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
             alpha = rktrk / pktapk
             xk1 = xk.add_(alpha * pk)
             rk1 = rk.sub_(alpha * A * pk)
-            rk1trk1 = torch.square(torch.norm(rk1))
+            rk1trk1 = squared_l2_norm(rk1)
             beta = rk1trk1 / rktrk
             pk1 = (pk.mul_(beta)).add_(rk1)
             xk = xk1
@@ -87,7 +89,7 @@ def cg_block(x0, b, A, tol, max_iter, alert, eval_func, P):
         rktzk = (rk.conj() * zk).sum().abs()
         num_loop = 0
         saved = []
-        while torch.square(torch.norm(rk)).item() > tol and num_loop < max_iter:
+        while squared_l2_norm(rk).item() > tol and num_loop < max_iter:
             pktapk = torch.sum(pk.conj() * (A * pk)).abs()
             alpha = rktzk / pktapk
             xk1 = xk.add_(alpha * pk)

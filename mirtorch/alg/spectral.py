@@ -2,6 +2,8 @@ import logging
 
 import torch
 
+from mirtorch._norm import l2_norm
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,14 +26,14 @@ def power_iter(A, x0, max_iter=100, tol=1e-6, alert=True):
         raise ValueError("max_iter must be non-negative")
     if tol < 0:
         raise ValueError("tol must be non-negative")
-    if torch.linalg.vector_norm(x0) == 0:
+    if l2_norm(x0) == 0:
         raise ValueError("x0 must be nonzero")
 
     x = x0
     ratio_old = float("inf")
     for iteration in range(max_iter):
         Ax = A * x
-        ratio = torch.norm(Ax) / torch.norm(x)
+        ratio = l2_norm(Ax) / l2_norm(x)
         if torch.abs(ratio - ratio_old) / ratio < tol:
             if alert:
                 logger.info(
@@ -41,8 +43,8 @@ def power_iter(A, x0, max_iter=100, tol=1e-6, alert=True):
             break
         ratio_old = ratio
         x = A.adjoint(Ax)
-        x = x / torch.norm(x)
-    sig1 = torch.norm(A * x) / torch.norm(x)
+        x = x / l2_norm(x)
+    sig1 = l2_norm(A * x) / l2_norm(x)
     if alert:
         logger.info("The spectral norm is %s.", float(sig1))
     return x, sig1

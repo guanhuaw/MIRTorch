@@ -36,6 +36,10 @@ def _resolve_nufft_backend(backend: str, device: torch.device) -> str:
     return backend
 
 
+def _complex_dtype_like(tensor: Tensor) -> torch.dtype:
+    return torch.promote_types(tensor.dtype, torch.complex64)
+
+
 class FFTCn(LinearMap):
     r"""
     FFT operators with FFTshift and iFFTshift for multidimensional data.
@@ -161,19 +165,6 @@ class Sense(LinearMap):
         self.dims = dims
         self.smaps = smaps
         self.batchmode = batchmode
-
-    def _apply(self, x: Tensor) -> Tensor:
-        r"""
-        Args:
-            x:  tensor with dimension [batch, 1, nx, ny, (nz)] (batchmode=True) or [nx, ny, (nz)]
-        Returns:
-            y:  tensor with dimension [batch, ncoil, nx, ny, (nz)] (batchmode=True) or [ncoil, nx, ny, nz]
-        """
-        x = x * self.smaps
-        x = ifftshift(x, self.dims)
-        k = fftn(x, dim=self.dims, norm=self.norm)
-        k = fftshift(k, self.dims) * self.masks
-        return k
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -688,10 +679,10 @@ class Gmri(LinearMap):
         norm: str = "ortho",
         L: int = 6,
         nbins: int = 20,
-        dt: int = 4e-3,
+        dt: float = 4e-3,
         numpoints: int | list[int] = 6,
         grid_size: float = 2,
-        T: Tensor = None,
+        T: Tensor | None = None,
     ):
         self.norm = norm
         self.smaps = smaps
@@ -739,37 +730,47 @@ class Gmri(LinearMap):
         ) + tuple(smaps.shape[2:])
         size_out = (self.nbatch, self.nc, self.nshot, self.npoints)
 
-        self.B = (
-            torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(self.smaps.device)
-            * 1j
+        complex_dtype = _complex_dtype_like(smaps)
+        self.B = torch.zeros(
+            self.L,
+            self.nbatch,
+            1,
+            1,
+            self.npoints,
+            dtype=complex_dtype,
+            device=smaps.device,
         )  # [L, batch, coil, shot, points]
-        self.C = (
-            torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
-                self.smaps.device
-            )
-            * 1j
+        self.C = torch.zeros(
+            (self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:]),
+            dtype=complex_dtype,
+            device=smaps.device,
         )  # [L, batch, 1, nx, ny ...]
 
         for ib in range(self.nbatch):
             if T is None:
                 t = np.linspace(0, dt * self.npoints, self.npoints)
             else:
-                t = T.cpu().numpy()
+                t = T.detach().cpu().numpy()
 
             # Handle broadcasting: zmap might be [1, ...] or [nbatch, ...]
             zmap_idx = 0 if zmap.shape[0] == 1 else ib
-            b, c, _ = mri_exp_approx(zmap[zmap_idx].cpu().data.numpy(), nbins, L, t)
+            b, c, _ = mri_exp_approx(
+                zmap[zmap_idx].detach().cpu().numpy(),
+                nbins,
+                L,
+                t,
+            )
 
-            self.B[:, ib, ...] = (
-                torch.tensor(np.transpose(b))
-                .to(smaps.device)
-                .reshape(self.L, 1, 1, self.npoints)
-            )
-            self.C[:, ib, 0, ...] = (
-                torch.tensor(np.transpose(c))
-                .to(smaps.device)
-                .reshape((self.L,) + tuple(zmap.shape[1:]))
-            )
+            self.B[:, ib, ...] = torch.as_tensor(
+                np.transpose(b),
+                dtype=complex_dtype,
+                device=smaps.device,
+            ).reshape(self.L, 1, 1, self.npoints)
+            self.C[:, ib, 0, ...] = torch.as_tensor(
+                np.transpose(c),
+                dtype=complex_dtype,
+                device=smaps.device,
+            ).reshape((self.L,) + tuple(zmap.shape[1:]))
 
         self.traj = self.traj.reshape(
             (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
@@ -840,10 +841,10 @@ class GmriGram(LinearMap):
         norm: str = "ortho",
         L: int = 6,
         nbins: int = 20,
-        dt: int = 4e-3,
+        dt: float = 4e-3,
         numpoints: int | list[int] = 6,
         grid_size: float = 2,
-        T: Tensor = None,
+        T: Tensor | None = None,
     ):
         self.norm = norm
         self.smaps = smaps
@@ -880,38 +881,52 @@ class GmriGram(LinearMap):
             1,
         ) + tuple(smaps.shape[2:])
 
-        self.B = (
-            torch.zeros(self.L, self.nbatch, 1, 1, self.npoints).to(self.smaps.device)
-            * 1j
+        complex_dtype = _complex_dtype_like(smaps)
+        self.B = torch.zeros(
+            self.L,
+            self.nbatch,
+            1,
+            1,
+            self.npoints,
+            dtype=complex_dtype,
+            device=smaps.device,
         )  # [L, batch, coil, shot, points]
-        self.C = (
-            torch.zeros((self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:])).to(
-                self.smaps.device
-            )
-            * 1j
+        self.C = torch.zeros(
+            (self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:]),
+            dtype=complex_dtype,
+            device=smaps.device,
         )  # [L, batch, 1, nx, ny ...]
 
         for ib in range(self.nbatch):
             if T is None:
                 t = np.linspace(0, dt * self.npoints, self.npoints)
             else:
-                t = T.cpu().numpy()
+                t = T.detach().cpu().numpy()
 
             # Handle broadcasting: zmap might be [1, ...] or [nbatch, ...]
             zmap_idx = 0 if zmap.shape[0] == 1 else ib
-            b, c, tl = mri_exp_approx(zmap[zmap_idx].cpu().data.numpy(), nbins, L, t)
+            b, c, tl = mri_exp_approx(
+                zmap[zmap_idx].detach().cpu().numpy(),
+                nbins,
+                L,
+                t,
+            )
 
-            self.B[:, ib, ...] = (
-                torch.tensor(np.transpose(b))
-                .to(smaps.device)
-                .reshape(self.L, 1, 1, self.npoints)
+            self.B[:, ib, ...] = torch.as_tensor(
+                np.transpose(b),
+                dtype=complex_dtype,
+                device=smaps.device,
+            ).reshape(self.L, 1, 1, self.npoints)
+            self.C[:, ib, 0, ...] = torch.as_tensor(
+                np.transpose(c),
+                dtype=complex_dtype,
+                device=smaps.device,
+            ).reshape((self.L,) + tuple(zmap.shape[1:]))
+            self.tl = torch.as_tensor(
+                tl,
+                dtype=zmap.real.dtype,
+                device=smaps.device,
             )
-            self.C[:, ib, 0, ...] = (
-                torch.tensor(np.transpose(c))
-                .to(smaps.device)
-                .reshape((self.L,) + tuple(zmap.shape[1:]))
-            )
-            self.tl = torch.tensor(tl).to(smaps.device)
 
         self.traj = self.traj.reshape(
             (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
@@ -928,7 +943,7 @@ class GmriGram(LinearMap):
                     numpoints=numpoints,
                     norm=self.norm,
                     weights=self.B[il]
-                    .repeat(1, 1, self.nshot, 1)
+                    .expand(-1, -1, self.nshot, -1)
                     .reshape(self.nbatch, 1, self.nshot * self.npoints),
                 )
             )

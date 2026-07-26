@@ -37,6 +37,41 @@ def test_cg_with_evaluation_history_backpropagates():
     assert torch.allclose(rhs.grad, torch.ones_like(rhs))
 
 
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(),
+    reason="Apple Metal is unavailable",
+)
+@pytest.mark.parametrize("preconditioned", [False, True])
+def test_complex_cg_and_power_iteration_run_on_mps(preconditioned):
+    device = torch.device("mps")
+    diagonal = torch.tensor([2.0, 4.0], device=device)
+    operator = Diag(diagonal)
+    rhs = torch.tensor([6.0 + 2.0j, 8.0 - 4.0j], device=device, requires_grad=True)
+    preconditioner = Identity([2]) if preconditioned else None
+
+    solution = CG(
+        operator,
+        max_iter=4,
+        tol=1e-12,
+        P=preconditioner,
+    ).run(torch.zeros_like(rhs), rhs)
+
+    expected = rhs.detach() / diagonal
+    assert torch.allclose(solution.cpu(), expected.cpu(), atol=1e-5)
+    solution.abs().square().sum().backward()
+    assert rhs.grad is not None
+    assert torch.isfinite(rhs.grad).all().item()
+
+    _, singular_value = power_iter(
+        operator,
+        torch.ones(2, dtype=torch.complex64, device=device),
+        max_iter=50,
+        tol=1e-6,
+        alert=False,
+    )
+    assert torch.allclose(singular_value.cpu(), torch.tensor(4.0), atol=1e-4)
+
+
 @pytest.mark.parametrize("solver", [FISTA, POGM])
 def test_proximal_gradient_solvers_reach_quadratic_minimum(solver):
     target = torch.tensor([1.0, -2.0, 3.0])

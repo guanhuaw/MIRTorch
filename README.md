@@ -95,14 +95,14 @@ Currently, MIRTorch uses `torch.DataParallel` to support multiple GPUs. One may 
 
 Generally, MIRTorch solves the image reconstruction problems that have the cost function $\textit{argmin}_{x} \|Ax-y\|_2^2 + \lambda \textit{R}(x)$. $A$ stands for the system matrix. When it is linear, one may use `LinearMap` to efficiently compute it. `y` usually denotes measurements. $\textit{R}(\cdot)$ denotes regularizers, which determines which `Alg` to be used. One may refer to [1](https://web.eecs.umich.edu/~fessler/book/), [2](https://web.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf) and [3](https://www.youtube.com/watch?v=J6_5rPYnr_s) for more tutorials on optimization.
 
-Here we provide several notebook tutorials focused on MRI, where $A$ is FFT or NUFFT.
+The device-aware tutorials select CUDA, Metal, or CPU automatically:
 
-- `/example/demo_mnist.ipynb` shows the LASSO on MNIST with FISTA and POGM.
-- `/example/demo_mri.ipynb` contains the SENSE (CG-SENSE) and **B0**-informed reconstruction with penalized weighted least squares (*PWLS*).
-- `/example/demo_3d.ipynb` contains the 3d non-Cartesian MR reconstruction. *New!* Try the Toeplitz-embedding version of B0-informed reconstruction, which reduce hour-long recon to 5 secs.
-- `/example/demo_cs.ipynb` shows the compressed sensing reconstruction of under-determined MRI signals.
-- `/example/demo_dl.ipynb` exhibits the dictionary learning results.
-- `/example/demo_mlem` showcase SPECT recon algorithms, including EM and CNN.
+- [`demo_mri.ipynb`](examples/demo_mri.ipynb): CG-SENSE and B0-informed PWLS.
+- [`demo_3d.ipynb`](examples/demo_3d.ipynb): synthetic 3D non-Cartesian MRI and Toeplitz embedding.
+- [`demo_cs.ipynb`](examples/demo_cs.ipynb): compressed-sensing MRI.
+- [`demo_mlem.ipynb`](examples/demo_mlem.ipynb): SPECT EM and learned regularization.
+- [`demo_mnist.ipynb`](examples/demo_mnist.ipynb): differentiable CG, FISTA, and POGM.
+- [`demo_dl.ipynb`](examples/demo_dl.ipynb): CPU/SciPy dictionary learning.
 
 Since MIRTorch is differentiable, one may use AD to update many parameters. For example, updating the reconstruction neural network's weights. More importantly, one may update the imaging system itself via gradient-based and data-driven methods. As a user case, [Bjork repo](https://github.com/guanhuaw/Bjork) contains MRI sampling pattern optimization examples. One may use the reconstruction loss as the objective function to jointly optimize reconstruction algorithms and the sampling pattern. See [this video](https://www.youtube.com/watch?v=sLFOf5EvVAs) on how to jointly optimize reconstruction and acquisition.
 

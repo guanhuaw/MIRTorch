@@ -59,27 +59,34 @@
 
 import pytest
 import torch
-from mirtorch.linear.spect import SPECT, project, backproject
+
+from mirtorch.linear.spect import SPECT, backproject, project
+
 
 @pytest.fixture
 def mumap():
     return torch.rand((32, 32, 32), dtype=torch.float32)
 
+
 @pytest.fixture
 def psfs():
     return torch.rand((16, 16, 32, 60), dtype=torch.float32)
+
 
 @pytest.fixture
 def dy():
     return 1.0
 
+
 @pytest.fixture
 def input_tensor(mumap):
     return torch.rand(mumap.shape, dtype=torch.float32)
 
+
 @pytest.fixture
 def view_tensor(psfs):
     return torch.rand((32, 32, 60), dtype=torch.float32)
+
 
 def test_spect_init(mumap, psfs, dy):
     size_in = mumap.shape
@@ -89,13 +96,16 @@ def test_spect_init(mumap, psfs, dy):
     assert spect.psfs.shape == psfs.shape
     assert spect.dy == dy
 
+
 def test_project(input_tensor, mumap, psfs, dy):
     views = project(input_tensor, mumap, psfs, dy)
     assert views.shape == (32, 32, 60)
 
+
 def test_backproject(view_tensor, mumap, psfs, dy):
     image = backproject(view_tensor, mumap, psfs, dy)
     assert image.shape == mumap.shape
+
 
 def test_spect_apply(input_tensor, mumap, psfs, dy):
     size_in = mumap.shape
@@ -103,6 +113,7 @@ def test_spect_apply(input_tensor, mumap, psfs, dy):
     spect = SPECT(size_in, size_out, mumap, psfs, dy)
     result = spect._apply(input_tensor)
     assert result.shape == (32, 32, 60)
+
 
 def test_spect_apply_adjoint(view_tensor, mumap, psfs, dy):
     size_in = mumap.shape

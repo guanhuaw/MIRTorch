@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import torch
 
+from mirtorch._norm import l2_norm
 from mirtorch.linear import LinearMap
 
 FloatLike = float | torch.Tensor
@@ -83,7 +84,7 @@ class Prox:
                     device=v.device,
                 )
             )
-        return weighted * torch.as_tensor(alpha, dtype=v.dtype, device=v.device)
+        return weighted * alpha
 
     def _complex(self, v) -> torch.Tensor:
         """
@@ -204,8 +205,8 @@ class L2Regularizer(Prox):
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
         threshold = self._scaled_parameter(v, self.Lambda, alpha)
-        norm = torch.linalg.vector_norm(v)
-        safe_norm = norm.clamp_min(torch.finfo(v.dtype).tiny)
+        norm = l2_norm(v)
+        safe_norm = norm.clamp_min(torch.finfo(norm.dtype).tiny)
         scale = (1.0 - threshold / safe_norm).clamp_min(0)
         return scale * v
 

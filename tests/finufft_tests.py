@@ -58,9 +58,9 @@ def _exact_type1(
         for dimension in range(len(mode_size))
     )
     phase = torch.exp(1j * phase_argument)
-    sample_shape = (samples.shape[0], samples.shape[1], samples.shape[2]) + (
-        1,
-    ) * len(mode_size)
+    sample_shape = (samples.shape[0], samples.shape[1], samples.shape[2]) + (1,) * len(
+        mode_size
+    )
     return (samples.reshape(sample_shape) * phase.unsqueeze(1)).sum(dim=2)
 
 
@@ -101,9 +101,7 @@ def test_finufft_toeplitz_embedding_matches_exact_normal(
     smaps_batch = batch if shared_traj else 1
     traj_batch = 1 if shared_traj else batch
     smaps = torch.randn(smaps_batch, coils, height, width, dtype=dtype)
-    traj = (
-        torch.rand(traj_batch, 2, count, dtype=torch.float64) * 2 - 1
-    ) * torch.pi
+    traj = (torch.rand(traj_batch, 2, count, dtype=torch.float64) * 2 - 1) * torch.pi
 
     gram = NuSenseGram(
         smaps,
@@ -197,9 +195,7 @@ def _direct_sense(
     phase = torch.exp(-1j * phase_argument)
     coil_images = image * smaps
     spatial_dims = tuple(range(3, 3 + len(im_size)))
-    return (coil_images.unsqueeze(2) * phase.unsqueeze(1)).sum(
-        dim=spatial_dims
-    ) * scale
+    return (coil_images.unsqueeze(2) * phase.unsqueeze(1)).sum(dim=spatial_dims) * scale
 
 
 def _direct_sense_adjoint(
@@ -235,12 +231,10 @@ def _direct_sense_adjoint(
         for dimension in range(len(im_size))
     )
     phase = torch.exp(1j * phase_argument)
-    sample_shape = (batch, samples.shape[1], samples.shape[2]) + (1,) * len(
-        im_size
-    )
-    coil_images = (
-        samples.reshape(sample_shape) * phase.unsqueeze(1)
-    ).sum(dim=2) * scale
+    sample_shape = (batch, samples.shape[1], samples.shape[2]) + (1,) * len(im_size)
+    coil_images = (samples.reshape(sample_shape) * phase.unsqueeze(1)).sum(
+        dim=2
+    ) * scale
     return (smaps.conj() * coil_images).sum(dim=1, keepdim=True)
 
 
@@ -790,9 +784,7 @@ def test_finufft_toeplitz_nonbatch_mode_matches_direct_gram():
         dtype=torch.complex64,
         device=device,
     )
-    traj = (
-        torch.rand(2, count, dtype=torch.float32, device=device) * 2 - 1
-    ) * torch.pi
+    traj = (torch.rand(2, count, dtype=torch.float32, device=device) * 2 - 1) * torch.pi
 
     direct = NuSense(
         smaps,

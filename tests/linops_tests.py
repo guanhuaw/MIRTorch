@@ -1,13 +1,13 @@
-import mirtorch
-import mirtorch.linear.basics as basics
 import pytest
 import torch
 from torch import Tensor
 
+import mirtorch
 from mirtorch.linear import (
     Add,
     BlockDiagonal,
     ConjTranspose,
+    Diff2dgram,
     Hstack,
     Identity,
     Kron,
@@ -15,7 +15,7 @@ from mirtorch.linear import (
     Matmul,
     Multiply,
     Vstack,
-    Diff2dgram,
+    basics,
 )
 
 
