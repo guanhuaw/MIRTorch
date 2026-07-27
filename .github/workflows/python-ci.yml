@@ -18,12 +18,17 @@ jobs:
         include:
           - os: ubuntu-latest
             python-version: "3.10"
+            pytest_args: ""
           - os: ubuntu-latest
             python-version: "3.12"
+            pytest_args: ""
           - os: ubuntu-24.04-arm
             python-version: "3.12"
-          - os: macos-14
+            pytest_args: ""
+          - os: macos-15
             python-version: "3.12"
+            # Standard hosted macOS VMs expose MPS without usable GPU memory.
+            pytest_args: '-k "not mps"'
 
     steps:
       - uses: actions/checkout@v6
@@ -48,7 +53,7 @@ jobs:
 
       - name: Test with pytest
         run: |
-          python -m coverage run -m pytest
+          python -m coverage run -m pytest ${{ matrix.pytest_args }}
           python -m coverage report
 
   docs:
