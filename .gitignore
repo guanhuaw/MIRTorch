@@ -33,6 +33,9 @@
 *temp/
 *.vector_cache/
 *data/
+!mirtorch/vendors/pytorch_wavelets/dtcwt/data/
+!mirtorch/vendors/pytorch_wavelets/dtcwt/data/__init__.py
+!mirtorch/vendors/pytorch_wavelets/dtcwt/data/*.npz
 *prof/
 *build/
 *dist/

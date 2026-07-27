@@ -10,19 +10,25 @@ on:
 
 jobs:
   build:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version:
-          - "3.10"
-          - "3.12"
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-24.04-arm
+            python-version: "3.12"
+          - os: macos-14
+            python-version: "3.12"
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -30,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[test,finufft]" pyright ruff
+          python -m pip install -e ".[test]" pyright ruff
 
       - name: Lint with Ruff
         run: |
@@ -44,3 +50,65 @@ jobs:
         run: |
           python -m coverage run -m pytest
           python -m coverage report
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install documentation dependencies
+        run: python -m pip install -e ".[docs]"
+
+      - name: Build documentation with warnings as errors
+        run: sphinx-build -W --keep-going -b html docs docs/_build/html
+
+  package:
+    name: Installed-wheel smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Build and validate distributions
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Install and exercise wheel in isolated mode
+        run: |
+          python -m pip install dist/*.whl
+          python -I - <<'PY'
+          from pathlib import Path
+
+          import torch
+          import mirtorch
+          from mirtorch.linear import Diff1d
+          from mirtorch.vendors.pytorch_wavelets import DTCWTForward, DTCWTInverse
+
+          package_path = Path(mirtorch.__file__).resolve()
+          assert "site-packages" in package_path.parts, package_path
+
+          signal = torch.randn(2, 8)
+          difference = Diff1d(signal.shape, dim=1, mode="periodic")
+          assert difference.H(difference(signal)).shape == signal.shape
+
+          image = torch.randn(1, 1, 16, 16)
+          coefficients = DTCWTForward(J=2)(image)
+          reconstructed = DTCWTInverse()(coefficients)
+          torch.testing.assert_close(reconstructed, image, rtol=2e-5, atol=2e-5)
+          print(mirtorch.__version__, package_path)
+          PY

@@ -1,9 +1,10 @@
 import sys
+from importlib.util import find_spec
 
 import pytest
 import torch
 
-from mirtorch.linear import FFTCn, Gmri, GmriGram, NuSense, NuSenseGram, Sense
+from mirtorch.linear import FFTCn, Gmri, GmriGram, NuSense, NuSenseGram, Sense, mri
 
 
 @pytest.fixture
@@ -131,8 +132,22 @@ def test_sense_spatial_dimension_mismatch():
     smaps = torch.complex(torch.randn(2, 4, 16, 16), torch.randn(2, 4, 16, 16))
     masks = torch.randint(0, 2, (2, 32, 32)).float()  # Wrong spatial size
 
-    with pytest.raises(AssertionError, match="Spatial dimensions mismatch"):
+    with pytest.raises(ValueError, match="Spatial dimensions mismatch"):
         Sense(smaps, masks)
+
+
+def test_sense_complex_mask_adjoint_property():
+    torch.manual_seed(1)
+    smaps = torch.randn(2, 3, 8, 7, dtype=torch.complex128)
+    masks = torch.randn(2, 8, 7, dtype=torch.complex128)
+    image = torch.randn(2, 1, 8, 7, dtype=torch.complex128)
+    samples = torch.randn(2, 3, 8, 7, dtype=torch.complex128)
+    sense = Sense(smaps, masks)
+
+    lhs = torch.vdot(sense(image).reshape(-1), samples.reshape(-1))
+    rhs = torch.vdot(image.reshape(-1), sense.H(samples).reshape(-1))
+
+    assert torch.allclose(lhs, rhs, rtol=1e-12, atol=1e-12)
 
 
 # ============================================================================
@@ -152,13 +167,65 @@ def test_nusense_forward_backward(complex_tensor, smaps, traj):
 
 
 def test_nusense_selects_default_backend_for_platform(smaps, traj):
-    expected = "torchkbnufft" if sys.platform == "darwin" else "finufft"
+    native_available = sys.platform != "darwin" and find_spec("finufft") is not None
+    expected = "finufft" if native_available else "torchkbnufft"
     assert NuSense(smaps, traj).backend == expected
     assert NuSense(smaps, traj, backend="torchkbnufft").backend == "torchkbnufft"
     assert NuSense(smaps, traj, backend="finufft").backend == "finufft"
 
     with pytest.raises(ValueError, match="NUFFT backend"):
         NuSense(smaps, traj, backend="invalid")
+
+
+def test_nusense_gram_rejects_trainable_trajectory():
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    traj = torch.zeros(1, 2, 7, requires_grad=True)
+
+    with pytest.raises(ValueError, match="fixed trajectories"):
+        NuSenseGram(smaps, traj, backend="torchkbnufft")
+
+
+@pytest.mark.parametrize("change", ["mutate", "replace"])
+def test_nusense_gram_rejects_changed_trajectory(change):
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    traj = torch.zeros(1, 2, 7)
+    gram = NuSenseGram(
+        smaps,
+        traj,
+        backend="torchkbnufft",
+        numpoints=2,
+        grid_size=1,
+    )
+    if change == "mutate":
+        traj.add_(0.1)
+    else:
+        gram.traj = traj.clone()
+
+    with pytest.raises(RuntimeError, match="trajectory changed"):
+        gram(torch.ones(1, 1, 4, 4, dtype=torch.complex64))
+
+
+@pytest.mark.parametrize(
+    ("device", "available", "expected"),
+    [
+        ("cpu", {"finufft"}, "finufft"),
+        ("cpu", set(), "torchkbnufft"),
+        ("cuda", {"cufinufft"}, "finufft"),
+        ("cuda", set(), "torchkbnufft"),
+        ("mps", {"finufft", "cufinufft"}, "torchkbnufft"),
+    ],
+)
+def test_nusense_auto_backend_requires_native_library(
+    monkeypatch, device, available, expected
+):
+    monkeypatch.setattr(mri.sys, "platform", "linux")
+    monkeypatch.setattr(
+        mri,
+        "find_spec",
+        lambda name: object() if name in available else None,
+    )
+
+    assert mri._resolve_nufft_backend("auto", torch.device(device)) == expected
 
 
 def test_nusense_adjoint_property(complex_tensor, smaps, traj):
@@ -323,6 +390,49 @@ def test_gmri_and_toeplitz_gram_run_on_mps():
     assert adjoint.shape == gram_image.shape == image.shape
     assert torch.isfinite(adjoint).all().item()
     assert torch.isfinite(gram_image).all().item()
+
+    trainable_zmap = zmap.detach().requires_grad_()
+    times = (torch.arange(8, device=device) * 0.004).requires_grad_()
+    trainable = Gmri(
+        smaps,
+        trainable_zmap,
+        traj,
+        T=times,
+        **kwargs,
+    )
+    loss = trainable(image).abs().square().mean()
+    zmap_gradient, time_gradient = torch.autograd.grad(
+        loss,
+        (trainable_zmap, times),
+    )
+    assert torch.isfinite(zmap_gradient).all().item()
+    assert torch.isfinite(time_gradient).all().item()
+
+
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(),
+    reason="Apple Metal is unavailable",
+)
+def test_direct_gmri_gram_keeps_aliases_after_device_move():
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    zmap = torch.zeros(1, 4, 4, requires_grad=True)
+    traj = torch.zeros(1, 2, 1, 5)
+    gram = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        L=2,
+        nbins=4,
+        numpoints=2,
+        grid_size=1,
+        backend="torchkbnufft",
+    ).to("mps")
+
+    assert gram.smaps is gram._direct_operator.smaps
+    assert gram.zmap is gram._direct_operator.zmap
+    assert gram.traj is gram._direct_operator.traj
+    image = torch.ones(1, 1, 4, 4, dtype=torch.complex64, device="mps")
+    assert torch.isfinite(gram(image)).all().item()
 
 
 def test_nusense_gram_broadcast_smaps():

@@ -4,6 +4,7 @@ Prox() class includes the common proximal operators used in iterative optimizati
 2021-02. Neel Shah and Guanhua Wang, University of Michigan
 """
 
+import math
 from collections.abc import Sequence
 
 import torch
@@ -13,6 +14,54 @@ from mirtorch.util import l2_norm
 
 FloatLike = float | torch.Tensor
 EPS = 1e-15
+
+
+def _validate_regularization_parameter(value) -> float:
+    """Convert a non-negative regularization parameter to ``float``."""
+    parameter = float(value)
+    if not math.isfinite(parameter):
+        raise ValueError(f"Lambda must be finite, got {value}.")
+    if parameter < 0:
+        raise ValueError(f"Lambda should be non-negative, the Lambda here is {value}.")
+    return parameter
+
+
+def _solve_weighted_l2_scale(
+    value: torch.Tensor,
+    weights_squared: torch.Tensor,
+    strength: torch.Tensor,
+) -> torch.Tensor:
+    r"""Solve ``||w*v / (s + w**2)|| = strength`` for ``s``.
+
+    The proximal point is ``s*v / (s + w**2)``. Bisection uses the analytic
+    upper bound ``||w*v|| / strength``; an implicit Newton correction gives
+    the converged root its exact autograd derivative.
+    """
+    weight2 = weights_squared.detach()
+    value2 = value.detach().abs().square()
+    target = strength.detach()
+
+    def weighted_norm(scale):
+        return torch.sqrt(torch.sum(weight2 * value2 / (scale + weight2).square()))
+
+    low = torch.zeros_like(target)
+    high = torch.sqrt(torch.sum(weight2 * value2)) / target
+    for _ in range(torch.finfo(value.dtype).bits):
+        midpoint = (low + high) / 2
+        root_is_higher = weighted_norm(midpoint) > target
+        low = torch.where(root_is_higher, midpoint, low)
+        high = torch.where(root_is_higher, high, midpoint)
+
+    scale = ((low + high) / 2).detach()
+    denominator = scale + weights_squared
+    norm = torch.sqrt(
+        torch.sum(weights_squared * value.abs().square() / denominator.square())
+    )
+    derivative = torch.sum(
+        weights_squared * value.abs().square() / denominator.pow(3)
+    ) / norm.clamp_min(torch.finfo(norm.dtype).tiny)
+    derivative = derivative.detach().clamp_min(torch.finfo(derivative.dtype).tiny)
+    return scale + (norm - strength) / derivative
 
 
 class Prox:
@@ -72,19 +121,47 @@ class Prox:
             setattr(self, name, move(value))
         return self
 
-    def _scaled_parameter(self, v, parameter, alpha):
+    def _diagonal_entries(self, v: torch.Tensor) -> torch.Tensor:
+        """Return ``diag(P)`` for a documented diagonal weighting operator."""
         if self.P is None:
-            weighted = torch.as_tensor(parameter, dtype=v.dtype, device=v.device)
-        else:
-            weighted = self.P(
-                torch.full(
-                    self.P.size_in,
-                    parameter,
-                    dtype=v.dtype,
-                    device=v.device,
-                )
+            return torch.ones_like(v)
+        if list(v.shape) != list(self.P.size_in):
+            raise ValueError(
+                f"P expects shape {self.P.size_in}, but received {list(v.shape)}"
             )
-        return weighted * alpha
+        diagonal = self.P(
+            torch.ones(
+                self.P.size_in,
+                dtype=v.dtype,
+                device=v.device,
+            )
+        )
+        if list(diagonal.shape) != list(v.shape):
+            raise ValueError("P must be a square diagonal LinearMap")
+        return diagonal
+
+    def _diagonal_weights(self, v: torch.Tensor) -> torch.Tensor:
+        """Return ``|diag(P)|`` for a documented diagonal weighting operator."""
+        return self._diagonal_entries(v).abs()
+
+    def _strength(self, v: torch.Tensor, parameter: float, alpha: FloatLike):
+        if isinstance(alpha, torch.Tensor):
+            if alpha.numel() != 1:
+                raise ValueError("alpha must be a scalar")
+            if alpha.is_complex():
+                raise TypeError("alpha must be real")
+            alpha_value = alpha.item()
+        else:
+            alpha_value = alpha
+        if not math.isfinite(alpha_value):
+            raise ValueError(f"alpha must be finite, got {alpha_value}.")
+        if alpha_value < 0:
+            raise ValueError(f"alpha should be non-negative, got {alpha}.")
+
+        strength = torch.as_tensor(alpha, dtype=v.dtype, device=v.device) * parameter
+        if strength.numel() != 1:
+            raise ValueError("alpha must be a scalar")
+        return strength
 
     def _complex(self, v) -> torch.Tensor:
         """
@@ -122,18 +199,11 @@ class L1Regularizer(Prox):
         P: LinearMap | None = None,
     ):
         super().__init__(T, P)
-        self.Lambda = float(Lambda)
-        if self.Lambda < 0:
-            raise ValueError(
-                f"Lambda should be non-negative, the Lambda here is {Lambda}."
-            )
+        self.Lambda = _validate_regularization_parameter(Lambda)
 
     def _apply(self, v, alpha) -> torch.Tensor:
-        if alpha < 0:
-            raise ValueError(
-                f"alpha should be non-negative, the alpha here is {alpha}."
-            )
-        threshold = self._scaled_parameter(v, self.Lambda, alpha)
+        strength = self._strength(v, self.Lambda, alpha)
+        threshold = strength * self._diagonal_weights(v)
         return torch.sign(v) * torch.clamp(v.abs() - threshold, min=0)
 
 
@@ -159,18 +229,13 @@ class L0Regularizer(Prox):
         P: LinearMap | None = None,
     ):
         super().__init__(T, P)
-        self.Lambda = float(Lambda)
-        if self.Lambda < 0:
-            raise ValueError(
-                f"Lambda should be non-negative, the Lambda here is {Lambda}."
-            )
+        self.Lambda = _validate_regularization_parameter(Lambda)
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
-        if alpha < 0:
-            raise ValueError(
-                f"alpha should be non-negative, the alpha here is {alpha}."
-            )
-        threshold = self._scaled_parameter(v, self.Lambda, alpha)
+        strength = self._strength(v, self.Lambda, alpha)
+        threshold = torch.sqrt(2 * strength)
+        if self.P is not None:
+            threshold = threshold * (self._diagonal_weights(v) != 0)
         return torch.where(v.abs() > threshold, v, torch.zeros_like(v))
 
 
@@ -195,20 +260,57 @@ class L2Regularizer(Prox):
         P: LinearMap | None = None,
     ):
         super().__init__(T, P)
-        self.Lambda = float(Lambda)
-        if self.Lambda < 0:
-            raise ValueError(
-                f"Lambda should be non-negative, the Lambda here is {Lambda}."
-            )
+        self.Lambda = _validate_regularization_parameter(Lambda)
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
         # Closed form solution from
         # https://archive.siam.org/books/mo25/mo25_ch6.pdf
-        threshold = self._scaled_parameter(v, self.Lambda, alpha)
-        norm = l2_norm(v)
-        safe_norm = norm.clamp_min(torch.finfo(norm.dtype).tiny)
-        scale = (1.0 - threshold / safe_norm).clamp_min(0)
-        return scale * v
+        if self.Lambda == 0 or (not isinstance(alpha, torch.Tensor) and alpha == 0):
+            return v
+
+        strength = self._strength(v, self.Lambda, alpha)
+        if self.P is None:
+            norm = l2_norm(v)
+            safe_norm = norm.clamp_min(torch.finfo(norm.dtype).tiny)
+            scale = (1.0 - strength / safe_norm).clamp_min(0)
+            return scale * v
+
+        weights = self._diagonal_weights(v)
+        weights_squared = weights.square()
+        positive = weights > 0
+        safe_weights_squared = torch.where(
+            positive, weights_squared, torch.ones_like(weights_squared)
+        )
+        inverse_weighted_norm = torch.sqrt(
+            torch.sum(
+                torch.where(
+                    positive,
+                    v.abs().square() / safe_weights_squared,
+                    torch.zeros_like(v),
+                )
+            )
+        )
+        zero_solution = inverse_weighted_norm <= strength
+        has_root = (strength > 0) & ~zero_solution
+
+        # Keep the unselected solver branch finite at alpha=0 and in the
+        # zero-solution region. The synthetic values never affect the result.
+        solver_value = torch.where(has_root, v, torch.ones_like(v))
+        solver_weights_squared = torch.where(
+            has_root, weights_squared, torch.ones_like(weights_squared)
+        )
+        solver_strength = torch.where(
+            has_root, strength, torch.full_like(strength, 0.5)
+        )
+        scale = _solve_weighted_l2_scale(
+            solver_value,
+            solver_weights_squared,
+            solver_strength,
+        )
+        result = v * scale / (scale + weights_squared)
+        weighted_zero = torch.where(positive, torch.zeros_like(v), v)
+        result = torch.where(zero_solution, weighted_zero, result)
+        return torch.where(strength == 0, v, result)
 
 
 class SquaredL2Regularizer(Prox):
@@ -232,30 +334,33 @@ class SquaredL2Regularizer(Prox):
         P: LinearMap | None = None,
     ):
         super().__init__(T, P)
-        self.Lambda = float(Lambda)
-        if self.Lambda < 0:
-            raise ValueError(
-                f"Lambda should be non-negative, the Lambda here is {Lambda}."
-            )
+        self.Lambda = _validate_regularization_parameter(Lambda)
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
-        threshold = self._scaled_parameter(v, self.Lambda, alpha)
-        return torch.div(v, 1 + 2 * threshold)
+        strength = self._strength(v, self.Lambda, alpha)
+        weights_squared = self._diagonal_weights(v).square()
+        return torch.div(v, 1 + 2 * strength * weights_squared)
 
 
 class BoxConstraint(Prox):
     r"""
-    Proximal operator for Box Constraint.
+    Projection onto a box constraint.
 
     .. math::
 
-        arg \min_{x \in [lower, upper]} \frac{1}{2} \| x - v \|_2^2
+        arg \min_{x:\ lower \leq PTx \leq upper}
+        \frac{1}{2} \| x - v \|_2^2
+
+    Scaling an indicator function by a positive step size or regularization
+    parameter does not change its feasible set. Therefore ``alpha`` and
+    ``Lambda`` do not change this projection.
 
     Attributes:
-        Lambda: float, regularization parameter.
+        Lambda: legacy regularization parameter retained for API compatibility
         lower: float, minimum value
         upper: float, maximum value
         T: LinearMap, optional, unitary LinearMap
+        P: LinearMap, optional, real diagonal LinearMap
     """
 
     def __init__(
@@ -269,11 +374,7 @@ class BoxConstraint(Prox):
         super().__init__(T, P)
         self.l = lower
         self.u = upper
-        self.Lambda = float(Lambda)
-        if self.Lambda < 0:
-            raise ValueError(
-                f"Lambda should be non-negative, the Lambda here is {Lambda}."
-            )
+        self.Lambda = _validate_regularization_parameter(Lambda)
         if self.l > self.u:
             raise ValueError("lower must not be greater than upper")
 
@@ -281,10 +382,31 @@ class BoxConstraint(Prox):
         if self.P is None:
             x = torch.clamp(v, self.l, self.u)
         else:
-            Lambda = self._scaled_parameter(v, self.Lambda, alpha)
-            low = self.l / Lambda
-            up = self.u / Lambda
-            x = torch.maximum(low, torch.minimum(v, up))
+            diagonal = self._diagonal_entries(v)
+            if diagonal.is_complex():
+                if bool((diagonal.imag != 0).any().item()):
+                    raise TypeError(
+                        "P must have real diagonal entries for a box constraint"
+                    )
+                diagonal = diagonal.real
+
+            lower = torch.as_tensor(self.l, dtype=v.dtype, device=v.device)
+            upper = torch.as_tensor(self.u, dtype=v.dtype, device=v.device)
+            zero = diagonal == 0
+            zero_is_in_box = (lower <= 0) & (upper >= 0)
+            if bool((zero & ~zero_is_in_box).any().item()):
+                raise ValueError(
+                    "BoxConstraint is infeasible where P has a zero diagonal "
+                    "entry and the interval does not contain zero"
+                )
+
+            safe_diagonal = torch.where(zero, torch.ones_like(diagonal), diagonal)
+            first_bound = lower / safe_diagonal
+            second_bound = upper / safe_diagonal
+            low = torch.minimum(first_bound, second_bound)
+            high = torch.maximum(first_bound, second_bound)
+            projected = torch.maximum(low, torch.minimum(v, high))
+            x = torch.where(zero, v, projected)
         return x
 
 

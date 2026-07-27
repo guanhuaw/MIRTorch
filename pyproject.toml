@@ -14,15 +14,17 @@ license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
-    'Development Status :: 2 - Pre-Alpha',
-    'Topic :: Scientific/Engineering :: Image Processing',
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Development Status :: 3 - Alpha",
+    "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
     "torch>=1.13",
     "torchvision",
     "torchkbnufft>=1.4.0,<1.5.2",
-    "finufft>=2.5,<3",
+    "finufft>=2.5,<3; platform_system != 'Darwin' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
     "numpy>=1.24",
     "scipy",
     "PyWavelets",
@@ -33,11 +35,16 @@ examples = [
     "einops",
     "matplotlib",
 ]
+cufinufft = [
+    "cufinufft>=2.5,<3; platform_system == 'Linux' or platform_system == 'Windows'",
+]
 finufft = [
     "finufft>=2.5,<3",
 ]
-cufinufft = [
-    "cufinufft>=2.5,<3",
+docs = [
+    "sphinx>=7,<9",
+    "sphinx-rtd-theme>=2,<4",
+    "myst-parser>=2,<5",
 ]
 test = [
     "coverage",
@@ -58,10 +65,15 @@ dev = [
     "check-manifest",
     "pyright",
     "ruff",
+    "sphinx>=7,<9",
+    "sphinx-rtd-theme>=2,<4",
+    "myst-parser>=2,<5",
 ]
 
 [project.urls]
-"repository" = "https://github.com/guanhuaw/MIRTorch"
+Documentation = "https://mirtorch.readthedocs.io/"
+Issues = "https://github.com/guanhuaw/MIRTorch/issues"
+Repository = "https://github.com/guanhuaw/MIRTorch"
 
 [tool.ruff]
 target-version = "py310"
@@ -73,14 +85,15 @@ exclude = [
     "build",
     "dist",
     "docs",
-    "examples",
-    "tests",
     "mirtorch/vendors/pytorch_wavelets",
     "venv",
     ".git",
 ]
 
 [tool.setuptools_scm]
+
+[tool.setuptools.package-data]
+"mirtorch.vendors.pytorch_wavelets.dtcwt.data" = ["*.npz"]
 
 [tool.pyright]
 include = [
@@ -107,6 +120,7 @@ exclude = [
 [tool.semantic_release]
 allow_zero_version = true
 major_on_zero = false
+build_command = "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MIRTORCH=$NEW_VERSION python -m build"
 
 [tool.pytest.ini_options]
 python_files = "*_tests.py"

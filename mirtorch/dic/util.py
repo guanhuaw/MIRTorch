@@ -21,9 +21,9 @@ def idct_basis_2d(len_basis, num_basis):
     ODCT = idct(np.identity(math.ceil(num_basis**0.5)), norm="ortho", axis=0)
     ODCT = ODCT[: math.ceil(len_basis**0.5), :]
     ODCT = np.kron(ODCT, ODCT)
+    ODCT = ODCT[:len_basis, :num_basis]
     ODCT = np.column_stack((ODCT[:, 0], ODCT[:, 1:] - np.mean(ODCT[:, 1:], axis=0)))
     ODCT = ODCT / np.linalg.norm(ODCT, axis=0)
-    ODCT = ODCT[:, :num_basis]
     return ODCT
 
 
@@ -39,11 +39,12 @@ def idct_basis_3d(len_basis, num_basis):
             DCT basis in [len_basis, num_basis]
 
     """
-    assert len_basis <= num_basis, "should be over-complete dictionary"
+    if len_basis > num_basis:
+        raise ValueError("len_basis should be smaller than or equal to num_basis")
     ODCT = idct(np.identity(math.ceil(num_basis ** (1 / 3))), norm="ortho", axis=0)
     ODCT = ODCT[: math.ceil(len_basis ** (1 / 3)), :]
     ODCT = np.kron(ODCT, np.kron(ODCT, ODCT))
+    ODCT = ODCT[:len_basis, :num_basis]
     ODCT = np.column_stack((ODCT[:, 0], ODCT[:, 1:] - np.mean(ODCT[:, 1:], axis=0)))
     ODCT = ODCT / np.linalg.norm(ODCT, axis=0)
-    ODCT = ODCT[:, :num_basis]
     return ODCT

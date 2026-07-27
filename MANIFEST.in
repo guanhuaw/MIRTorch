@@ -2,8 +2,6 @@ prune .github
 prune docs
 prune examples
 prune tests
-prune mirtorch/vendors/pytorch_wavelets/dtcwt/data
-
 exclude .pre-commit-config.yaml
 exclude .readthedocs.yaml
 

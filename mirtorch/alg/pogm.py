@@ -57,64 +57,43 @@ class POGM:
         self.compile = compile
         self._compiled_run = None
 
-    def _run(self, x0: torch.Tensor) -> torch.Tensor:
-        told = 1
-        gamma_old = 1
-        xold = x0
-        omold = x0
-        zold = x0
-        for i in range(1, self.max_iter + 1):
-            fgrad = self.f_grad(xold)
-            omnew = xold - self._alpha * fgrad
-            if i == self.max_iter:
-                tnew = 0.5 * (1 + math.sqrt(1 + 8 * told**2))
-            else:
-                tnew = 0.5 * (1 + math.sqrt(1 + 4 * told**2))
-            gamma_new = self._alpha * (2 * told + tnew - 1) / tnew
-            znew = (
-                omnew
-                + (told - 1) / tnew * (omnew - omold)
-                + told / tnew * (omnew - xold)
-                + self._alpha * (told - 1) / gamma_old / tnew * (zold - xold)
-            )
-            xnew = self.prox(znew, gamma_new)
-            zold = znew
-            told = tnew
-            omold = omnew
-            xold = xnew
-            gamma_old = gamma_new
-        return xold
-
-    def _run_with_evaluation(self, x0: torch.Tensor):
-        assert self.eval_func is not None
-        told = 1
-        gamma_old = 1
-        xold = x0
-        omold = x0
-        zold = x0
+    def _run(self, x0: torch.Tensor):
+        momentum = 1.0
+        previous_step = 1.0
+        iterate = x0
+        gradient_step = x0
+        auxiliary = x0
         saved = []
+
         for i in range(1, self.max_iter + 1):
-            fgrad = self.f_grad(xold)
-            omnew = xold - self._alpha * fgrad
+            next_gradient_step = iterate - self._alpha * self.f_grad(iterate)
             if i == self.max_iter:
-                tnew = 0.5 * (1 + math.sqrt(1 + 8 * told**2))
+                next_momentum = 0.5 * (1 + math.sqrt(1 + 8 * momentum**2))
             else:
-                tnew = 0.5 * (1 + math.sqrt(1 + 4 * told**2))
-            gamma_new = self._alpha * (2 * told + tnew - 1) / tnew
-            znew = (
-                omnew
-                + (told - 1) / tnew * (omnew - omold)
-                + told / tnew * (omnew - xold)
-                + self._alpha * (told - 1) / gamma_old / tnew * (zold - xold)
+                next_momentum = 0.5 * (1 + math.sqrt(1 + 4 * momentum**2))
+            next_step = self._alpha * (2 * momentum + next_momentum - 1) / next_momentum
+            next_auxiliary = (
+                next_gradient_step
+                + (momentum - 1) / next_momentum * (next_gradient_step - gradient_step)
+                + momentum / next_momentum * (next_gradient_step - iterate)
+                + self._alpha
+                * (momentum - 1)
+                / previous_step
+                / next_momentum
+                * (auxiliary - iterate)
             )
-            xnew = self.prox(znew, gamma_new)
-            zold = znew
-            told = tnew
-            omold = omnew
-            xold = xnew
-            gamma_old = gamma_new
-            saved.append(self.eval_func(xold))
-        return xold, saved
+            iterate = self.prox(next_auxiliary, next_step)
+            auxiliary = next_auxiliary
+            gradient_step = next_gradient_step
+            momentum = next_momentum
+            previous_step = next_step
+
+            if self.eval_func is not None:
+                saved.append(self.eval_func(iterate))
+
+        if self.eval_func is not None:
+            return iterate, saved
+        return iterate
 
     def run(self, x0: torch.Tensor):
         r"""
@@ -125,9 +104,7 @@ class POGM:
             xk: results
             saved: (optional) a list of intermediate results, calculated by the eval_func.
         """
-        if self.eval_func is not None:
-            return self._run_with_evaluation(x0)
-        if should_compile(self.compile, x0):
+        if self.eval_func is None and should_compile(self.compile, x0):
             if self._compiled_run is None:
                 self._compiled_run = compile_callable(self._run)
             return self._compiled_run(x0)

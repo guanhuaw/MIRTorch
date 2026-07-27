@@ -6,6 +6,7 @@ More on the way ...
 
 import copy
 from collections.abc import Sequence
+from contextlib import nullcontext
 
 import numpy as np
 import torch
@@ -27,15 +28,24 @@ class Diff1d(LinearMap):
     """
 
     def __init__(self, size_in: Sequence[int], dim: int, mode="reflexive"):
-        # TODO: determine size_out by size in
-        size_out = copy.copy(size_in)
-        size_out[dim] -= 1
+        if not isinstance(dim, (int, np.integer)):
+            raise TypeError("dim must be an integer")
+        dim = int(dim)
+        if not -len(size_in) <= dim < len(size_in):
+            raise ValueError(f"dim={dim} is out of range for shape {tuple(size_in)}")
+        if mode not in ("reflexive", "periodic"):
+            raise ValueError("mode must be either 'reflexive' or 'periodic'")
+
+        size_out = list(size_in)
+        if mode == "reflexive":
+            size_out[dim] -= 1
+            if size_out[dim] < 1:
+                raise ValueError(
+                    "reflexive finite differences require at least two samples"
+                )
         super().__init__(size_in, size_out)
         self.dim = dim
         self.mode = mode
-        assert np.isscalar(dim), (
-            "Please denote 1 dimension for a 1D finite difference operator"
-        )
 
     def _apply(self, x):
         return DiffFunc.apply(x, self.dim, self.mode)
@@ -84,7 +94,9 @@ class Diff2dgram(LinearMap):
     """
     A little more efficient way to implement the gram operator for the Gram (A'A) of finite difference.
     Apply to last two dimensions, with the reflexive boundary condition.
-    Real-valued CUDA inputs are compiled automatically by default.
+    Real-valued CUDA inputs are compiled automatically by default when the
+    installed PyTorch supports ``torch.compile``. Complex inputs use eager
+    execution because current Inductor releases do not improve this path.
     """
 
     def __init__(self, size_in: Sequence[int], compile: bool = True):
@@ -203,192 +215,208 @@ class Identity(LinearMap):
         return x
 
 
-class Convolve1d(LinearMap):
-    """
-    1D cross-correlation linear map.
-    The attributes follow the definition of torch.nn.Functional.conv1d
-    """
+def _spatial_tuple(
+    value: int | Sequence[int],
+    ndim: int,
+    name: str,
+    *,
+    allow_zero: bool,
+) -> tuple[int, ...]:
+    if isinstance(value, (int, np.integer)):
+        result = (int(value),) * ndim
+    else:
+        result = tuple(value)
+        if len(result) != ndim:
+            raise ValueError(f"{name} must contain exactly {ndim} values")
+        if not all(isinstance(item, (int, np.integer)) for item in result):
+            raise TypeError(f"{name} values must be integers")
+        result = tuple(int(item) for item in result)
+
+    minimum = 0 if allow_zero else 1
+    if any(item < minimum for item in result):
+        comparison = "non-negative" if allow_zero else "positive"
+        raise ValueError(f"{name} values must be {comparison}")
+    return result
+
+
+def _convolution_output_padding(
+    size_in: Sequence[int],
+    size_out: Sequence[int],
+    kernel_size: Sequence[int],
+    stride: Sequence[int],
+    padding: Sequence[int],
+    dilation: Sequence[int],
+) -> tuple[int, ...]:
+    output_padding = tuple(
+        input_size - ((output_size - 1) * step - 2 * pad + dilate * (kernel - 1) + 1)
+        for input_size, output_size, kernel, step, pad, dilate in zip(
+            size_in,
+            size_out,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            strict=True,
+        )
+    )
+    if any(
+        value < 0 or value >= step
+        for value, step in zip(output_padding, stride, strict=True)
+    ):
+        raise ValueError(
+            "the convolution parameters do not admit an adjoint with the "
+            "declared input shape"
+        )
+    return output_padding
+
+
+def _convolution_context(data: Tensor, weight: Tensor):
+    """Disable lossy cuDNN TF32 for complex Hermitian-adjoint calculations."""
+    if data.device.type != "cuda" or not (data.is_complex() or weight.is_complex()):
+        return nullcontext()
+    return torch.backends.cudnn.flags(
+        enabled=torch.backends.cudnn.enabled,
+        benchmark=torch.backends.cudnn.benchmark,
+        deterministic=torch.backends.cudnn.deterministic,
+        allow_tf32=False,
+    )
+
+
+class _ConvolveNd(LinearMap):
+    """Shared implementation for linear cross-correlation maps."""
+
+    def __init__(
+        self,
+        size_in: Sequence[int],
+        weight: Tensor,
+        ndim: int,
+        bias,
+        stride: int | Sequence[int],
+        padding: int | Sequence[int],
+        dilation: int | Sequence[int],
+    ):
+        operator_name = type(self).__name__
+        if len(size_in) != ndim + 2:
+            raise ValueError(
+                f"input to {operator_name} must have {ndim + 2} dimensions"
+            )
+        if weight.ndim != ndim + 2:
+            raise ValueError(
+                f"weight for {operator_name} must have {ndim + 2} dimensions"
+            )
+        if bias is not None:
+            raise ValueError(
+                f"{operator_name} is a LinearMap and does not support bias; "
+                "add an offset outside the operator for an affine convolution"
+            )
+
+        batch, in_channels, *input_shape = size_in
+        out_channels, weight_in_channels, *kernel_shape = weight.shape
+        if in_channels != weight_in_channels:
+            raise ValueError(
+                "input and weight must contain the same number of input channels"
+            )
+
+        self.stride = _spatial_tuple(stride, ndim, "stride", allow_zero=False)
+        self.padding = _spatial_tuple(padding, ndim, "padding", allow_zero=True)
+        self.dilation = _spatial_tuple(dilation, ndim, "dilation", allow_zero=False)
+        output_shape = tuple(
+            (input_size + 2 * pad - dilate * (kernel_size - 1) - 1) // step + 1
+            for input_size, kernel_size, step, pad, dilate in zip(
+                input_shape,
+                kernel_shape,
+                self.stride,
+                self.padding,
+                self.dilation,
+                strict=True,
+            )
+        )
+        if any(size < 1 for size in output_shape):
+            raise ValueError("kernel and convolution parameters exceed the input size")
+
+        super().__init__(size_in, (batch, out_channels, *output_shape))
+        self.weight = weight
+        self.bias = None
+        self.output_padding = _convolution_output_padding(
+            input_shape,
+            output_shape,
+            kernel_shape,
+            self.stride,
+            self.padding,
+            self.dilation,
+        )
+        self._conv = (F.conv1d, F.conv2d, F.conv3d)[ndim - 1]
+        self._conv_transpose = (
+            F.conv_transpose1d,
+            F.conv_transpose2d,
+            F.conv_transpose3d,
+        )[ndim - 1]
+
+    def _apply(self, x):
+        with _convolution_context(x, self.weight):
+            return self._conv(
+                x,
+                self.weight,
+                stride=self.stride,
+                padding=self.padding,
+                dilation=self.dilation,
+            )
+
+    def _apply_adjoint(self, x):
+        with _convolution_context(x, self.weight):
+            return self._conv_transpose(
+                x,
+                self.weight.conj(),
+                stride=self.stride,
+                padding=self.padding,
+                output_padding=self.output_padding,
+                dilation=self.dilation,
+            )
+
+
+class Convolve1d(_ConvolveNd):
+    """1D cross-correlation with its exact Hermitian transpose."""
 
     def __init__(
         self,
         size_in: Sequence[int],
         weight: Tensor,
         bias=None,
-        stride: int = 1,
-        padding: int = 0,
-        dilation: int = 1,
+        stride: int | Sequence[int] = 1,
+        padding: int | Sequence[int] = 0,
+        dilation: int | Sequence[int] = 1,
     ):
-        # only weight and input size
-        assert len(list(size_in)) == 3, (
-            "input must have the shape (minibatch, in_channels, iW)"
-        )
-        assert len(list(weight.shape)) == 3, (
-            "weight must have the shape (out_channels, in_channels, kW)"
-        )
-        minimatch, _, iW = size_in
-        out_channel, _, kW = weight.shape
-        assert iW >= kW, "Kernel size can't be greater than actual input size"
-        Lout = (iW + 2 * padding - dilation * (kW - 1) - 1) // stride + 1
-        size_out = (minimatch, out_channel, Lout)
-        super().__init__(size_in, size_out)
-        self.weight = weight
-        self.bias = bias
-        self.stride = stride
-        self.padding = padding
-        self.dilation = dilation
-
-    def _apply(self, x):
-        return F.conv1d(
-            x,
-            self.weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-        )
-
-    def _apply_adjoint(self, x):
-        return F.conv_transpose1d(
-            x,
-            self.weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-        )
+        super().__init__(size_in, weight, 1, bias, stride, padding, dilation)
 
 
-class Convolve2d(LinearMap):
-    """
-    2D cross-correlation linear map.
-    The attributes follow the definition of torch.nn.Functional.conv2d
-    """
+class Convolve2d(_ConvolveNd):
+    """2D cross-correlation with its exact Hermitian transpose."""
 
     def __init__(
         self,
         size_in: Sequence[int],
         weight: Tensor,
         bias=None,
-        stride: int = 1,
-        padding: int = 0,
-        dilation: int = 1,
+        stride: int | Sequence[int] = 1,
+        padding: int | Sequence[int] = 0,
+        dilation: int | Sequence[int] = 1,
     ):
-        assert len(list(size_in)) == 4, (
-            "input must have the shape (minibatch, in_channels, iH, iW)"
-        )
-        assert len(list(weight.shape)) == 4, (
-            "weight must have the shape (out_channels, in_channels, kH, kW)"
-        )
-        minimatch, _, iH, iW = size_in
-        out_channel, _, kH, kW = weight.shape
-        assert iH >= kH and iW >= kW, (
-            "Kernel size can't be greater than actual input size"
-        )
-
-        if isinstance(stride, int):
-            stride = tuple([stride] * 2)
-        if isinstance(padding, int):
-            padding = tuple([padding] * 2)
-        if isinstance(dilation, int):
-            dilation = tuple([dilation] * 2)
-
-        Hout = (iH + 2 * padding[0] - dilation[0] * (kH - 1) - 1) // stride[0] + 1
-        Wout = (iW + 2 * padding[1] - dilation[1] * (kW - 1) - 1) // stride[1] + 1
-        size_out = (minimatch, out_channel, Hout, Wout)
-
-        super().__init__(size_in, size_out)
-        self.weight = weight
-        self.bias = bias
-        self.stride = stride
-        self.padding = padding
-        self.dilation = dilation
-
-    def _apply(self, x):
-        return F.conv2d(
-            x,
-            self.weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-        )
-
-    def _apply_adjoint(self, x):
-        return F.conv_transpose2d(
-            x,
-            self.weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-        )
+        super().__init__(size_in, weight, 2, bias, stride, padding, dilation)
 
 
-class Convolve3d(LinearMap):
-    """
-    3D cross-correlation linear map.
-    The attributes follow the definition of torch.nn.Functional.conv3d
-    """
+class Convolve3d(_ConvolveNd):
+    """3D cross-correlation with its exact Hermitian transpose."""
 
     def __init__(
         self,
         size_in: Sequence[int],
         weight: Tensor,
         bias=None,
-        stride: int = 1,
-        padding: int = 0,
-        dilation: int = 1,
+        stride: int | Sequence[int] = 1,
+        padding: int | Sequence[int] = 0,
+        dilation: int | Sequence[int] = 1,
     ):
-        assert len(list(size_in)) == 5, (
-            "input must have the shape (minibatch, in_channels, iD, iH, iW)"
-        )
-        assert len(list(weight.shape)) == 5, (
-            "weight must have the shape (out_channels, in_channels, kD, kH, kW)"
-        )
-        minimatch, _, iD, iH, iW = size_in
-        out_channel, _, kD, kH, kW = weight.shape
-        assert iD >= kD and iH >= kH and iW >= kW, (
-            "Kernel size can't be greater than actual input size"
-        )
-
-        if isinstance(stride, int):
-            stride = tuple([stride] * 3)
-        if isinstance(padding, int):
-            padding = tuple([padding] * 3)
-        if isinstance(dilation, int):
-            dilation = tuple([dilation] * 3)
-
-        Dout = (iD + 2 * padding[0] - dilation[0] * (kD - 1) - 1) // stride[0] + 1
-        Hout = (iH + 2 * padding[1] - dilation[1] * (kH - 1) - 1) // stride[1] + 1
-        Wout = (iW + 2 * padding[2] - dilation[2] * (kW - 1) - 1) // stride[2] + 1
-        size_out = (minimatch, out_channel, Dout, Hout, Wout)
-
-        super().__init__(size_in, size_out)
-        self.weight = weight
-        self.bias = bias
-        self.stride = stride
-        self.padding = padding
-        self.dilation = dilation
-
-    def _apply(self, x):
-        return F.conv3d(
-            x,
-            self.weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-        )
-
-    def _apply_adjoint(self, x):
-        return F.conv_transpose3d(
-            x,
-            self.weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-        )
+        super().__init__(size_in, weight, 3, bias, stride, padding, dilation)
 
 
 class Patch2D(LinearMap):

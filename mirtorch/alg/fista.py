@@ -56,38 +56,31 @@ class FISTA:
             raise NotImplementedError
         self.restart = restart
 
-    def _run(self, x0: torch.Tensor) -> torch.Tensor:
-        xold = x0
-        yold = x0
-        told = 1.0
-        for _ in range(self.max_iter):
-            fgrad = self.f_grad(xold)
-            ynew = self.prox(xold - self._alpha * fgrad, self._alpha)
-            tnew = 0.5 * (1 + math.sqrt(1 + 4 * told**2))
-            beta = (told - 1) / tnew
-            told = tnew
-            xold = ynew + beta * (ynew - yold)
-            yold = ynew
-        return xold
-
-    def _run_with_evaluation(self, x0: torch.Tensor):
-        assert self.eval_func is not None
-        xold = x0
-        yold = x0
-        told = 1.0
+    def _run(self, x0: torch.Tensor):
+        extrapolated = x0
+        iterate = x0
+        momentum = 1.0
         saved = []
         for i in range(1, self.max_iter + 1):
-            fgrad = self.f_grad(xold)
-            ynew = self.prox(xold - self._alpha * fgrad, self._alpha)
-            tnew = 0.5 * (1 + math.sqrt(1 + 4 * told**2))
-            beta = (told - 1) / tnew
-            told = tnew
-            xold = ynew + beta * (ynew - yold)
-            yold = ynew
-            cost = self.eval_func(xold)
-            saved.append(cost)
-            logger.info("Cost function at %dth iteration: %s", i, cost)
-        return xold, saved
+            gradient = self.f_grad(extrapolated)
+            next_iterate = self.prox(
+                extrapolated - self._alpha * gradient,
+                self._alpha,
+            )
+            next_momentum = 0.5 * (1 + math.sqrt(1 + 4 * momentum**2))
+            scale = (momentum - 1) / next_momentum
+            extrapolated = next_iterate + scale * (next_iterate - iterate)
+            iterate = next_iterate
+            momentum = next_momentum
+
+            if self.eval_func is not None:
+                cost = self.eval_func(iterate)
+                saved.append(cost)
+                logger.info("Cost function at iteration %d: %s", i, cost)
+
+        if self.eval_func is not None:
+            return iterate, saved
+        return iterate
 
     def run(self, x0: torch.Tensor):
         r"""
@@ -100,9 +93,7 @@ class FISTA:
             xk: results
             saved: (optional) a list of intermediate results, calculated by the eval_func.
         """
-        if self.eval_func is not None:
-            return self._run_with_evaluation(x0)
-        if should_compile(self.compile, x0):
+        if self.eval_func is None and should_compile(self.compile, x0):
             if self._compiled_run is None:
                 self._compiled_run = compile_callable(self._run)
             return self._compiled_run(x0)

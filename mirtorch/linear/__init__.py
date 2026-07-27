@@ -1,5 +1,3 @@
-from importlib import import_module
-
 from .basics import (
     Convolve1d,
     Convolve2d,
@@ -24,22 +22,9 @@ from .linearmaps import (
     Multiply,
     Vstack,
 )
+from .mri import FFTCn, Gmri, GmriGram, NuSense, NuSenseGram, Sense
 from .spect import SPECT
 from .wavelets import Wavelet2D
-
-_MRI_EXPORTS = frozenset(
-    {"FFTCn", "Gmri", "GmriGram", "NuSense", "NuSenseGram", "Sense"}
-)
-
-
-def __getattr__(name):
-    """Load the optional, comparatively expensive MRI module on first use."""
-    if name in _MRI_EXPORTS:
-        value = getattr(import_module(".mri", __name__), name)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 __all__ = [
     "SPECT",

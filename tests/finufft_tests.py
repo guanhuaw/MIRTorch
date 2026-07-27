@@ -105,13 +105,12 @@ def _direct_gmri_phases(
         for dimension in range(len(im_size))
     )
     times = (
-        torch.linspace(
-            0,
-            dt * traj.shape[-1],
+        torch.arange(
             traj.shape[-1],
             dtype=traj.dtype,
             device=traj.device,
         )
+        * dt
         / 1000
     )
     field_shape = (zmap.shape[0], 1, 1, 1) + im_size
@@ -165,6 +164,83 @@ def _direct_gmri_adjoint(
     sample_shape = samples.shape + (1,) * len(im_size)
     coil_images = (samples.reshape(sample_shape) * phase).sum(dim=(2, 3)) * scale
     return (smaps.conj() * coil_images).sum(dim=1, keepdim=True)
+
+
+def test_finufft_plan_reuses_fixed_coordinates_and_invalidates_mutations(monkeypatch):
+    plans = []
+
+    class FakePlan:
+        def __init__(self, *_args, **_kwargs):
+            self.setpts_calls = 0
+            plans.append(self)
+
+        def setpts(self, *_coordinates):
+            self.setpts_calls += 1
+
+        def execute(self, data):
+            return data
+
+    class FakeLibrary:
+        Plan = FakePlan
+
+    backend = FinufftSenseBackend(
+        im_size=(5,),
+        grid_size=(10,),
+        norm=None,
+        batchmode=True,
+        sequential=False,
+        eps=1e-6,
+    )
+    monkeypatch.setattr(backend, "_library", lambda _device: FakeLibrary())
+    data = torch.ones(1, 5, dtype=torch.complex64)
+    coordinates = torch.zeros(1, 5)
+
+    backend._execute(1, data, coordinates, mode_size=(5,))
+    backend._execute(1, data, coordinates, mode_size=(5,))
+    assert len(plans) == 1
+    assert plans[0].setpts_calls == 1
+
+    coordinates.add_(0.1)
+    backend._execute(1, data, coordinates, mode_size=(5,))
+    assert plans[0].setpts_calls == 2
+
+    backend.clear_plans()
+    assert not backend._plans
+    assert not backend._coordinate_cache
+
+
+def test_finufft_gmri_batches_all_segments_into_one_transform(monkeypatch):
+    calls = {"type1": 0, "type2": 0}
+
+    def counted_type1(backend, samples, traj, mode_size=None):
+        calls["type1"] += 1
+        return _exact_type1(backend, samples, traj, mode_size)
+
+    def counted_type2(backend, modes, traj):
+        calls["type2"] += 1
+        return _exact_type2(backend, modes, traj)
+
+    monkeypatch.setattr(FinufftSenseBackend, "type1", counted_type1)
+    monkeypatch.setattr(FinufftSenseBackend, "type2", counted_type2)
+    smaps = torch.randn(1, 2, 5, 4, dtype=torch.complex128)
+    zmap = torch.linspace(-30, 40, 20, dtype=torch.float64).reshape(1, 5, 4)
+    traj = torch.randn(1, 2, 2, 9, dtype=torch.float64) * 0.1
+    operator = Gmri(
+        smaps,
+        zmap,
+        traj,
+        L=5,
+        nbins=10,
+        backend="finufft",
+        eps=1e-12,
+    )
+
+    image = torch.randn(1, 1, 5, 4, dtype=torch.complex128)
+    samples = torch.randn(1, 2, 2, 9, dtype=torch.complex128)
+    operator(image)
+    operator.H(samples)
+
+    assert calls == {"type1": 1, "type2": 1}
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS wheel-specific check")
@@ -1092,7 +1168,7 @@ def test_finufft_gmri_runs_on_supported_cpu_or_cuda():
     assert _relative_error(finufft_gram(image), legacy_gram(image)) < 3e-3
 
 
-def test_finufft_gmri_gram_autocorrelation_improves_b0_normal(monkeypatch):
+def test_finufft_gmri_gram_autocorrelation_matches_b0_normal(monkeypatch):
     monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
     torch.manual_seed(46)
     dtype = torch.complex128
@@ -1124,32 +1200,16 @@ def test_finufft_gmri_gram_autocorrelation_improves_b0_normal(monkeypatch):
         "backend": "finufft",
         "eps": 1e-12,
     }
-    gram = GmriGram(
-        smaps,
-        zmap,
-        traj,
-        gram_approximation="autocorrelation",
-        **kwargs,
-    )
-    legacy = GmriGram(
-        smaps,
-        zmap,
-        traj,
-        gram_approximation="legacy",
-        **kwargs,
-    )
+    gram = GmriGram(smaps, zmap, traj, **kwargs)
     actual = gram(image)
-    legacy_error = _relative_error(legacy(image), expected)
 
     assert gram.B.imag.abs().max() == 0
     assert _relative_error(actual, expected) < 2e-3
-    assert _relative_error(actual, expected) < legacy_error / 4
 
     torchkbnufft_gram = GmriGram(
         smaps,
         zmap,
         traj,
-        gram_approximation="autocorrelation",
         backend="torchkbnufft",
         **{key: value for key, value in kwargs.items() if key != "backend"},
     )
@@ -1178,3 +1238,26 @@ def test_finufft_gmri_gram_rejects_changed_trajectory(monkeypatch):
     traj.add_(0.1)
     with pytest.raises(RuntimeError, match="trajectory changed"):
         gram(torch.ones(1, 1, 4, 4, dtype=torch.complex64))
+
+
+def test_finufft_gmri_gram_uses_direct_path_for_trajectory_gradient(monkeypatch):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    monkeypatch.setattr(FinufftSenseBackend, "type2", _exact_type2)
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex128)
+    zmap = torch.zeros(1, 4, 4, dtype=torch.float64)
+    traj = (torch.rand(1, 2, 2, 7, dtype=torch.float64) - 0.5).requires_grad_()
+    image = torch.randn(1, 1, 4, 4, dtype=torch.complex128)
+    gram = GmriGram(
+        smaps,
+        zmap,
+        traj,
+        L=2,
+        nbins=4,
+        backend="finufft",
+        eps=1e-12,
+    )
+
+    assert gram._uses_direct_gram
+    (gradient,) = torch.autograd.grad(gram(image).abs().square().sum(), traj)
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) > 0

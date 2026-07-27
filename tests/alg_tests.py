@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from mirtorch.alg import CG, FBPD, FISTA, POGM, power_iter
-from mirtorch.linear import Diag, Identity
+from mirtorch.linear import Diag, Identity, LinearMap
 from mirtorch.prox import Const
 
 
@@ -35,6 +35,19 @@ def test_cg_with_evaluation_history_backpropagates():
     solution.sum().backward()
     assert len(saved) == 1
     assert torch.allclose(rhs.grad, torch.ones_like(rhs))
+
+
+@pytest.mark.parametrize("backward_mode", ["implicit", "unrolled"])
+def test_cg_tol_zero_handles_exact_convergence(backward_mode):
+    rhs = torch.ones(4)
+    result = CG(
+        Identity(rhs.shape),
+        max_iter=3,
+        tol=0,
+        backward_mode=backward_mode,
+    ).run(torch.zeros_like(rhs), rhs)
+
+    assert torch.equal(result, rhs)
 
 
 @pytest.mark.skipif(
@@ -134,9 +147,81 @@ def test_cg_validates_initial_shape():
         solver.run(torch.zeros(2), torch.ones(3))
 
 
+def test_cg_caches_operator_application_once_per_iteration():
+    class CountingDiagonal(LinearMap):
+        def __init__(self):
+            super().__init__([6], [6])
+            self.diagonal = torch.arange(1, 7, dtype=torch.float64)
+            self.calls = 0
+
+        def _apply(self, value):
+            self.calls += 1
+            return self.diagonal * value
+
+        def _apply_adjoint(self, value):
+            return self.diagonal * value
+
+    operator = CountingDiagonal()
+    solver = CG(operator, max_iter=5, tol=0)
+    solver.run(torch.zeros(6, dtype=torch.float64), torch.ones(6, dtype=torch.float64))
+    assert operator.calls == 6  # initial residual plus one A*p per iteration
+
+
+def test_cg_unrolled_mode_differentiates_truncated_initialization():
+    initial = torch.tensor([2.0, -1.0], requires_grad=True)
+    result = CG(
+        Identity([2]),
+        max_iter=0,
+        backward_mode="unrolled",
+    ).run(initial, torch.ones(2))
+    result.sum().backward()
+    assert torch.equal(initial.grad, torch.ones_like(initial))
+
+
+def test_cg_unrolled_mode_differentiates_operator_parameters():
+    diagonal = torch.tensor([2.0], requires_grad=True)
+    result = CG(
+        Diag(diagonal),
+        max_iter=1,
+        tol=0,
+        backward_mode="unrolled",
+    ).run(torch.zeros(1), torch.tensor([4.0]))
+    result.sum().backward()
+    assert torch.allclose(result, torch.tensor([2.0]))
+    assert torch.allclose(diagonal.grad, torch.tensor([-1.0]))
+
+
+def test_cg_rejects_non_positive_operator_breakdown():
+    with pytest.raises(RuntimeError, match="positive definite"):
+        CG(Diag(torch.zeros(2)), max_iter=2).run(
+            torch.zeros(2),
+            torch.ones(2),
+        )
+
+
+def test_cg_accepts_small_positive_denominator():
+    diagonal = torch.tensor([1e-8], dtype=torch.float32)
+    right_hand_side = torch.tensor([1e-4], dtype=torch.float32)
+    result = CG(Diag(diagonal), max_iter=1, tol=0).run(
+        torch.zeros_like(right_hand_side),
+        right_hand_side,
+    )
+    torch.testing.assert_close(result, right_hand_side / diagonal)
+
+
 def test_power_iteration_rejects_zero_initialization():
     with pytest.raises(ValueError, match="nonzero"):
         power_iter(Identity([3]), torch.zeros(3))
+
+
+def test_power_iteration_returns_zero_for_zero_operator():
+    vector, singular_value = power_iter(
+        0 * Identity([3]),
+        torch.ones(3),
+        alert=False,
+    )
+    assert torch.isfinite(vector).all()
+    assert singular_value == 0
 
 
 @pytest.mark.parametrize(

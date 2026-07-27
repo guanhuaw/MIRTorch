@@ -264,7 +264,7 @@ def pad2D(X, pad, kernel_shape=None, stride=None, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         has the same dimensions as the input.  If 2-tuple, specifies the number
-        of padding rows and colums to add *on both sides* of the rows/columns
+        of padding rows and columns to add *on both sides* of the rows/columns
         in `X`. If 4-tuple, specifies the number of rows/columns to add to the
         top, bottom, left, and right of the input volume.
     kernel_shape : 2-tuple
@@ -508,7 +508,7 @@ def im2col(X, W_shape, pad, stride, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in X. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -633,7 +633,7 @@ def conv2D(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in `X`. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -698,7 +698,7 @@ def conv1D(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 1D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding colums to add *on both sides*
+        2-tuple, specifies the number of padding columns to add *on both sides*
         of the columns in X.
     dilation : int
         Number of pixels inserted between kernel elements. Default is 0.
@@ -751,7 +751,7 @@ def deconv2D_naive(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in `X`. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -821,7 +821,7 @@ def conv2D_naive(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in `X`. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -968,7 +968,7 @@ def glorot_normal(weight_shape, gain=1.0):
 
     Notes
     -----
-    The Glorot normal initializaiton initializes weights with draws from
+    The Glorot normal initialization initializes weights with draws from
     TruncatedNormal(0, b) where the variance `b` is
 
     .. math::

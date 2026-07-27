@@ -4,6 +4,8 @@
 
 from __future__ import absolute_import
 
+from importlib.resources import files
+
 from numpy import load
 
 try:
@@ -21,6 +23,9 @@ def _load_from_file(basename, varnames):
     try:
         mat = COEFF_CACHE[basename]
     except KeyError:
+        resource = files(f"{__package__}.data").joinpath(f"{basename}.npz")
+        with resource.open("rb") as stream:
+            mat = dict(load(stream))
         COEFF_CACHE[basename] = mat
 
     try:

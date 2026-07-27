@@ -3,10 +3,13 @@ Discrete-to-discrete system matrices for MRI.
 2021-02. Guanhua Wang, University of Michigan
 """
 
+import math
 import sys
+import warnings
+from importlib.util import find_spec
 
-import numpy as np
 import torch
+import torch.nn.functional as F
 import torchkbnufft as tkbn
 from torch import Tensor
 from torch.fft import fftn, ifftn
@@ -15,16 +18,248 @@ from ._finufft import (
     FinufftSenseBackend,
     finufft_sense_adjoint,
     finufft_sense_forward,
+    finufft_type1,
+    finufft_type2,
 )
 from .linearmaps import LinearMap
-from .util import fftshift, ifftshift
+from .util import adjoint_fft_norm, fftshift, ifftshift
+
+_MAX_B0_KERNEL_BYTES = 2 * 1024**3
+_MAX_B0_WORKSPACE_BYTES = 512 * 1024**2
+
+
+def _resolve_batch_size(**sizes: int) -> int:
+    """Resolve broadcast-compatible leading dimensions."""
+    batch = max(sizes.values())
+    if any(size not in (1, batch) for size in sizes.values()):
+        details = ", ".join(f"{name}.shape[0]={size}" for name, size in sizes.items())
+        raise ValueError(
+            f"Incompatible batch sizes: {details}. Must be equal or one must be 1."
+        )
+    return batch
+
+
+def _spatial_shape(smaps: Tensor, batchmode: bool = True) -> tuple[int, ...]:
+    return tuple(smaps.shape[2:] if batchmode else smaps.shape[1:])
+
+
+def _grid_shape(spatial_shape: tuple[int, ...], oversampling: float) -> tuple[int, ...]:
+    return tuple(math.floor(size * oversampling) for size in spatial_shape)
+
+
+def _resolve_b0_batch_size(smaps: Tensor, zmap: Tensor, traj: Tensor) -> int:
+    if smaps.device != zmap.device or smaps.device != traj.device:
+        raise ValueError(
+            "sensitivity maps, field map, and trajectory must be on one device"
+        )
+    batch = _resolve_batch_size(smaps=smaps.shape[0], traj=traj.shape[0])
+    if zmap.shape[0] not in (1, batch):
+        raise ValueError(
+            f"Incompatible zmap batch size: zmap.shape[0]={zmap.shape[0]}, "
+            f"expected 1 or {batch}."
+        )
+    return batch
+
+
+def readout_times(
+    npoints: int,
+    dt: float,
+    *,
+    template: Tensor,
+    times: Tensor | None = None,
+) -> Tensor:
+    """Return readout sample times in milliseconds on ``template``'s device."""
+    if npoints < 1:
+        raise ValueError("npoints must be positive")
+    if dt < 0:
+        raise ValueError("dt must be non-negative")
+    real_dtype = template.real.dtype
+    if times is None:
+        return torch.arange(npoints, dtype=real_dtype, device=template.device) * dt
+    if times.ndim != 1 or times.numel() != npoints:
+        raise ValueError(f"T must be one-dimensional with exactly {npoints} entries")
+    if times.is_complex():
+        raise TypeError("T must be real-valued")
+    return times.to(device=template.device, dtype=real_dtype)
+
+
+def _histogram_autocorrelation(histogram: Tensor) -> Tensor:
+    values = histogram.reshape(1, 1, -1)
+    padded = F.pad(values, (histogram.numel() - 1,) * 2)
+    return F.conv1d(padded, values).reshape(-1)
+
+
+def _uniform_histogram(values: Tensor, bins: int) -> tuple[Tensor, Tensor]:
+    """Return an equal-width histogram using device-portable tensor operations."""
+    lower = values.amin()
+    upper = values.amax()
+    collapsed = lower == upper
+    lower = torch.where(collapsed, lower - 0.5, lower)
+    upper = torch.where(collapsed, upper + 0.5, upper)
+    width = upper - lower
+    detached_values = values.detach()
+    indices = torch.floor((detached_values - lower.detach()) * bins / width.detach())
+    indices = indices.to(torch.long).clamp_(0, bins - 1)
+    histogram = torch.zeros(bins, dtype=values.dtype, device=values.device)
+    histogram = histogram.scatter_add(
+        0,
+        indices,
+        torch.ones_like(values),
+    )
+    fractions = torch.arange(
+        bins + 1,
+        dtype=values.dtype,
+        device=values.device,
+    )
+    edges = lower + fractions * (width / bins)
+    return histogram, edges
+
+
+def mri_exp_approx(
+    b0: Tensor,
+    bins: int,
+    lseg: int,
+    t: Tensor,
+    autocorrelation: bool = False,
+) -> tuple[Tensor, Tensor, Tensor]:
+    r"""Approximate ``exp(-2j*pi*b0*t)`` using PyTorch time segmentation.
+
+    Histogram selection is intentionally non-differentiable, while the fitted
+    temporal basis and spatial phase coefficients retain gradients with respect
+    to ``t`` and ``b0``.
+    """
+    if not isinstance(b0, Tensor) or not isinstance(t, Tensor):
+        raise TypeError("b0 and t must be torch tensors")
+    if b0.is_complex():
+        raise TypeError("b0 must be real-valued")
+    if t.is_complex():
+        raise TypeError("t must be real-valued")
+    if bins < 1:
+        raise ValueError("bins must be positive")
+    if lseg < 1:
+        raise ValueError("lseg must be positive")
+    if t.ndim != 1 or t.numel() < 1:
+        raise ValueError("t must be a non-empty one-dimensional tensor")
+    if b0.device != t.device:
+        raise ValueError("b0 and t must be on the same device")
+    if not b0.is_floating_point() or not t.is_floating_point():
+        raise TypeError("b0 and t must use floating-point dtypes")
+
+    real_dtype = torch.promote_types(b0.dtype, t.dtype)
+    b0 = b0.to(dtype=real_dtype)
+    t = t.to(dtype=real_dtype)
+    angular_frequency = 2 * math.pi * b0.reshape(-1)
+
+    # Histogram membership has no useful derivative with respect to the sample
+    # locations. Only this discrete model-selection step is detached; the
+    # fitted basis and spatial coefficients remain differentiable.
+    hist_wt, bin_edges = _uniform_histogram(angular_frequency, bins)
+    bin_width = bin_edges[1] - bin_edges[0]
+    if autocorrelation:
+        hist_wt = _histogram_autocorrelation(hist_wt)
+        bin_centers = (
+            torch.arange(
+                1 - bins,
+                bins,
+                dtype=real_dtype,
+                device=b0.device,
+            )
+            * bin_width
+        )
+    else:
+        bin_centers = bin_edges[1:] - bin_width / 2
+
+    complex_dtype = torch.complex128 if real_dtype == torch.float64 else torch.complex64
+    zk = (1j * bin_centers).to(dtype=complex_dtype)
+    fractions = torch.linspace(
+        0,
+        1,
+        lseg,
+        dtype=real_dtype,
+        device=b0.device,
+    )
+    tl = (t[0] + fractions * (t[-1] - t[0])) / 1000
+
+    ch = torch.exp(-tl[:, None] * zk[None, :])
+    sqrt_histogram = hist_wt.sqrt()
+    weighted_basis = sqrt_histogram[:, None] * ch.transpose(0, 1)
+    # PyTorch currently implements complex MPS SVD as an implicit CPU
+    # fallback. Make that small setup transfer explicit so users do not get a
+    # backend warning; autograd still follows both device copies.
+    fit_basis = (
+        weighted_basis.cpu() if weighted_basis.device.type == "mps" else weighted_basis
+    )
+    interpolator = torch.linalg.pinv(fit_basis).to(b0.device)
+    interpolator = interpolator * sqrt_histogram[None, :]
+    target = torch.exp(-zk[:, None] * t[None, :] / 1000)
+    temporal = (interpolator @ target).transpose(0, 1)
+    if autocorrelation:
+        temporal = temporal.real
+
+    spatial_frequency = (2j * math.pi * b0.reshape(-1)).to(complex_dtype)
+    spatial = torch.exp(-tl[:, None] * spatial_frequency[None, :]).transpose(0, 1)
+    return temporal, spatial, tl
+
+
+def time_segmentation_coefficients(
+    zmap: Tensor,
+    *,
+    batch: int,
+    bins: int,
+    segments: int,
+    times: Tensor,
+    complex_dtype: torch.dtype,
+    autocorrelation: bool = False,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Build batched temporal ``B`` and spatial ``C`` coefficients."""
+    if zmap.ndim < 2:
+        raise ValueError("zmap must include batch and spatial dimensions")
+    if zmap.shape[0] not in (1, batch):
+        raise ValueError(f"zmap batch size must be 1 or {batch}, not {zmap.shape[0]}")
+
+    coefficient_batch = zmap.shape[0]
+    approximations = [
+        mri_exp_approx(
+            zmap[index],
+            bins,
+            segments,
+            times,
+            autocorrelation=autocorrelation,
+        )
+        for index in range(coefficient_batch)
+    ]
+    temporal = torch.stack(
+        [item[0].transpose(0, 1) for item in approximations],
+        dim=1,
+    ).to(dtype=complex_dtype)
+    spatial = torch.stack(
+        [item[1].transpose(0, 1) for item in approximations],
+        dim=1,
+    ).to(dtype=complex_dtype)
+
+    if coefficient_batch == 1 and batch != 1:
+        temporal = temporal.expand(-1, batch, -1)
+        spatial = spatial.expand(-1, batch, -1)
+
+    temporal = temporal.reshape(segments, batch, 1, 1, times.numel())
+    spatial = spatial.reshape(
+        segments,
+        batch,
+        1,
+        *zmap.shape[1:],
+    )
+    return temporal, spatial, approximations[0][2]
 
 
 def _resolve_nufft_backend(backend: str, device: torch.device) -> str:
     if backend == "auto":
-        if device.type == "cuda":
+        if device.type == "cuda" and find_spec("cufinufft") is not None:
             return "finufft"
-        if device.type == "cpu" and sys.platform != "darwin":
+        if (
+            device.type == "cpu"
+            and sys.platform != "darwin"
+            and find_spec("finufft") is not None
+        ):
             return "finufft"
         return "torchkbnufft"
     if backend not in ("torchkbnufft", "finufft"):
@@ -37,6 +272,31 @@ def _resolve_nufft_backend(backend: str, device: torch.device) -> str:
 
 def _complex_dtype_like(tensor: Tensor) -> torch.dtype:
     return torch.promote_types(tensor.dtype, torch.complex64)
+
+
+def _tensor_state_key(tensor: Tensor) -> tuple:
+    """Identify a tensor and mutations that can invalidate cached MRI data."""
+    return (
+        tensor.untyped_storage().data_ptr(),
+        tensor.storage_offset(),
+        tensor._version,
+        tensor.device,
+        tensor.dtype,
+        tensor.requires_grad,
+        tuple(tensor.shape),
+        tuple(tensor.stride()),
+    )
+
+
+def _coefficient_state_key(
+    zmap: Tensor,
+    times: Tensor | None,
+    dt: float,
+    bins: int,
+    segments: int,
+) -> tuple:
+    time_state = None if times is None else _tensor_state_key(times)
+    return _tensor_state_key(zmap), time_state, dt, bins, segments
 
 
 class FFTCn(LinearMap):
@@ -57,6 +317,10 @@ class FFTCn(LinearMap):
         dims: tuple[int, ...] | None = None,
         norm: str = "ortho",
     ):
+        if list(size_in) != list(size_out):
+            raise ValueError("FFTCn preserves shape, so size_in must equal size_out")
+        if norm not in ("ortho", "forward", "backward", None):
+            raise ValueError("norm must be None, 'ortho', 'forward', or 'backward'")
         super().__init__(size_in, size_out)
         self.norm = norm
         self.dims = dims
@@ -69,12 +333,7 @@ class FFTCn(LinearMap):
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
         x = ifftshift(x, self.dims)
-        if self.norm == "ortho":
-            x = ifftn(x, dim=self.dims, norm="ortho")
-        elif self.norm == "forward":
-            x = ifftn(x, dim=self.dims, norm="backward")
-        else:
-            x = ifftn(x, dim=self.dims, norm="forward")
+        x = ifftn(x, dim=self.dims, norm=adjoint_fft_norm(self.norm))
         x = fftshift(x, self.dims)
         return x
 
@@ -89,22 +348,7 @@ class Sense(LinearMap):
     - The batch size is determined by max(smaps.shape[0], masks.shape[0])
     - At least one of (smaps, masks) must have the desired batch size
 
-    Important: When both smaps and masks have batch size 1, the operator will have
-    size_in=[1, 1, nx, ny]. To use with larger batches, replicate one of the inputs.
-
-    Example - Single sensitivity map for 10 time frames::
-
-        smaps = torch.randn(1, 8, 128, 128)  # Single smap
-        masks = torch.randn(1, 128, 128)     # Single mask
-
-        # Replicate masks to desired batch size
-        masks = masks.repeat(10, 1, 1)       # Now [10, 128, 128]
-        sense = Sense(smaps, masks)          # size_in=[10, 1, 128, 128]
-
-        x = torch.randn(10, 1, 128, 128)
-        k = sense(x)                         # Works! Returns [10, 8, 128, 128]
-
-        # Note: .repeat() is memory-efficient (uses views until modified)
+    When both smaps and masks have batch size 1, the operator has batch size 1.
 
     If we use the batch dimension, the input dimension is [nbatch, 1, nx, ny, (nz)],
     and the output is [nbatch, ncoil, nx, ny, (nz)].
@@ -120,49 +364,44 @@ class Sense(LinearMap):
     def __init__(
         self, smaps: Tensor, masks: Tensor, norm: str = "ortho", batchmode: bool = True
     ):
+        if not isinstance(batchmode, bool):
+            raise TypeError("batchmode must be a bool")
+        expected_rank = 4 if batchmode else 3
+        if smaps.ndim not in (expected_rank, expected_rank + 1):
+            raise ValueError(
+                f"smaps must have rank {expected_rank} or {expected_rank + 1}"
+            )
+        if masks.ndim != smaps.ndim - 1:
+            raise ValueError("masks must have one fewer dimension than smaps")
+        if smaps.device != masks.device:
+            raise ValueError("smaps and masks must be on the same device")
+        if norm not in ("ortho", "forward", "backward", None):
+            raise ValueError("norm must be None, 'ortho', 'forward', or 'backward'")
         ncoil = smaps.shape[1] if batchmode else smaps.shape[0]
+        spatial_shape = _spatial_shape(smaps, batchmode)
+        mask_shape = tuple(masks.shape[1:] if batchmode else masks.shape)
+        if spatial_shape != mask_shape:
+            raise ValueError(
+                f"Spatial dimensions mismatch: smaps {spatial_shape}, "
+                f"masks {mask_shape}"
+            )
 
         if batchmode:
-            # Determine batch size from inputs
-            # Allow broadcasting: either can be size 1
-            smaps_batch = smaps.shape[0]
-            masks_batch = masks.shape[0]
-
-            if smaps_batch == masks_batch:
-                nbatch = smaps_batch
-            elif smaps_batch == 1:
-                nbatch = masks_batch
-            elif masks_batch == 1:
-                nbatch = smaps_batch
-            else:
-                raise ValueError(
-                    f"Incompatible batch sizes: smaps.shape[0]={smaps_batch}, "
-                    f"masks.shape[0]={masks_batch}. Must be equal or one must be 1."
-                )
-
-            # Set sizes
-            size_in = (nbatch, 1) + tuple(smaps.shape[2:])
-            size_out = (nbatch, ncoil) + tuple(smaps.shape[2:])
-            dims = tuple(range(2, len(smaps.shape)))
-            self.masks = masks.unsqueeze(1)  # Add channel dimension
-
-            assert smaps.shape[2:] == masks.shape[1:], (
-                f"Spatial dimensions mismatch: smaps {smaps.shape[2:]}, masks {masks.shape[1:]}"
+            nbatch = _resolve_batch_size(
+                smaps=smaps.shape[0],
+                masks=masks.shape[0],
             )
+            size_in = (nbatch, 1) + spatial_shape
+            size_out = (nbatch, ncoil) + spatial_shape
         else:
-            size_in = tuple(smaps.shape[1:])
+            size_in = spatial_shape
             size_out = tuple(smaps.shape)
-            dims = tuple(range(1, len(smaps.shape)))
-            self.masks = masks
-
-            assert smaps.shape[1:] == masks.shape, (
-                f"Spatial dimensions mismatch: smaps {smaps.shape[1:]}, masks {masks.shape}"
-            )
 
         super().__init__(size_in, size_out)
         self.norm = norm
-        self.dims = dims
+        self.dims = tuple(range(2 if batchmode else 1, smaps.ndim))
         self.smaps = smaps
+        self.masks = masks.unsqueeze(1) if batchmode else masks
         self.batchmode = batchmode
 
     def _apply(self, x: Tensor) -> Tensor:
@@ -178,27 +417,16 @@ class Sense(LinearMap):
         k = fftshift(k, self.dims) * self.masks
         return k
 
-    def _apply_adjoint(self, k: Tensor) -> Tensor:
+    def _apply_adjoint(self, x: Tensor) -> Tensor:
         r"""
         Args:
             k:  tensor with dimension [batch, ncoil, nx, ny, (nz)] (batchmode=True) or [ncoil, nx, ny, nz]
         Returns:
             x:  tensor with dimension [batch, 1, nx, ny, (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
-        assert list(k.shape) == list(self.size_out), (
-            f"Shape mismatch: expected {self.size_out}, got {k.shape}"
-        )
-
-        k = k * self.masks
+        k = x * self.masks.conj()
         k = ifftshift(k, self.dims)
-
-        if self.norm == "ortho":
-            x = ifftn(k, dim=self.dims, norm="ortho")
-        elif self.norm == "forward":
-            x = ifftn(k, dim=self.dims, norm="backward")
-        else:
-            x = ifftn(k, dim=self.dims, norm="forward")
-
+        x = ifftn(k, dim=self.dims, norm=adjoint_fft_norm(self.norm))
         x = fftshift(x, self.dims)
 
         if self.batchmode:
@@ -212,31 +440,17 @@ class Sense(LinearMap):
 class NuSense(LinearMap):
     r"""
     Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
-    The default implementation calls Matthew Muckley's Torchkbnufft toolbox:
-    https://github.com/mmuckley/torchkbnufft. MIRTorch uses FINUFFT on
-    supported CPUs, cuFINUFFT on CUDA, and torchkbnufft on Apple Metal.
+    The automatic backend uses an installed FINUFFT or cuFINUFFT library on a
+    supported device, and otherwise uses Matthew Muckley's torchkbnufft.
+    Trajectory gradients are available with FINUFFT/cuFINUFFT; torchkbnufft
+    does not connect its interpolation coordinates to autograd.
 
     Broadcasting behavior:
     - If smaps or traj have shape [1, ...], they will be broadcast to the batch size
     - The batch size is determined by max(smaps.shape[0], traj.shape[0])
     - At least one of (smaps, traj) must have the desired batch size
 
-    Important: When both smaps and traj have batch size 1, the operator will have
-    size_in=[1, 1, nx, ny]. To use with larger batches, replicate one of the inputs.
-
-    Example - Single sensitivity map for 10 time frames::
-
-        smaps = torch.randn(1, 8, 128, 128)  # Single smap
-        traj = torch.randn(1, 2, 1000)       # Single trajectory
-
-        # Replicate trajectory to desired batch size
-        traj = traj.repeat(10, 1, 1)         # Now [10, 2, 1000]
-        nusense = NuSense(smaps, traj)       # size_in=[10, 1, 128, 128]
-
-        x = torch.randn(10, 1, 128, 128)
-        k = nusense(x)                       # Works! Returns [10, 8, 1000]
-
-        # Note: .repeat() is memory-efficient (uses views until modified)
+    When both smaps and traj have batch size 1, the operator has batch size 1.
 
     The input/output size depends on the sensitivity maps.
     If we use the batch dimension, the input dimension is [nbatch, 1, nx, ny, (nz)],
@@ -275,78 +489,51 @@ class NuSense(LinearMap):
         self.backend = _resolve_nufft_backend(backend, smaps.device)
         self.eps = eps
         backend = self.backend
-        assert grid_size >= 1, "grid size should be greater than 1"
+        if grid_size < 1:
+            raise ValueError("grid size must be at least 1")
 
         ncoil = smaps.shape[1] if batchmode else smaps.shape[0]
+        spatial_shape = _spatial_shape(smaps, batchmode)
+        self.grid_size = _grid_shape(spatial_shape, grid_size)
 
         if batchmode:
-            # Determine batch size from inputs
-            smaps_batch = smaps.shape[0]
-            traj_batch = traj.shape[0]
-
-            if smaps_batch == traj_batch:
-                nbatch = smaps_batch
-            elif smaps_batch == 1:
-                nbatch = traj_batch
-            elif traj_batch == 1:
-                nbatch = smaps_batch
-            else:
-                raise ValueError(
-                    f"Incompatible batch sizes: smaps.shape[0]={smaps_batch}, "
-                    f"traj.shape[0]={traj_batch}. Must be equal or one must be 1."
-                )
-
-            self.grid_size = tuple(
-                np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+            nbatch = _resolve_batch_size(
+                smaps=smaps.shape[0],
+                traj=traj.shape[0],
             )
-            if backend == "torchkbnufft":
-                self.A = tkbn.KbNufft(
-                    im_size=tuple(smaps.shape[2:]),
-                    grid_size=self.grid_size,
-                    numpoints=numpoints,
-                ).to(smaps)
-                self.AT = tkbn.KbNufftAdjoint(
-                    im_size=tuple(smaps.shape[2:]),
-                    grid_size=self.grid_size,
-                    numpoints=numpoints,
-                ).to(smaps)
-
-            size_in = (
-                nbatch,
-                1,
-            ) + tuple(smaps.shape[2:])
+            size_in = (nbatch, 1) + spatial_shape
             size_out = (nbatch, ncoil, traj.shape[-1])
-            super().__init__(size_in, size_out)
         else:
-            self.grid_size = tuple(
-                np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int)
-            )
-            if backend == "torchkbnufft":
-                self.A = tkbn.KbNufft(
-                    im_size=tuple(smaps.shape[1:]),
-                    grid_size=self.grid_size,
-                    numpoints=numpoints,
-                ).to(smaps)
-                self.AT = tkbn.KbNufftAdjoint(
-                    im_size=tuple(smaps.shape[1:]),
-                    grid_size=self.grid_size,
-                    numpoints=numpoints,
-                ).to(smaps)
-
-            size_in = smaps.shape[1:]
+            size_in = spatial_shape
             size_out = (smaps.shape[0], traj.shape[-1])
-            super().__init__(size_in, size_out)
 
-        if backend == "finufft":
-            im_size = tuple(smaps.shape[2:] if batchmode else smaps.shape[1:])
+        if backend == "torchkbnufft":
+            self.A = tkbn.KbNufft(
+                im_size=spatial_shape,
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
+            self.AT = tkbn.KbNufftAdjoint(
+                im_size=spatial_shape,
+                grid_size=self.grid_size,
+                numpoints=numpoints,
+            ).to(smaps)
+        else:
             self._finufft_backend = FinufftSenseBackend(
-                im_size=im_size,
+                im_size=spatial_shape,
                 grid_size=self.grid_size,
                 norm=norm,
                 batchmode=batchmode,
                 sequential=sequential,
                 eps=eps,
             )
+
+        super().__init__(size_in, size_out)
+
+    def to(self, device: torch.device | str):
+        if self.backend == "finufft":
+            self._finufft_backend.clear_plans()
+        return super().to(device)
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -363,42 +550,28 @@ class NuSense(LinearMap):
                 self._finufft_backend,
             )
 
+        image = x if self.batchmode else x.unsqueeze(0).unsqueeze(0)
+        smaps = self.smaps if self.batchmode else self.smaps.unsqueeze(0)
         if self.sequential:
-            k = torch.zeros(self.size_out, dtype=x.dtype, device=x.device)
-            if self.batchmode:
-                for i in range(self.smaps.shape[1]):
-                    k[:, i, ...] = self.A(
-                        x,
-                        self.traj,
-                        smaps=self.smaps[:, i, ...].unsqueeze(1),
-                        norm=self.norm,
-                    ).squeeze(1)
-                return k
-            else:
-                for i in range(self.smaps.shape[0]):
-                    k[i, ...] = (
-                        self.A(
-                            x.unsqueeze(0).unsqueeze(0),
-                            self.traj,
-                            smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0),
-                            norm=self.norm,
-                        )
-                        .squeeze(0)
-                        .squeeze(0)  # Remove batch and channel to get [npoints]
-                    )
-                return k
-        else:
-            if self.batchmode:
-                return self.A(x, self.traj, smaps=self.smaps, norm=self.norm)
-            else:
-                return self.A(
-                    x.unsqueeze(0).unsqueeze(0),
+            transformed = torch.empty(
+                image.shape[0],
+                smaps.shape[1],
+                self.traj.shape[-1],
+                dtype=torch.promote_types(x.dtype, smaps.dtype),
+                device=x.device,
+            )
+            for coil in range(smaps.shape[1]):
+                transformed[:, coil : coil + 1] = self.A(
+                    image,
                     self.traj,
-                    smaps=self.smaps.unsqueeze(0),
+                    smaps=smaps[:, coil : coil + 1],
                     norm=self.norm,
-                ).squeeze(0)  # Remove batch dimension only, keep [ncoil, npoints]
+                )
+        else:
+            transformed = self.A(image, self.traj, smaps=smaps, norm=self.norm)
+        return transformed if self.batchmode else transformed.squeeze(0)
 
-    def _apply_adjoint(self, y: Tensor) -> Tensor:
+    def _apply_adjoint(self, x: Tensor) -> Tensor:
         r"""
         Args:
             y： tensor with dimension [batch, ncoil, nshot*npoints] (batchmode=True) or [ncoil, nshot*npoints]
@@ -407,81 +580,45 @@ class NuSense(LinearMap):
         """
         if self.backend == "finufft":
             return finufft_sense_adjoint(
-                y,
+                x,
                 self.smaps,
                 self.traj,
                 self._finufft_backend,
             )
 
+        samples = x if self.batchmode else x.unsqueeze(0)
+        smaps = self.smaps if self.batchmode else self.smaps.unsqueeze(0)
         if self.sequential:
-            x = torch.zeros(self.size_in, dtype=y.dtype, device=y.device)
-            if self.batchmode:
-                for i in range(self.smaps.shape[1]):
-                    x += self.AT(
-                        y[:, i, ...].unsqueeze(1),
-                        self.traj,
-                        smaps=self.smaps[:, i, ...].unsqueeze(1),
-                        norm=self.norm,
-                    )
-                return x
-            else:
-                for i in range(self.smaps.shape[0]):
-                    x += (
-                        self.AT(
-                            y[i, ...].unsqueeze(0).unsqueeze(0),
-                            self.traj,
-                            smaps=self.smaps[i, ...].unsqueeze(0).unsqueeze(0),
-                            norm=self.norm,
-                        )
-                        .squeeze(0)
-                        .squeeze(0)  # Remove batch and channel to get [H, W]
-                    )
-                return x
-        else:
-            if self.batchmode:
-                return self.AT(y, self.traj, smaps=self.smaps, norm=self.norm)
-            else:
-                return (
-                    self.AT(
-                        y.unsqueeze(0),
-                        self.traj,
-                        smaps=self.smaps.unsqueeze(0),
-                        norm=self.norm,
-                    )
-                    .squeeze(0)
-                    .squeeze(0)  # Remove batch and channel dimensions to get [H, W]
+            image = torch.zeros(
+                (samples.shape[0], 1, *self.size_in[-len(self.grid_size) :]),
+                dtype=x.dtype,
+                device=x.device,
+            )
+            for coil in range(smaps.shape[1]):
+                image = image + self.AT(
+                    samples[:, coil : coil + 1],
+                    self.traj,
+                    smaps=smaps[:, coil : coil + 1],
+                    norm=self.norm,
                 )
+        else:
+            image = self.AT(samples, self.traj, smaps=smaps, norm=self.norm)
+        return image if self.batchmode else image.squeeze(0).squeeze(0)
 
 
 class NuSenseGram(LinearMap):
     r"""
     Gram operator (A'A) of the Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
-    The default implementation calls Matthew Muckley's Torchkbnufft toolbox.
-    On CPU and CUDA, the default backend constructs a Toeplitz embedding for a
-    fixed trajectory with FINUFFT or cuFINUFFT and applies it using PyTorch
-    FFTs.
+    With a compatible installed native library, the automatic backend builds a
+    FINUFFT or cuFINUFFT Toeplitz embedding for a fixed trajectory. Otherwise
+    it uses torchkbnufft.
 
     Broadcasting behavior:
     - If smaps or traj have shape [1, ...], they will be broadcast to the batch size
     - The batch size is determined by max(smaps.shape[0], traj.shape[0])
     - At least one of (smaps, traj) must have the desired batch size
 
-    Important: When both smaps and traj have batch size 1, the operator will have
-    size_in=[1, 1, nx, ny]. To use with larger batches, replicate one of the inputs.
-
-    Example - Single sensitivity map for 10 time frames::
-
-        smaps = torch.randn(1, 8, 128, 128)  # Single smap
-        traj = torch.randn(1, 2, 1000)       # Single trajectory
-
-        # Replicate trajectory to desired batch size
-        traj = traj.repeat(10, 1, 1)         # Now [10, 2, 1000]
-        gram = NuSenseGram(smaps, traj)      # size_in=[10, 1, 128, 128]
-
-        x = torch.randn(10, 1, 128, 128)
-        y = gram(x)                          # Works! Returns [10, 1, 128, 128]
-
-        # Note: .repeat() is memory-efficient (uses views until modified)
+    When both smaps and traj have batch size 1, the operator has batch size 1.
 
     The input/output size depends on the sensitivity maps.
     If we use the batch dimension, the input/output dimension is [nbatch, 1, nx, ny, (nz)].
@@ -509,6 +646,11 @@ class NuSenseGram(LinearMap):
         backend: str = "auto",
         eps: float = 1e-6,
     ):
+        if traj.requires_grad:
+            raise ValueError(
+                "NuSenseGram requires fixed trajectories; use "
+                "NuSense.H * NuSense for a trainable trajectory."
+            )
         self.smaps = smaps
         self.norm = norm
         self.traj = traj
@@ -519,46 +661,21 @@ class NuSenseGram(LinearMap):
         if backend == "torchkbnufft":
             self.toep_op = tkbn.ToepNufft()
 
+        spatial_shape = _spatial_shape(smaps, batchmode)
+        self.grid_size = _grid_shape(spatial_shape, grid_size)
         if batchmode:
-            # Determine batch size from inputs
-            smaps_batch = smaps.shape[0]
-            traj_batch = traj.shape[0]
-
-            if smaps_batch == traj_batch:
-                nbatch = smaps_batch
-            elif smaps_batch == 1:
-                nbatch = traj_batch
-            elif traj_batch == 1:
-                nbatch = smaps_batch
-            else:
-                raise ValueError(
-                    f"Incompatible batch sizes: smaps.shape[0]={smaps_batch}, "
-                    f"traj.shape[0]={traj_batch}. Must be equal or one must be 1."
-                )
-
-            self.grid_size = tuple(
-                np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+            nbatch = _resolve_batch_size(
+                smaps=smaps.shape[0],
+                traj=traj.shape[0],
             )
-            im_size = tuple(smaps.shape[2:])
-
-            size_in = (
-                nbatch,
-                1,
-            ) + tuple(smaps.shape[2:])
-            super().__init__(tuple(size_in), tuple(size_in))
+            size_in = (nbatch, 1) + spatial_shape
         else:
-            self.grid_size = tuple(
-                np.floor(np.array(smaps.shape[1:]) * grid_size).astype(int)
-            )
-            im_size = tuple(smaps.shape[1:])
-
-            size_in = list(smaps.shape[1:])
-            super().__init__(tuple(size_in), tuple(size_in))
+            size_in = spatial_shape
 
         if backend == "torchkbnufft":
             self.kernel = tkbn.calc_toeplitz_kernel(
                 traj,
-                list(im_size),
+                list(spatial_shape),
                 grid_size=self.grid_size,
                 numpoints=numpoints,
                 norm=self.norm,
@@ -569,7 +686,7 @@ class NuSenseGram(LinearMap):
                     "sensitivity maps and trajectory must be on one device"
                 )
             self._finufft_backend = FinufftSenseBackend(
-                im_size=im_size,
+                im_size=spatial_shape,
                 grid_size=self.grid_size,
                 norm=norm,
                 batchmode=batchmode,
@@ -580,26 +697,23 @@ class NuSenseGram(LinearMap):
                 traj,
                 smaps.dtype,
             )
-            self._trajectory_version = traj._version
+
+        self._trajectory_state = _tensor_state_key(self.traj)
+        super().__init__(size_in, size_in)
 
     def _check_fixed_trajectory(self) -> None:
-        if self.traj.requires_grad:
+        if _tensor_state_key(self.traj) != self._trajectory_state:
             raise RuntimeError(
-                "The FINUFFT Toeplitz backend currently supports fixed "
-                "trajectories only."
-            )
-        if self.traj._version != self._trajectory_version:
-            raise RuntimeError(
-                "The trajectory changed after the FINUFFT Toeplitz kernel "
+                "The trajectory changed after the Toeplitz kernel "
                 "was constructed; create a new NuSenseGram operator."
             )
 
     def to(self, device: torch.device | str):
+        self._check_fixed_trajectory()
         if self.backend == "finufft":
-            self._check_fixed_trajectory()
+            self._finufft_backend.clear_plans()
         result = super().to(device)
-        if self.backend == "finufft":
-            self._trajectory_version = self.traj._version
+        self._trajectory_state = _tensor_state_key(self.traj)
         return result
 
     def _apply(self, x: Tensor) -> Tensor:
@@ -609,52 +723,32 @@ class NuSenseGram(LinearMap):
         Returns:
             x:  tensor with dimension [nbatch, 1, nx, ny (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
+        self._check_fixed_trajectory()
         if self.backend == "finufft":
-            self._check_fixed_trajectory()
             return self._finufft_backend.sense_gram(
                 x,
                 self.smaps,
                 self.kernel,
             )
 
-        if self.batchmode:
-            return self.toep_op(x, self.kernel, smaps=self.smaps, norm=self.norm)
-        else:
-            return (
-                self.toep_op(
-                    x.unsqueeze(0).unsqueeze(0),
-                    self.kernel,
-                    smaps=self.smaps.unsqueeze(0),
-                    norm=self.norm,
-                )
-                .squeeze(0)
-                .squeeze(0)  # Remove batch and channel to get [H, W]
-            )
+        image = x if self.batchmode else x.unsqueeze(0).unsqueeze(0)
+        smaps = self.smaps if self.batchmode else self.smaps.unsqueeze(0)
+        result = self.toep_op(image, self.kernel, smaps=smaps, norm=self.norm)
+        return result if self.batchmode else result.squeeze(0).squeeze(0)
 
-    def _apply_adjoint(self, y: Tensor) -> Tensor:
-        if self.backend == "finufft":
-            return self._apply(y)
-        if self.batchmode:
-            return self.toep_op(y, self.kernel, smaps=self.smaps, norm=self.norm)
-        else:
-            return (
-                self.toep_op(
-                    y.unsqueeze(0).unsqueeze(0),
-                    self.kernel,
-                    smaps=self.smaps.unsqueeze(0),
-                    norm=self.norm,
-                )
-                .squeeze(0)
-                .squeeze(0)  # Remove batch and channel to get [H, W]
-            )
+    def _apply_adjoint(self, x: Tensor) -> Tensor:
+        return self._apply(x)
 
 
 class Gmri(LinearMap):
     r"""
     B0-informed MRI encoding operator, following MIRT.
 
-    FINUFFT is used by default on supported CPU systems and cuFINUFFT on
-    CUDA. Apple Metal and macOS CPU use torchkbnufft.
+    The automatic backend uses an installed FINUFFT or cuFINUFFT library on a
+    supported device, and otherwise uses torchkbnufft.
+    Trajectory gradients are available with FINUFFT/cuFINUFFT; torchkbnufft
+    does not connect its interpolation coordinates to autograd. Image,
+    sensitivity-map, field-map, and explicit-time gradients remain available.
 
     Note that the data format is a little different from NuSENSE.
     The input/output size depends on the sensitivity maps.
@@ -670,8 +764,8 @@ class Gmri(LinearMap):
         nbins: int, granularity of exponential approximation
         numpoints: int, number of interpolation points in gridding
         grid_size: float, oversampling ratio (>1)
-        T: tensor with dimension [nfe]. Describe the time (in ms) of readout after excitation. When T is none,
-           the readout is supposed to start immediately after the excitation.
+        T: readout times in ms with shape [nfe]. If omitted, sample ``j`` is
+            acquired at ``j * dt``.
         backend: ``"auto"`` (default), ``"finufft"``, or ``"torchkbnufft"``
         eps: requested FINUFFT relative precision
     """
@@ -697,56 +791,50 @@ class Gmri(LinearMap):
         self.L = L
         self.nbins = nbins
         self.dt = dt
+        self.T = T
         self.backend = _resolve_nufft_backend(backend, smaps.device)
         self.eps = eps
         backend = self.backend
+        if not isinstance(L, int) or L < 1:
+            raise ValueError("L must be a positive integer")
+        if not isinstance(nbins, int) or nbins < 1:
+            raise ValueError("nbins must be a positive integer")
+        if grid_size < 1:
+            raise ValueError("grid size must be at least 1")
 
-        if smaps.device != zmap.device or smaps.device != traj.device:
-            raise ValueError(
-                "sensitivity maps, field map, and trajectory must be on one device"
-            )
-
-        # Determine batch size from inputs
-        smaps_batch = smaps.shape[0]
-        traj_batch = traj.shape[0]
-
-        if smaps_batch == traj_batch:
-            self.nbatch = smaps_batch
-        elif smaps_batch == 1:
-            self.nbatch = traj_batch
-        elif traj_batch == 1:
-            self.nbatch = smaps_batch
-        else:
-            raise ValueError(
-                f"Incompatible batch sizes: smaps.shape[0]={smaps_batch}, "
-                f"traj.shape[0]={traj_batch}. Must be equal or one must be 1."
-            )
-        if zmap.shape[0] not in (1, self.nbatch):
-            raise ValueError(
-                f"Incompatible zmap batch size: zmap.shape[0]={zmap.shape[0]}, "
-                f"expected 1 or {self.nbatch}."
-            )
+        self.nbatch = _resolve_b0_batch_size(smaps, zmap, traj)
 
         self.nc = self.smaps.shape[1]
         self.traj = traj
         _, self.ndim, self.nshot, self.npoints = self.traj.shape
-        self.grid_size = tuple(
-            np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+        spatial_shape = _spatial_shape(smaps)
+        transform_elements = math.prod(spatial_shape) + self.nshot * self.npoints
+        bytes_per_segment = (
+            4
+            * self.nbatch
+            * self.nc
+            * transform_elements
+            * torch.empty((), dtype=_complex_dtype_like(smaps)).element_size()
         )
+        self._segment_chunk_size = min(
+            self.L,
+            max(1, _MAX_B0_WORKSPACE_BYTES // bytes_per_segment),
+        )
+        self.grid_size = _grid_shape(spatial_shape, grid_size)
         if backend == "torchkbnufft":
             self.A = tkbn.KbNufft(
-                im_size=tuple(smaps.shape[2:]),
+                im_size=spatial_shape,
                 grid_size=self.grid_size,
                 numpoints=numpoints,
             ).to(smaps)
             self.AT = tkbn.KbNufftAdjoint(
-                im_size=tuple(smaps.shape[2:]),
+                im_size=spatial_shape,
                 grid_size=self.grid_size,
                 numpoints=numpoints,
             ).to(smaps)
         else:
             self._finufft_backend = FinufftSenseBackend(
-                im_size=tuple(smaps.shape[2:]),
+                im_size=spatial_shape,
                 grid_size=self.grid_size,
                 norm=norm,
                 batchmode=True,
@@ -754,58 +842,55 @@ class Gmri(LinearMap):
                 eps=eps,
             )
 
-        size_in = (
-            self.nbatch,
-            1,
-        ) + tuple(smaps.shape[2:])
+        size_in = (self.nbatch, 1) + spatial_shape
         size_out = (self.nbatch, self.nc, self.nshot, self.npoints)
 
-        complex_dtype = _complex_dtype_like(smaps)
-        self.B = torch.zeros(
-            self.L,
-            self.nbatch,
-            1,
-            1,
-            self.npoints,
-            dtype=complex_dtype,
-            device=smaps.device,
-        )  # [L, batch, coil, shot, points]
-        self.C = torch.zeros(
-            (self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:]),
-            dtype=complex_dtype,
-            device=smaps.device,
-        )  # [L, batch, 1, nx, ny ...]
-
-        for ib in range(self.nbatch):
-            if T is None:
-                t = np.linspace(0, dt * self.npoints, self.npoints)
-            else:
-                t = T.detach().cpu().numpy()
-
-            # Handle broadcasting: zmap might be [1, ...] or [nbatch, ...]
-            zmap_idx = 0 if zmap.shape[0] == 1 else ib
-            b, c, _ = mri_exp_approx(
-                zmap[zmap_idx].detach().cpu().numpy(),
-                nbins,
-                L,
-                t,
-            )
-
-            self.B[:, ib, ...] = torch.as_tensor(
-                np.transpose(b),
-                dtype=complex_dtype,
-                device=smaps.device,
-            ).reshape(self.L, 1, 1, self.npoints)
-            self.C[:, ib, 0, ...] = torch.as_tensor(
-                np.transpose(c),
-                dtype=complex_dtype,
-                device=smaps.device,
-            ).reshape((self.L,) + tuple(zmap.shape[1:]))
+        self._coefficient_state = None
+        self.B, self.C = self._refresh_coefficients(force=True)
 
         self.traj = self.traj.reshape(
             (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
         )
         super().__init__(size_in, size_out)
+
+    def to(self, device: torch.device | str):
+        if self.backend == "finufft":
+            self._finufft_backend.clear_plans()
+        return super().to(device)
+
+    def _coefficient_state_key(self) -> tuple:
+        return _coefficient_state_key(
+            self.zmap,
+            self.T,
+            self.dt,
+            self.nbins,
+            self.L,
+        )
+
+    def _refresh_coefficients(self, *, force: bool = False) -> tuple[Tensor, Tensor]:
+        state = self._coefficient_state_key()
+        trainable = self.zmap.requires_grad or (
+            self.T is not None and self.T.requires_grad
+        )
+        if not force and not trainable and state == self._coefficient_state:
+            return self.B, self.C
+
+        times = readout_times(
+            self.npoints,
+            self.dt,
+            template=self.zmap,
+            times=self.T,
+        )
+        self.B, self.C, self.tl = time_segmentation_coefficients(
+            self.zmap,
+            batch=self.nbatch,
+            bins=self.nbins,
+            segments=self.L,
+            times=times,
+            complex_dtype=_complex_dtype_like(self.smaps),
+        )
+        self._coefficient_state = state
+        return self.B, self.C
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -815,69 +900,98 @@ class Gmri(LinearMap):
         Returns:
             k: k-space data, [nbatch, ncoil, nshot, npoints]
         """
-        y = torch.zeros(self.size_out, dtype=x.dtype, device=x.device)
-        for il in range(self.L):
+        B, C = self._refresh_coefficients()
+        spatial_shape = _spatial_shape(self.smaps)
+        output = torch.zeros(self.size_out, dtype=x.dtype, device=x.device)
+        for start in range(0, self.L, self._segment_chunk_size):
+            stop = min(start + self._segment_chunk_size, self.L)
+            segment_count = stop - start
+            segment_coefficients = C[start:stop]
+            coil_images = (
+                x.unsqueeze(0) * segment_coefficients
+            ) * self.smaps.unsqueeze(0)
+            modes = coil_images.permute(
+                1,
+                0,
+                2,
+                *range(3, coil_images.ndim),
+            ).reshape(self.nbatch, segment_count * self.nc, *spatial_shape)
             if self.backend == "finufft":
-                segment = finufft_sense_forward(
-                    x * self.C[il],
-                    self.smaps,
+                transformed = finufft_type2(
+                    modes,
                     self.traj,
                     self._finufft_backend,
                 )
             else:
-                segment = self.A(
-                    x * self.C[il],
-                    self.traj,
-                    smaps=self.smaps,
-                    norm=self.norm,
-                )
-            y = y + self.B[il] * segment.reshape(self.size_out)
-        return y
+                transformed = self.A(modes, self.traj, norm=self.norm)
+            segments = transformed.reshape(
+                self.nbatch,
+                segment_count,
+                self.nc,
+                self.nshot,
+                self.npoints,
+            ).permute(1, 0, 2, 3, 4)
+            output = output + (B[start:stop] * segments).sum(dim=0)
+        return output
 
-    def _apply_adjoint(self, y: Tensor) -> Tensor:
+    def _apply_adjoint(self, x: Tensor) -> Tensor:
         r"""
         Args:
             k: k-space data, [nbatch, ncoil, nshot, npoints]
         Returns:
             x: [nbatch, 1, nx, ny (nz)]
         """
-        x = torch.zeros(self.size_in, dtype=y.dtype, device=y.device)
-        for il in range(self.L):
-            samples = (y * self.B[il].conj()).reshape(
+        B, C = self._refresh_coefficients()
+        spatial_shape = _spatial_shape(self.smaps)
+        y = x
+        output = torch.zeros(self.size_in, dtype=y.dtype, device=y.device)
+        for start in range(0, self.L, self._segment_chunk_size):
+            stop = min(start + self._segment_chunk_size, self.L)
+            segment_count = stop - start
+            weighted = (y.unsqueeze(0) * B[start:stop].conj()).permute(1, 0, 2, 3, 4)
+            samples = weighted.reshape(
                 self.nbatch,
-                self.nc,
+                segment_count * self.nc,
                 self.nshot * self.npoints,
             )
             if self.backend == "finufft":
-                segment = finufft_sense_adjoint(
+                modes = finufft_type1(
                     samples,
-                    self.smaps,
                     self.traj,
                     self._finufft_backend,
                 )
             else:
-                segment = self.AT(
-                    samples,
-                    self.traj,
-                    smaps=self.smaps,
-                    norm=self.norm,
-                )
-            x = x + self.C[il].conj() * segment
-        return x
+                modes = self.AT(samples, self.traj, norm=self.norm)
+            coil_images = modes.reshape(
+                self.nbatch,
+                segment_count,
+                self.nc,
+                *spatial_shape,
+            )
+            segment_images = (coil_images * self.smaps.unsqueeze(1).conj()).sum(
+                dim=2, keepdim=True
+            )
+            coefficients = C[start:stop].permute(
+                1,
+                0,
+                2,
+                *range(3, C.ndim),
+            )
+            output = output + (coefficients.conj() * segment_images).sum(dim=1)
+        return output
 
 
 class GmriGram(LinearMap):
     r"""
     Toeplitz approximation to the B0-informed MRI normal operator.
 
-    The default autocorrelation time-segmentation method follows MIRT and
-    Fessler et al., IEEE TSP 2005. It preserves a Hermitian O(L) Toeplitz
-    approximation. ``gram_approximation="legacy"`` reproduces the previous
-    MIRTorch coefficient construction for migration comparisons.
+    Autocorrelation time segmentation follows MIRT and Fessler et al.,
+    IEEE TSP 2005, producing a Hermitian O(L) approximation.
 
-    FINUFFT is used by default on supported CPU systems and cuFINUFFT on
-    CUDA. Apple Metal and macOS CPU use torchkbnufft. The input and output
-    dimensions are both [nbatch, 1, nx, ny, (nz)].
+    The automatic backend uses an installed FINUFFT or cuFINUFFT library on a
+    supported device, and otherwise uses torchkbnufft. The input and output
+    dimensions are both [nbatch, 1, nx, ny, (nz)]. Trainable ``zmap`` or ``T``
+    uses the exact composed ``Gmri.H * Gmri`` path so gradients are preserved.
 
     Attributes:
         smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
@@ -889,11 +1003,10 @@ class GmriGram(LinearMap):
         nbins: int, granularity of exponential approximation
         numpoints: int, number of interpolation points in gridding
         grid_size: float, oversampling ratio (>1)
-        T: tensor with dimension [nfe]. Describe the time (in ms) of readout after excitation. When T is none,
-           the readout is supposed to start immediately after the excitation.
+        T: readout times in ms with shape [nfe]. If omitted, sample ``j`` is
+            acquired at ``j * dt``.
         backend: ``"auto"`` (default), ``"finufft"``, or ``"torchkbnufft"``
         eps: requested FINUFFT relative precision for kernel construction
-        gram_approximation: ``"autocorrelation"`` (default) or ``"legacy"``
     """
 
     def __init__(
@@ -910,7 +1023,6 @@ class GmriGram(LinearMap):
         T: Tensor | None = None,
         backend: str = "auto",
         eps: float = 1e-6,
-        gram_approximation: str = "autocorrelation",
     ):
         self.norm = norm
         self.smaps = smaps
@@ -918,137 +1030,183 @@ class GmriGram(LinearMap):
         self.L = L
         self.nbins = nbins
         self.dt = dt
+        self.T = T
         self.backend = _resolve_nufft_backend(backend, smaps.device)
         self.eps = eps
-        if gram_approximation not in ("autocorrelation", "legacy"):
-            raise ValueError("gram_approximation must be 'autocorrelation' or 'legacy'")
-        self.gram_approximation = gram_approximation
+        if traj.requires_grad and self.backend != "finufft":
+            raise ValueError(
+                "Trainable trajectories require the FINUFFT backend; "
+                "torchkbnufft does not provide trajectory gradients."
+            )
+        if not isinstance(L, int) or L < 1:
+            raise ValueError("L must be a positive integer")
+        if not isinstance(nbins, int) or nbins < 1:
+            raise ValueError("nbins must be a positive integer")
+        if grid_size < 1:
+            raise ValueError("grid size must be at least 1")
         backend = self.backend
 
-        if smaps.device != zmap.device or smaps.device != traj.device:
-            raise ValueError(
-                "sensitivity maps, field map, and trajectory must be on one device"
-            )
-
-        # Determine batch size from inputs
-        smaps_batch = smaps.shape[0]
-        traj_batch = traj.shape[0]
-
-        if smaps_batch == traj_batch:
-            self.nbatch = smaps_batch
-        elif smaps_batch == 1:
-            self.nbatch = traj_batch
-        elif traj_batch == 1:
-            self.nbatch = smaps_batch
-        else:
-            raise ValueError(
-                f"Incompatible batch sizes: smaps.shape[0]={smaps_batch}, "
-                f"traj.shape[0]={traj_batch}. Must be equal or one must be 1."
-            )
-        if zmap.shape[0] not in (1, self.nbatch):
-            raise ValueError(
-                f"Incompatible zmap batch size: zmap.shape[0]={zmap.shape[0]}, "
-                f"expected 1 or {self.nbatch}."
-            )
+        self.nbatch = _resolve_b0_batch_size(smaps, zmap, traj)
 
         self.nc = self.smaps.shape[1]
         self.traj = traj
         _, self.ndim, self.nshot, self.npoints = self.traj.shape
-        self.grid_size = tuple(
-            np.floor(np.array(smaps.shape[2:]) * grid_size).astype(int)
+        spatial_shape = _spatial_shape(smaps)
+        self.grid_size = _grid_shape(spatial_shape, grid_size)
+        size_in = (self.nbatch, 1) + spatial_shape
+
+        kernel_dtype = _complex_dtype_like(smaps)
+        padded_elements = math.prod(2 * size for size in spatial_shape)
+        # Allow room for padded modes, kernels, FFTs, products, and scratch.
+        bytes_per_mode = (
+            8
+            * self.nbatch
+            * padded_elements
+            * torch.empty((), dtype=kernel_dtype).element_size()
         )
+        modes_per_chunk = max(1, _MAX_B0_WORKSPACE_BYTES // bytes_per_mode)
+        self._segment_chunk_size = min(self.L, modes_per_chunk)
+        self._coil_chunk_size = min(
+            self.nc,
+            max(1, modes_per_chunk // self._segment_chunk_size),
+        )
+        estimated_kernel_bytes = (
+            self.L
+            * self.nbatch
+            * padded_elements
+            * torch.empty((), dtype=kernel_dtype).element_size()
+        )
+        memory_fallback = estimated_kernel_bytes > _MAX_B0_KERNEL_BYTES
+        trainable_parameters = (
+            zmap.requires_grad
+            or traj.requires_grad
+            or (T is not None and T.requires_grad)
+        )
+        self._uses_direct_gram = memory_fallback or trainable_parameters
+        if self._uses_direct_gram:
+            if memory_fallback:
+                warnings.warn(
+                    "The estimated B0 Toeplitz kernels require "
+                    f"{estimated_kernel_bytes / 1024**3:.2f} GiB; "
+                    "using direct Gmri.H*Gmri.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            self._direct_operator = Gmri(
+                smaps=smaps,
+                zmap=zmap,
+                traj=traj,
+                norm=norm,
+                L=L,
+                nbins=nbins,
+                dt=dt,
+                numpoints=numpoints,
+                grid_size=grid_size,
+                T=T,
+                backend=backend,
+                eps=eps,
+            )
+            self._sync_direct_aliases()
+            super().__init__(size_in, size_in)
+            return
 
-        size_in = (
-            self.nbatch,
-            1,
-        ) + tuple(smaps.shape[2:])
-
-        complex_dtype = _complex_dtype_like(smaps)
-        self.B = torch.zeros(
-            self.L,
-            self.nbatch,
-            1,
-            1,
+        times = readout_times(
             self.npoints,
-            dtype=complex_dtype,
-            device=smaps.device,
-        )  # [L, batch, coil, shot, points]
-        self.C = torch.zeros(
-            (self.L, self.nbatch, 1) + tuple(self.smaps.shape[2:]),
-            dtype=complex_dtype,
-            device=smaps.device,
-        )  # [L, batch, 1, nx, ny ...]
-
-        for ib in range(self.nbatch):
-            if T is None:
-                t = np.linspace(0, dt * self.npoints, self.npoints)
-            else:
-                t = T.detach().cpu().numpy()
-
-            # Handle broadcasting: zmap might be [1, ...] or [nbatch, ...]
-            zmap_idx = 0 if zmap.shape[0] == 1 else ib
-            b, c, tl = mri_exp_approx(
-                zmap[zmap_idx].detach().cpu().numpy(),
-                nbins,
-                L,
-                t,
-                autocorrelation=gram_approximation == "autocorrelation",
-            )
-
-            self.B[:, ib, ...] = torch.as_tensor(
-                np.transpose(b),
-                dtype=complex_dtype,
-                device=smaps.device,
-            ).reshape(self.L, 1, 1, self.npoints)
-            self.C[:, ib, 0, ...] = torch.as_tensor(
-                np.transpose(c),
-                dtype=complex_dtype,
-                device=smaps.device,
-            ).reshape((self.L,) + tuple(zmap.shape[1:]))
-            self.tl = torch.as_tensor(
-                tl,
-                dtype=zmap.real.dtype,
-                device=smaps.device,
-            )
+            self.dt,
+            template=self.zmap,
+            times=self.T,
+        )
+        self.B, self.C, self.tl = time_segmentation_coefficients(
+            self.zmap,
+            batch=self.nbatch,
+            bins=self.nbins,
+            segments=self.L,
+            times=times,
+            complex_dtype=_complex_dtype_like(self.smaps),
+            autocorrelation=True,
+        )
+        self._coefficient_state = self._coefficient_state_key()
 
         self.traj = self.traj.reshape(
             (self.traj.shape[0], self.ndim, self.nshot * self.npoints)
         )
-        self.kernel = []
+        self._build_toeplitz_kernels(spatial_shape, numpoints)
+        self._trajectory_state = _tensor_state_key(self.traj)
 
-        if backend == "torchkbnufft":
+        super().__init__(size_in, size_in)
+
+    def _build_toeplitz_kernels(
+        self,
+        spatial_shape: tuple[int, ...],
+        numpoints: int | list[int],
+    ) -> None:
+        if self.backend == "torchkbnufft":
             self.toep_op = tkbn.ToepNufft()
-            for il in range(self.L):
-                self.kernel.append(
-                    tkbn.calc_toeplitz_kernel(
-                        self.traj,
-                        list(smaps.shape[2:]),
-                        grid_size=self.grid_size,
-                        numpoints=numpoints,
-                        norm=self.norm,
-                        weights=self._segment_weights(il),
-                    )
+            self.kernel = [
+                tkbn.calc_toeplitz_kernel(
+                    self.traj,
+                    list(spatial_shape),
+                    grid_size=self.grid_size,
+                    numpoints=numpoints,
+                    norm=self.norm,
+                    weights=self._segment_weights(segment),
                 )
-        else:
-            self._finufft_backend = FinufftSenseBackend(
-                im_size=tuple(smaps.shape[2:]),
-                grid_size=self.grid_size,
-                norm=norm,
-                batchmode=True,
-                sequential=False,
-                eps=eps,
-            )
-            for il in range(self.L):
-                self.kernel.append(
-                    self._finufft_backend.toeplitz_kernel(
-                        self.traj,
-                        smaps.dtype,
-                        weights=self._segment_weights(il),
-                    )
-                )
-            self._trajectory_version = self.traj._version
+                for segment in range(self.L)
+            ]
+            return
 
-        super().__init__(tuple(size_in), tuple(size_in))
+        self._finufft_backend = FinufftSenseBackend(
+            im_size=spatial_shape,
+            grid_size=self.grid_size,
+            norm=self.norm,
+            batchmode=True,
+            sequential=False,
+            eps=self.eps,
+        )
+        self.kernel = [
+            self._finufft_backend.toeplitz_kernel(
+                self.traj,
+                _complex_dtype_like(self.smaps),
+                weights=self._segment_weights(segment),
+            )
+            for segment in range(self.L)
+        ]
+
+    def _sync_direct_aliases(self) -> None:
+        direct = self._direct_operator
+        for name in ("smaps", "zmap", "traj", "T", "B", "C", "tl"):
+            setattr(self, name, getattr(direct, name))
+
+    def _check_direct_aliases(self) -> None:
+        direct = self._direct_operator
+        for name in ("smaps", "zmap", "traj", "T"):
+            if getattr(self, name) is not getattr(direct, name):
+                raise RuntimeError(
+                    f"{name} was replaced on a direct GmriGram operator; "
+                    "create a new operator instead."
+                )
+        for name in ("dt", "nbins", "L"):
+            if getattr(self, name) != getattr(direct, name):
+                raise RuntimeError(
+                    f"{name} changed on a direct GmriGram operator; "
+                    "create a new operator instead."
+                )
+
+    def _coefficient_state_key(self) -> tuple:
+        return _coefficient_state_key(
+            self.zmap,
+            self.T,
+            self.dt,
+            self.nbins,
+            self.L,
+        )
+
+    def _check_fixed_coefficients(self) -> None:
+        if self._coefficient_state_key() != self._coefficient_state:
+            raise RuntimeError(
+                "The field map or readout times changed after the Toeplitz "
+                "kernels were constructed; create a new GmriGram operator."
+            )
 
     def _segment_weights(self, segment: int) -> Tensor:
         return (
@@ -1058,24 +1216,62 @@ class GmriGram(LinearMap):
         )
 
     def _check_fixed_trajectory(self) -> None:
-        if self.traj.requires_grad:
+        if _tensor_state_key(self.traj) != self._trajectory_state:
             raise RuntimeError(
-                "The FINUFFT Toeplitz backend currently supports fixed "
-                "trajectories only."
-            )
-        if self.traj._version != self._trajectory_version:
-            raise RuntimeError(
-                "The trajectory changed after the FINUFFT Toeplitz kernel "
+                "The trajectory changed after the Toeplitz kernel "
                 "was constructed; create a new GmriGram operator."
             )
 
     def to(self, device: torch.device | str):
+        if self._uses_direct_gram:
+            self._check_direct_aliases()
+            self._direct_operator.to(device)
+            self._sync_direct_aliases()
+            return self
+
+        self._check_fixed_coefficients()
+        self._check_fixed_trajectory()
         if self.backend == "finufft":
-            self._check_fixed_trajectory()
+            self._finufft_backend.clear_plans()
         result = super().to(device)
-        if self.backend == "finufft":
-            self._trajectory_version = self.traj._version
+        self._coefficient_state = self._coefficient_state_key()
+        self._trajectory_state = _tensor_state_key(self.traj)
         return result
+
+    def _filter_toeplitz_modes(
+        self,
+        modes: Tensor,
+        kernel_stack: Tensor,
+    ) -> Tensor:
+        """Apply one stack of Toeplitz kernels to batched segment/coil modes."""
+        batch, segments, coils = modes.shape[:3]
+        spatial_shape = tuple(modes.shape[3:])
+
+        if self.backend == "finufft":
+            kernels = kernel_stack.transpose(0, 1)
+            kernels = kernels.expand(
+                batch,
+                segments,
+                coils,
+                *kernels.shape[3:],
+            ).reshape(batch, segments * coils, *kernels.shape[3:])
+            filtered = self._finufft_backend.toeplitz_filter(
+                modes.reshape(batch, segments * coils, *spatial_shape),
+                kernels,
+            )
+        else:
+            kernels = kernel_stack.transpose(0, 1).reshape(
+                batch * segments,
+                1,
+                *kernel_stack.shape[2:],
+            )
+            filtered = self.toep_op(
+                modes.reshape(batch * segments, coils, *spatial_shape),
+                kernels,
+                norm=self.norm,
+            )
+
+        return filtered.reshape(batch, segments, coils, *spatial_shape)
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -1085,27 +1281,50 @@ class GmriGram(LinearMap):
         Returns:
             y: [nbatch, 1, nx, ny (nz)]
         """
-        if self.backend == "finufft":
-            self._check_fixed_trajectory()
+        if self._uses_direct_gram:
+            self._check_direct_aliases()
+            result = self._direct_operator.H(self._direct_operator(x))
+            self._sync_direct_aliases()
+            return result
 
-        y = torch.zeros_like(x)
-        for il in range(self.L):
-            D = self.C[il]
-            if self.backend == "finufft":
-                segment = self._finufft_backend.sense_gram(
-                    x * D,
-                    self.smaps,
-                    self.kernel[il],
+        self._check_fixed_coefficients()
+        self._check_fixed_trajectory()
+
+        spatial_shape = _spatial_shape(self.smaps)
+        output = torch.zeros_like(x)
+        for segment_start in range(0, self.L, self._segment_chunk_size):
+            segment_stop = min(
+                segment_start + self._segment_chunk_size,
+                self.L,
+            )
+            segment_count = segment_stop - segment_start
+            coefficients = self.C[segment_start:segment_stop]
+            segment_images = x.unsqueeze(0) * coefficients
+            accumulated = torch.zeros(
+                self.nbatch,
+                segment_count,
+                1,
+                *spatial_shape,
+                dtype=x.dtype,
+                device=x.device,
+            )
+
+            kernels = torch.stack(self.kernel[segment_start:segment_stop])
+            for coil_start in range(0, self.nc, self._coil_chunk_size):
+                coil_stop = min(coil_start + self._coil_chunk_size, self.nc)
+                smaps = self.smaps[:, coil_start:coil_stop]
+                modes = (segment_images * smaps.unsqueeze(0)).transpose(0, 1)
+                filtered = self._filter_toeplitz_modes(
+                    modes,
+                    kernels,
                 )
-            else:
-                segment = self.toep_op(
-                    x * D,
-                    self.kernel[il],
-                    smaps=self.smaps,
-                    norm=self.norm,
+                accumulated = accumulated + (smaps.unsqueeze(1).conj() * filtered).sum(
+                    dim=2, keepdim=True
                 )
-            y = y + D.conj() * segment
-        return y
+
+            coefficients = coefficients.transpose(0, 1)
+            output = output + (coefficients.conj() * accumulated).sum(dim=1)
+        return output
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
         r"""
@@ -1116,49 +1335,3 @@ class GmriGram(LinearMap):
             y: [nbatch, 1, nx, ny (nz)]
         """
         return self._apply(x)
-
-
-def mri_exp_approx(b0, bins, lseg, t, autocorrelation: bool = False):
-    r"""
-    From Sigpy: https://github.com/mikgroup/sigpy and MIRT (mri_exp_approx.m): https://web.eecs.umich.edu/~fessler/code/
-    Creates B [M*L] and Ct [L*N] matrices to approximate exp(-2i*pi*b0*t) [M*N]
-    Args:
-        b0: numpy array in dimension [nx, ny, nz], inhomogeneity matrix in Hz.
-        bins: int, number of histogram bins to use.
-        lseg: int, number of time segments.
-        t: array, describing the readout times (ms).
-        autocorrelation: use the field-map histogram autocorrelation for
-            a Hermitian O(L) Gram approximation.
-    Returns:
-        3-element tuple containing:
-            b: temporal interpolator [M, L]
-            ct: off-resonance phase at each time segment center [L, N]
-            tl: time segment centers [L]
-    """
-
-    # create time vector
-    hist_wt, bin_edges = np.histogram(
-        np.imag(2j * np.pi * np.ndarray.flatten(b0)), bins
-    )
-
-    # build B and Ct
-    bin_width = bin_edges[1] - bin_edges[0]
-    if autocorrelation:
-        hist_wt = np.correlate(hist_wt, hist_wt, mode="full")
-        bin_centers = np.arange(1 - bins, bins) * bin_width
-    else:
-        bin_centers = bin_edges[1:] - bin_width / 2
-    zk = 0 + 1j * bin_centers
-    tl = np.linspace(t[0], t[-1], lseg) / 1000  # time seg centers
-    # calculate off-resonance phase @ each time seg, for histogram bins
-    ch = np.exp(-np.expand_dims(tl, axis=1) @ np.expand_dims(zk, axis=0))
-    w = np.diag(np.sqrt(hist_wt))
-    p = np.linalg.pinv(w @ np.transpose(ch)) @ w
-    b = p @ np.exp(-np.expand_dims(zk, axis=1) @ np.expand_dims(t, axis=0) / 1000)
-    b = np.transpose(b)
-    if autocorrelation:
-        b = np.real(b)
-    b0_v = np.expand_dims(2j * np.pi * np.ndarray.flatten(b0), axis=0)
-    ct = np.transpose(np.exp(-np.expand_dims(tl, axis=1) @ b0_v))
-
-    return b, ct, tl

@@ -6,6 +6,13 @@ import torchvision
 from torch import Tensor, nn
 
 
+def adjoint_fft_norm(norm: str | None) -> str:
+    """Return the normalization used by the adjoint FFT."""
+    if norm == "ortho":
+        return "ortho"
+    return "backward" if norm == "forward" else "forward"
+
+
 def finitediff(x: Tensor, dim: int = -1, mode="reflexive"):
     """
     Apply finite difference operator on a certain dimension.

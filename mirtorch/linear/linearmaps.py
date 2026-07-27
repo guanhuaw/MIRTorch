@@ -29,12 +29,14 @@ def check_device(x, y):
 
 class LinearMap:
     r"""
-    Abstraction of linear operators as matrices :math:`y = A*x`.
+    Abstraction of linear operators as matrices :math:`y = A x`.
     The implementation follow the `SigPy <https://github.com/mikgroup/sigpy>`_ and `LinearmapAA <https://github.com/JeffFessler/LinearMapsAA.jl>`_.
 
-    Common operators, including +, -, *, are overloaded. One may freely compose operators as long as the size matches.
+    Common operators, including ``+``, ``-``, and ``*``, are overloaded. One
+    may freely compose operators as long as the size matches.
 
-    New linear operators require to implement `_apply` (forward, :math:`A`) and `_adjoint` (conjugate adjoint, :math:`A'`) functions, as well as size.
+    New linear operators require ``_apply`` (forward, :math:`A`) and
+    ``_adjoint`` (conjugate adjoint, :math:`A'`) functions, as well as size.
     Recommendation for efficient backpropagation (but you do not have to do this if the AD is efficient enough):
 
     .. code-block:: python

@@ -44,9 +44,10 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
     2021-06. Guanhua Wang, University of Michigan
     """
 
-    assert Y.dtype == X0.dtype == D0.dtype, (
-        "datatype (complex/real) between dictionary and sparse code should stay the same!"
-    )
+    if not Y.dtype == X0.dtype == D0.dtype:
+        raise TypeError(
+            "dictionary, sparse code, and training data must use the same dtype"
+        )
     D = D0
     [len_atom, num_atom] = D0.shape
     [_, num_patch] = X0.shape
