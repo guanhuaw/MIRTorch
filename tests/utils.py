@@ -2,8 +2,8 @@
 Utility functions for convolution in unit test.
 Reference: numpy-ml(https://github.com/ddbourgin/numpy-ml/blob/master/numpy_ml/neural_nets/utils/utils.py)
 """
-import numpy as np
 
+import numpy as np
 
 #######################################################################
 #                           Training Utils                            #
@@ -11,7 +11,7 @@ import numpy as np
 
 
 def minibatch(X, batchsize=256, shuffle=True):
-    """
+    r"""
     Compute the minibatch indices for a training dataset.
 
     Parameters
@@ -80,21 +80,21 @@ def calc_pad_dims_2D(X_shape, out_dim, kernel_shape, stride, dilation=0):
         Padding dims for `X`. Organized as (left, right, up, down)
     """
     if not isinstance(X_shape, tuple):
-        raise ValueError("`X_shape` must be of type tuple")
+        raise TypeError("`X_shape` must be of type tuple")
 
     if not isinstance(out_dim, tuple):
-        raise ValueError("`out_dim` must be of type tuple")
+        raise TypeError("`out_dim` must be of type tuple")
 
     if not isinstance(kernel_shape, tuple):
-        raise ValueError("`kernel_shape` must be of type tuple")
+        raise TypeError("`kernel_shape` must be of type tuple")
 
     if not isinstance(stride, int):
-        raise ValueError("`stride` must be of type int")
+        raise TypeError("`stride` must be of type int")
 
     d = dilation
     fr, fc = kernel_shape
     out_rows, out_cols = out_dim
-    n_ex, in_rows, in_cols, in_ch = X_shape
+    _n_ex, in_rows, in_cols, _in_ch = X_shape
 
     # update effective filter shape based on dilation factor
     _fr, _fc = fr * (d + 1) - d, fc * (d + 1) - d
@@ -119,9 +119,7 @@ def calc_pad_dims_2D(X_shape, out_dim, kernel_shape, stride, dilation=0):
         raise AssertionError
 
     if any(np.array([pr1, pr2, pc1, pc2]) < 0):
-        raise ValueError(
-            "Padding cannot be less than 0. Got: {}".format((pr1, pr2, pc1, pc2))
-        )
+        raise ValueError(f"Padding cannot be less than 0. Got: {(pr1, pr2, pc1, pc2)}")
     return (pr1, pr2, pc1, pc2)
 
 
@@ -155,24 +153,24 @@ def calc_pad_dims_1D(X_shape, l_out, kernel_width, stride, dilation=0, causal=Fa
         Padding dims for X. Organized as (left, right)
     """
     if not isinstance(X_shape, tuple):
-        raise ValueError("`X_shape` must be of type tuple")
+        raise TypeError("`X_shape` must be of type tuple")
 
     if not isinstance(l_out, int):
-        raise ValueError("`l_out` must be of type int")
+        raise TypeError("`l_out` must be of type int")
 
     if not isinstance(kernel_width, int):
-        raise ValueError("`kernel_width` must be of type int")
+        raise TypeError("`kernel_width` must be of type int")
 
     if not isinstance(stride, int):
-        raise ValueError("`stride` must be of type int")
+        raise TypeError("`stride` must be of type int")
 
     d = dilation
     fw = kernel_width
-    n_ex, l_in, in_ch = X_shape
+    _n_ex, l_in, _in_ch = X_shape
 
     # update effective filter shape based on dilation factor
     _fw = fw * (d + 1) - d
-    total_pad = int((stride * (l_out - 1) + _fw - l_in))
+    total_pad = int(stride * (l_out - 1) + _fw - l_in)
 
     if not causal:
         pw = total_pad // 2
@@ -193,7 +191,7 @@ def calc_pad_dims_1D(X_shape, l_out, kernel_width, stride, dilation=0, causal=Fa
         assert l_out1 == l_out
 
     if any(np.array([pw1, pw2]) < 0):
-        raise ValueError("Padding cannot be less than 0. Got: {}".format((pw1, pw2)))
+        raise ValueError(f"Padding cannot be less than 0. Got: {(pw1, pw2)}")
     return (pw1, pw2)
 
 
@@ -266,7 +264,7 @@ def pad2D(X, pad, kernel_shape=None, stride=None, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         has the same dimensions as the input.  If 2-tuple, specifies the number
-        of padding rows and colums to add *on both sides* of the rows/columns
+        of padding rows and columns to add *on both sides* of the rows/columns
         in `X`. If 4-tuple, specifies the number of rows/columns to add to the
         top, bottom, left, and right of the input volume.
     kernel_shape : 2-tuple
@@ -341,7 +339,7 @@ def dilate(X, d):
             \\text{out_rows}  &=  \\text{in_rows} + d(\\text{in_rows} - 1) \\\\
             \\text{out_cols}  &=  \\text{in_cols} + d (\\text{in_cols} - 1)
     """
-    n_ex, in_rows, in_cols, n_in = X.shape
+    _n_ex, in_rows, in_cols, _n_in = X.shape
     r_ix = np.repeat(np.arange(1, in_rows), d)
     c_ix = np.repeat(np.arange(1, in_cols), d)
     Xd = np.insert(X, r_ix, 0, axis=1)
@@ -378,7 +376,7 @@ def calc_fan(weight_shape):
         kernel_size = np.prod(weight_shape[:-2])
         fan_in, fan_out = in_ch * kernel_size, out_ch * kernel_size
     else:
-        raise ValueError("Unrecognized weight dimension: {}".format(weight_shape))
+        raise ValueError(f"Unrecognized weight dimension: {weight_shape}")
     return fan_in, fan_out
 
 
@@ -421,8 +419,8 @@ def calc_conv_out_dims(X_shape, W_shape, stride=1, pad=0, dilation=0):
     if len(X_shape) == 3:
         _, p = pad1D(dummy, p)
         pw1, pw2 = p
-        fw, in_ch, out_ch = W_shape
-        n_ex, in_length, in_ch = X_shape
+        fw, _, out_ch = W_shape
+        n_ex, in_length, _ = X_shape
 
         _fw = fw * (d + 1) - d
         out_length = (in_length + pw1 + pw2 - _fw) // s + 1
@@ -431,8 +429,8 @@ def calc_conv_out_dims(X_shape, W_shape, stride=1, pad=0, dilation=0):
     elif len(X_shape) == 4:
         _, p = pad2D(dummy, p)
         pr1, pr2, pc1, pc2 = p
-        fr, fc, in_ch, out_ch = W_shape
-        n_ex, in_rows, in_cols, in_ch = X_shape
+        fr, fc, _in_ch, out_ch = W_shape
+        n_ex, in_rows, in_cols, _in_ch = X_shape
 
         # adjust effective filter size to account for dilation
         _fr, _fc = fr * (d + 1) - d, fc * (d + 1) - d
@@ -440,7 +438,7 @@ def calc_conv_out_dims(X_shape, W_shape, stride=1, pad=0, dilation=0):
         out_cols = (in_cols + pc1 + pc2 - _fc) // s + 1
         out_dims = (n_ex, out_rows, out_cols, out_ch)
     else:
-        raise ValueError("Unrecognized number of input dims: {}".format(len(X_shape)))
+        raise ValueError(f"Unrecognized number of input dims: {len(X_shape)}")
     return out_dims
 
 
@@ -457,7 +455,7 @@ def _im2col_indices(X_shape, fr, fc, p, s, d=0):
     Code extended from Andrej Karpathy's `im2col.py`
     """
     pr1, pr2, pc1, pc2 = p
-    n_ex, n_in, in_rows, in_cols = X_shape
+    _n_ex, n_in, in_rows, in_cols = X_shape
 
     # adjust effective filter size to account for dilation
     _fr, _fc = fr * (d + 1) - d, fc * (d + 1) - d
@@ -468,7 +466,7 @@ def _im2col_indices(X_shape, fr, fc, p, s, d=0):
     if any([out_rows <= 0, out_cols <= 0]):
         raise ValueError(
             "Dimension mismatch during convolution: "
-            "out_rows = {}, out_cols = {}".format(out_rows, out_cols)
+            f"out_rows = {out_rows}, out_cols = {out_cols}"
         )
 
     # i1/j1 : row/col templates
@@ -510,7 +508,7 @@ def im2col(X, W_shape, pad, stride, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in X. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -529,13 +527,13 @@ def im2col(X, W_shape, pad, stride, dilation=0):
             Q  &=  \\text{kernel_rows} \\times \\text{kernel_cols} \\times \\text{n_in} \\\\
             Z  &=  \\text{n_ex} \\times \\text{out_rows} \\times \\text{out_cols}
     """
-    fr, fc, n_in, n_out = W_shape
+    fr, fc, n_in, _n_out = W_shape
     s, p, d = stride, pad, dilation
     n_ex, in_rows, in_cols, n_in = X.shape
 
     # zero-pad the input
     X_pad, p = pad2D(X, p, W_shape[:2], stride=s, dilation=d)
-    pr1, pr2, pc1, pc2 = p
+    _pr1, _pr2, _pc1, _pc2 = p
 
     # shuffle to have channels as the first dim
     X_pad = X_pad.transpose(0, 3, 1, 2)
@@ -580,11 +578,11 @@ def col2im(X_col, X_shape, W_shape, pad, stride, dilation=0):
         The reshaped `X_col` input matrix
     """
     if not (isinstance(pad, tuple) and len(pad) == 4):
-        raise TypeError("pad must be a 4-tuple, but got: {}".format(pad))
+        raise TypeError(f"pad must be a 4-tuple, but got: {pad}")
 
     s, d = stride, dilation
     pr1, pr2, pc1, pc2 = pad
-    fr, fc, n_in, n_out = W_shape
+    fr, fc, n_in, _n_out = W_shape
     n_ex, in_rows, in_cols, n_in = X_shape
 
     X_pad = np.zeros((n_ex, n_in, in_rows + pr1 + pr2, in_cols + pc1 + pc2))
@@ -635,7 +633,7 @@ def conv2D(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in `X`. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -651,8 +649,8 @@ def conv2D(X, W, stride, pad, dilation=0):
     _, p = pad2D(X, pad, W.shape[:2], s, dilation=dilation)
 
     pr1, pr2, pc1, pc2 = p
-    fr, fc, in_ch, out_ch = W.shape
-    n_ex, in_rows, in_cols, in_ch = X.shape
+    fr, fc, _in_ch, out_ch = W.shape
+    n_ex, in_rows, in_cols, _in_ch = X.shape
 
     # update effective filter shape based on dilation factor
     _fr, _fc = fr * (d + 1) - d, fc * (d + 1) - d
@@ -700,7 +698,7 @@ def conv1D(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 1D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding colums to add *on both sides*
+        2-tuple, specifies the number of padding columns to add *on both sides*
         of the columns in X.
     dilation : int
         Number of pixels inserted between kernel elements. Default is 0.
@@ -753,7 +751,7 @@ def deconv2D_naive(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in `X`. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -773,8 +771,8 @@ def deconv2D_naive(X, W, stride, pad, dilation=0):
     # pad the input
     X_pad, p = pad2D(X, pad, W.shape[:2], stride=stride, dilation=dilation)
 
-    n_ex, in_rows, in_cols, n_in = X_pad.shape
-    fr, fc, n_in, n_out = W.shape
+    _n_ex, in_rows, in_cols, _n_in = X_pad.shape
+    fr, fc, _n_in, _n_out = W.shape
     s, d = stride, dilation
     pr1, pr2, pc1, pc2 = p
 
@@ -823,7 +821,7 @@ def conv2D_naive(X, W, stride, pad, dilation=0):
         The padding amount. If 'same', add padding to ensure that the output of
         a 2D convolution with a kernel of `kernel_shape` and stride `stride`
         produces an output volume of the same dimensions as the input.  If
-        2-tuple, specifies the number of padding rows and colums to add *on both
+        2-tuple, specifies the number of padding rows and columns to add *on both
         sides* of the rows/columns in `X`. If 4-tuple, specifies the number of
         rows/columns to add to the top, bottom, left, and right of the input
         volume.
@@ -839,8 +837,8 @@ def conv2D_naive(X, W, stride, pad, dilation=0):
     X_pad, p = pad2D(X, pad, W.shape[:2], stride=s, dilation=d)
 
     pr1, pr2, pc1, pc2 = p
-    fr, fc, in_ch, out_ch = W.shape
-    n_ex, in_rows, in_cols, in_ch = X.shape
+    fr, fc, _in_ch, out_ch = W.shape
+    n_ex, in_rows, in_cols, _in_ch = X.shape
 
     # update effective filter shape based on dilation factor
     fr, fc = fr * (d + 1) - d, fc * (d + 1) - d
@@ -878,7 +876,7 @@ def he_uniform(weight_shape):
 
     .. math::
 
-        b = \sqrt{\\frac{6}{\\text{fan_in}}}
+        b = \\sqrt{\\frac{6}{\\text{fan_in}}}
 
     Developed for deep networks with ReLU nonlinearities.
 
@@ -892,7 +890,7 @@ def he_uniform(weight_shape):
     W : :py:class:`ndarray <numpy.ndarray>` of shape `weight_shape`
         The initialized weights.
     """
-    fan_in, fan_out = calc_fan(weight_shape)
+    fan_in, _fan_out = calc_fan(weight_shape)
     b = np.sqrt(6 / fan_in)
     return np.random.uniform(-b, b, size=weight_shape)
 
@@ -923,7 +921,7 @@ def he_normal(weight_shape):
     W : :py:class:`ndarray <numpy.ndarray>` of shape `weight_shape`
         The initialized weights.
     """
-    fan_in, fan_out = calc_fan(weight_shape)
+    fan_in, _fan_out = calc_fan(weight_shape)
     std = np.sqrt(2 / fan_in)
     return truncated_normal(0, std, weight_shape)
 
@@ -940,7 +938,7 @@ def glorot_uniform(weight_shape, gain=1.0):
 
     .. math::
 
-        b = \\text{gain} \sqrt{\\frac{6}{\\text{fan_in} + \\text{fan_out}}}
+        b = \\text{gain} \\sqrt{\\frac{6}{\\text{fan_in} + \\text{fan_out}}}
 
     The motivation for Glorot uniform initialization is to choose weights to
     ensure that the variance of the layer outputs are approximately equal to
@@ -970,7 +968,7 @@ def glorot_normal(weight_shape, gain=1.0):
 
     Notes
     -----
-    The Glorot normal initializaiton initializes weights with draws from
+    The Glorot normal initialization initializes weights with draws from
     TruncatedNormal(0, b) where the variance `b` is
 
     .. math::

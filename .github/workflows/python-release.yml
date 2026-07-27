@@ -1,24 +1,161 @@
-name: Semantic Release
+name: Release to PyPI
 
 on:
   push:
     branches:
       - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  build:
+    name: Build and test release artifacts
     runs-on: ubuntu-latest
-    concurrency: release
-    permissions:
-      id-token: write
-      contents: write
-
+    outputs:
+      released: ${{ steps.version.outputs.released || 'false' }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4  # Updated from v3 to v4
+      - name: Check out workflow commit
+        uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Python Semantic Release
-        uses: python-semantic-release/python-semantic-release@master
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install build and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" build twine python-semantic-release==10.6.1
+
+      - name: Run the release test suite
+        run: python -m pytest -q
+
+      # This computes the next version and runs tool.semantic_release.build_command,
+      # but deliberately creates no tag or GitHub release yet.
+      - name: Build next-version artifacts
+        id: version
+        env:
+          GH_TOKEN: none
+        run: semantic-release -v version --no-changelog --no-commit --no-tag
+
+      - name: Validate distributions
+        if: steps.version.outputs.released == 'true'
+        run: python -m twine check dist/*
+
+      - name: Smoke-test the installed wheel
+        if: steps.version.outputs.released == 'true'
+        run: |
+          python -m pip install --no-deps --force-reinstall dist/*.whl
+          python -I - <<'PY'
+          from pathlib import Path
+
+          import torch
+          import mirtorch
+          from mirtorch.linear import Diff1d
+          from mirtorch.vendors.pytorch_wavelets import DTCWTForward, DTCWTInverse
+
+          package_path = Path(mirtorch.__file__).resolve()
+          assert "site-packages" in package_path.parts, package_path
+
+          signal = torch.randn(2, 8)
+          difference = Diff1d(signal.shape, dim=1, mode="periodic")
+          assert difference.H(difference(signal)).shape == signal.shape
+
+          image = torch.randn(1, 1, 16, 16)
+          coefficients = DTCWTForward(J=2)(image)
+          reconstructed = DTCWTInverse()(coefficients)
+          torch.testing.assert_close(reconstructed, image, rtol=2e-5, atol=2e-5)
+          print(mirtorch.__version__, package_path)
+          PY
+
+      - name: Store validated distributions
+        if: steps.version.outputs.released == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create GitHub release
+    needs: build
+    if: needs.build.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released || 'false' }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Check out validated commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Pin the release branch to the validated commit
+        run: git reset --hard ${{ github.sha }}
+
+      - name: Download validated distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Create semantic release
+        id: release
+        uses: python-semantic-release/python-semantic-release@v10.6.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          build: false
+          changelog: false
+          commit: false
+
+      - name: Verify released version
+        if: steps.release.outputs.released == 'true'
+        env:
+          BUILT_VERSION: ${{ needs.build.outputs.version }}
+          RELEASED_VERSION: ${{ steps.release.outputs.version }}
+        run: test "$BUILT_VERSION" = "$RELEASED_VERSION"
+
+      - name: Attach distributions to GitHub release
+        if: steps.release.outputs.released == 'true'
+        uses: python-semantic-release/publish-action@v10.6.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.release.outputs.tag }}
+
+  publish:
+    name: Publish validated artifacts to PyPI
+    needs:
+      - build
+      - release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/MIRTorch
+    permissions:
+      id-token: write
+    steps:
+      - name: Download validated distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1

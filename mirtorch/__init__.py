@@ -1,6 +1,10 @@
-from mirtorch import prox
-from mirtorch import linear
-from mirtorch import alg
-from mirtorch import dic
+from importlib.metadata import PackageNotFoundError, version
 
-__all__ = ["linear", "prox", "alg", "dic"]
+from mirtorch import alg, dic, linear, prox
+
+try:
+    __version__ = version("MIRTorch")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
+
+__all__ = ["__version__", "alg", "dic", "linear", "prox"]

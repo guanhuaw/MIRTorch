@@ -1,22 +1,23 @@
 Linear operators
 ================
 
-.. automodule::
-   mirtorch.linear.LinearMap
+.. autoclass:: mirtorch.linear.LinearMap
 
-Attributes of LinearMap
----------------------------------
+Linear map composition
+----------------------
 
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-    mirtorch.linear.Add
-    mirtorch.linear.Multiply
-    mirtorch.linear.Matmul
-    mirtorch.linear.ConjTranspose
-    mirtorch.linear.Kron
-    mirtorch.linear.BlockDiagonal
+   mirtorch.linear.Add
+   mirtorch.linear.Multiply
+   mirtorch.linear.Matmul
+   mirtorch.linear.ConjTranspose
+   mirtorch.linear.Kron
+   mirtorch.linear.BlockDiagonal
+   mirtorch.linear.Hstack
+   mirtorch.linear.Vstack
 
 
 Basic image processing operations
@@ -27,6 +28,7 @@ Basic image processing operations
    :nosignatures:
 
    mirtorch.linear.basics.Diffnd
+   mirtorch.linear.basics.Diff1d
    mirtorch.linear.basics.Diff2dgram
    mirtorch.linear.basics.Diff3dgram
    mirtorch.linear.basics.Diag
@@ -50,21 +52,13 @@ MRI system models
    mirtorch.linear.mri.Sense
    mirtorch.linear.mri.NuSenseGram
    mirtorch.linear.mri.Gmri
+   mirtorch.linear.mri.GmriGram
 
 
 SPECT system models
------------------
+-------------------
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
    mirtorch.linear.spect.SPECT
-
-
-CT system models
------------------
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   mirtorch.linear.ct.Bdd

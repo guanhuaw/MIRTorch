@@ -1,8 +1,10 @@
+import logging
+import time
+import warnings
+
 import numpy as np
 import scipy.sparse as sp
-import numpy.random as random
-import time
-import logging
+from numpy import random
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +44,10 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
     2021-06. Guanhua Wang, University of Michigan
     """
 
-    assert (
-        Y.dtype == X0.dtype == D0.dtype
-    ), "datatype (complex/real) between dictionary and sparse code should stay the same!"
+    if not Y.dtype == X0.dtype == D0.dtype:
+        raise TypeError(
+            "dictionary, sparse code, and training data must use the same dtype"
+        )
     D = D0
     [len_atom, num_atom] = D0.shape
     [_, num_patch] = X0.shape
@@ -87,7 +90,7 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
             [idx_row_new] = np.nonzero(cj_new)
 
             # Update of the dictionary
-            if ~only_sp:
+            if not only_sp:
                 if np.abs(cj_new).sum() == 0:
                     if rnd:
                         h = random.randn(len_atom).astype(D.dtype)
@@ -100,7 +103,7 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
 
                     # h += -D.dot(X.dot(cj_new)) + D[:, iatom] * ((cj.conj()).dot(cj_new)) # inefficient manner
                     h = h - D.dot(C[idx_row_new, :].T.conj().dot(cj_new[idx_row_new]))
-                    idx_ovlp, idx_ovlp_new, idx_ovlp_j = np.intersect1d(
+                    idx_ovlp, _, _ = np.intersect1d(
                         idx_row_new, idx_row_j, return_indices=True
                     )
                     if idx_ovlp.size != 0:
@@ -113,13 +116,19 @@ def soup(Y, D0, X0, lambd, numiter, rnd=False, only_sp=False, alert=False):
 
             # avoid column slicing, again
             # remember to eliminate untracked zeros in the end
-            C[idx_row_j, iatom] = 0
-            C[idx_row_new, iatom] = cj_new[idx_row_new]
+            # CSR keeps the repeated matrix products fast. Its structural updates
+            # are intentional here, so keep SciPy's generic format warning local.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", sp.SparseEfficiencyWarning)
+                C[idx_row_j, iatom] = 0
+                C[idx_row_new, iatom] = cj_new[idx_row_new]
             if alert:
                 logger.info(
-                    "Update of %dth atom costs %4f s," % (iatom, time.time() - start),
-                    "sparse ratio from %5f to %5f"
-                    % (len(idx_row_j) / num_patch, len(idx_row_new) / num_patch),
+                    "Update of %dth atom costs %4f s, sparse ratio from %5f to %5f",
+                    iatom,
+                    time.time() - start,
+                    len(idx_row_j) / num_patch,
+                    len(idx_row_new) / num_patch,
                 )
         C.eliminate_zeros()
     return D, C.T.conj(), (C.dot(D.T.conj())).T.conj()

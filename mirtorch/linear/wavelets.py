@@ -1,100 +1,54 @@
-import sys
-from typing import Sequence, Tuple, List
+from collections.abc import Sequence
 
+import pywt
 import torch
-from mirtorch.vendors.pytorch_wavelets import DWTForward, DWTInverse
 from torch import Tensor
+
+from mirtorch.vendors.pytorch_wavelets import DWTForward
+from mirtorch.vendors.pytorch_wavelets.dwt import lowlevel
 
 from .linearmaps import LinearMap
 
 # TODO: 3d wavelets
 
 
-def coeffs_to_tensor(yl: Tensor, yh: Sequence[Tensor]) -> Tuple[Tensor, List[int]]:
-    """
-    Assemble 2D DWT array into a tensor
-    Args:
-        yl: coefficients of the lowest level
-        yh: multi-level coefficients
-    Returns:
-        wl_cat: pieced-together tensors
-        dic_size: recorded size of the dictionary
-    """
+def _coeffs_to_tensor(yl: Tensor, yh: Sequence[Tensor]) -> Tensor:
+    """Pack a multilevel 2D DWT into one tensor."""
     nlevel = len(yh)
-    dic_size = []
+    band_sizes = []
     size_x = yl.shape[-2]
     size_y = yl.shape[-1]
-    dic_size.append(list(yl.shape[-2:]))
+    band_sizes.append(list(yl.shape[-2:]))
     for ilevel in range(nlevel - 1, -1, -1):
         size_x += yh[ilevel].shape[-2]
         size_y += yh[ilevel].shape[-1]
-        dic_size.append(list(yh[ilevel].shape[-2:]))
-    wl_cat = torch.zeros(list(yl.shape[:-2]) + [size_x, size_y]).to(yl.device, yl.dtype)
+        band_sizes.append(list(yh[ilevel].shape[-2:]))
+    wl_cat = yl.new_zeros((*yl.shape[:-2], size_x, size_y))
     wl_cat[..., : yl.shape[-2], : yl.shape[-1]] = yl
     for ilevel in range(nlevel):
-        start_x = 0
-        start_y = 0
         y = yh[nlevel - ilevel - 1]
-        for i in range(ilevel + 1):
-            start_x += dic_size[i][0]
-        for i in range(ilevel + 1):
-            start_y += dic_size[i][1]
+        start_x = sum(size[0] for size in band_sizes[: ilevel + 1])
+        start_y = sum(size[1] for size in band_sizes[: ilevel + 1])
         wl_cat[
             ..., start_x : start_x + y.shape[-2], start_y : start_y + y.shape[-1]
         ] = y[..., 2, :, :]
         wl_cat[..., : y.shape[-2], start_y : start_y + y.shape[-1]] = y[..., 1, :, :]
         wl_cat[..., start_x : start_x + y.shape[-2], : y.shape[-1]] = y[..., 0, :, :]
-    return wl_cat, dic_size
-
-
-def tensor_to_coeffs(
-    wl_cat: Tensor, dic_size: Sequence[int]
-) -> Tuple[Tensor, List[int]]:
-    """
-    Args:
-        wl_cat:
-        dic_size:
-    Returns:
-
-    """
-    yl = wl_cat[..., : dic_size[0][0], : dic_size[0][1]]
-    yh = []
-    for ilevel in range(len(dic_size) - 1):
-        start_x = 0
-        start_y = 0
-        for i in range(ilevel + 1):
-            start_x += dic_size[i][0]
-        for i in range(ilevel + 1):
-            start_y += dic_size[i][1]
-        aa = wl_cat[
-            ...,
-            start_x : start_x + dic_size[ilevel + 1][0],
-            start_y : start_y + dic_size[ilevel + 1][1],
-        ]
-        ad = wl_cat[
-            ..., : dic_size[ilevel + 1][0], start_y : start_y + dic_size[ilevel + 1][1]
-        ]
-        da = wl_cat[
-            ..., start_x : start_x + dic_size[ilevel + 1][0], : dic_size[ilevel + 1][1]
-        ]
-        yh.insert(0, torch.stack((da, ad, aa), dim=-3))
-
-    return yl, yh
+    return wl_cat
 
 
 class Wavelet2D(LinearMap):
-    """
-    A very preliminary implementation of 2D DWT.
-    Implementation based on Pytorch_wavelets toolboxes:
-    https://pytorch-wavelets.readthedocs.io/en/latest/dwt.html
-    It should support all wave types available in PyWavelets
+    """Packed multilevel two-dimensional discrete wavelet transform.
+
+    ``A.H`` is the exact discrete Hermitian adjoint, including boundary
+    padding. It equals the inverse for orthogonal wavelets with periodization,
+    but not for general biorthogonal wavelets or padding modes.
+
     Attributes:
-        size_in: Input size. If batchmode: [nbatch, nchannel, nx, ny]; else [nx, ny] (real)
-        wave_type: all that pywt supports
-        padding: 'zero', 'symmetric', 'reflect' or 'periodization'
-        When using periodization, it should be a unitary transform
-    NB: x should be single precision float ...
-    TODO: 3D version of it
+        size_in: ``[batch, channel, nx, ny]`` or ``[nx, ny]``.
+        wave_type: Any wavelet name supported by PyWavelets.
+        padding: ``"zero"``, ``"symmetric"``, ``"reflect"``, or
+            ``"periodization"``.
     """
 
     def __init__(
@@ -108,106 +62,116 @@ class Wavelet2D(LinearMap):
         self.J = J
         self.wave_type = wave_type
         self.padding = padding
+        if not isinstance(J, int) or J < 1:
+            raise ValueError("J must be a positive integer")
+        if padding not in ("zero", "symmetric", "reflect", "periodization"):
+            raise ValueError(
+                "padding must be 'zero', 'symmetric', 'reflect', or 'periodization'"
+            )
         if len(size_in) == 4:
             self.batchmode = True
+            spatial_shape = tuple(size_in[-2:])
         elif len(size_in) == 2:
             self.batchmode = False
+            spatial_shape = tuple(size_in)
         else:
-            sys.exit(
+            raise ValueError(
                 "Input size should be of 2D wavelets should be [nbatch, nchannel, nx, ny] or [nx, ny]"
             )
+        if any(not isinstance(size, int) or size < 1 for size in size_in):
+            raise ValueError("size_in must contain positive integers")
+        try:
+            pywt.Wavelet(wave_type)
+        except ValueError as error:
+            raise ValueError(f"unknown wavelet {wave_type!r}") from error
 
         self.Fop = DWTForward(J=self.J, mode=self.padding, wave=self.wave_type).to(
             device
         )
-        self.Aop = DWTInverse(mode=self.padding, wave=self.wave_type).to(device)
-        if self.batchmode:
-            Yl, Yh = self.Fop(torch.zeros(size_in).to(device))
-            wl_cat, self.dic_size = coeffs_to_tensor(Yl, Yh)
-            size_out = wl_cat.shape
-        else:
-            Yl, Yh = self.Fop(torch.zeros(size_in).to(device).unsqueeze(0).unsqueeze(0))
-            wl_cat, self.dic_size = coeffs_to_tensor(Yl, Yh)
-            size_out = wl_cat.shape[2:]
-        super(Wavelet2D, self).__init__(size_in, size_out)
+        prototype = torch.zeros((1, 1, *spatial_shape), device=device)
+        Yl, Yh = self._analysis(prototype)
+        wl_cat = _coeffs_to_tensor(Yl, Yh)
+        size_out = (*size_in[:-2], *wl_cat.shape[-2:])
+        super().__init__(size_in, size_out)
+
+    def _analysis(self, x: Tensor) -> tuple[Tensor, list[Tensor]]:
+        """Apply the DWT using native operations with an exact autograd VJP."""
+        details = []
+        low = x
+        for _ in range(self.J):
+            bands = lowlevel.afb1d(
+                low,
+                self.Fop.h0_row,
+                self.Fop.h1_row,
+                mode=self.padding,
+                dim=3,
+            )
+            bands = lowlevel.afb1d(
+                bands,
+                self.Fop.h0_col,
+                self.Fop.h1_col,
+                mode=self.padding,
+                dim=2,
+            )
+            shape = bands.shape
+            bands = bands.reshape(
+                shape[0],
+                -1,
+                4,
+                shape[-2],
+                shape[-1],
+            )
+            low = bands[:, :, 0].contiguous()
+            details.append(bands[:, :, 1:].contiguous())
+        return low, details
+
+    def _as_real_channels(self, x: Tensor) -> tuple[Tensor, bool]:
+        if not self.batchmode:
+            x = x[None, None]
+        is_complex = x.is_complex()
+        if is_complex:
+            batch, channels, height, width = x.shape
+            x = (
+                torch.view_as_real(x)
+                .permute(0, 1, 4, 2, 3)
+                .reshape(batch, 2 * channels, height, width)
+            )
+        return x, is_complex
+
+    def _restore_layout(self, x: Tensor, is_complex: bool) -> Tensor:
+        if is_complex:
+            batch, real_channels, height, width = x.shape
+            x = torch.view_as_complex(
+                x.reshape(batch, real_channels // 2, 2, height, width)
+                .permute(0, 1, 3, 4, 2)
+                .contiguous()
+            )
+        if not self.batchmode:
+            x = x[0, 0]
+        return x
 
     def _apply(self, x: Tensor) -> Tensor:
-        if x.is_complex():
-            if self.batchmode:
-                x = (
-                    torch.view_as_real(x)
-                    .permute(0, 1, 4, 2, 3)
-                    .reshape(
-                        self.size_in[0],
-                        self.size_in[1] * 2,
-                        self.size_in[2],
-                        self.size_in[3],
-                    )
-                    .contiguous()
-                )
-                Yl, Yh = self.Fop(x)
-                wl_cat, _ = coeffs_to_tensor(Yl, Yh)
-                wl_cat = torch.view_as_complex(
-                    wl_cat.reshape(
-                        wl_cat.shape[0],
-                        wl_cat.shape[1] // 2,
-                        2,
-                        wl_cat.shape[2],
-                        wl_cat.shape[3],
-                    )
-                    .permute(0, 1, 3, 4, 2)
-                    .contiguous()
-                )
-                return wl_cat
-            else:
-                x = torch.view_as_real(x).permute(2, 0, 1).contiguous()
-                Yl, Yh = self.Fop(x.unsqueeze(0))
-                wl_cat, _ = coeffs_to_tensor(Yl, Yh)
-                return torch.view_as_complex(
-                    wl_cat.squeeze(0).permute(1, 2, 0).contiguous()
-                )
-        else:
-            if self.batchmode:
-                Yl, Yh = self.Fop(x)
-                wl_cat, _ = coeffs_to_tensor(Yl, Yh)
-                return wl_cat
-            else:
-                Yl, Yh = self.Fop(x.unsqueeze(0).unsqueeze(0))
-                wl_cat, _ = coeffs_to_tensor(Yl, Yh)
-                return wl_cat.squeeze(0).squeeze(0)
+        x, is_complex = self._as_real_channels(x)
+        Yl, Yh = self._analysis(x)
+        coefficients = _coeffs_to_tensor(Yl, Yh)
+        return self._restore_layout(coefficients, is_complex)
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
-        if x.is_complex():
-            if self.batchmode:
-                x = (
-                    torch.view_as_real(x)
-                    .permute(0, 1, 4, 2, 3)
-                    .reshape(
-                        self.size_out[0],
-                        self.size_out[1] * 2,
-                        self.size_out[2],
-                        self.size_out[3],
-                    )
-                    .contiguous()
-                )
-                Yl, Yh = tensor_to_coeffs(x, self.dic_size)
-                y = self.Aop((Yl, Yh))
-                return torch.view_as_complex(
-                    y.reshape(y.shape[0], y.shape[1] // 2, 2, y.shape[2], y.shape[3])
-                    .permute(0, 1, 3, 4, 2)
-                    .contiguous()
-                )
-            else:
-                x = torch.view_as_real(x).permute(2, 0, 1).contiguous()
-                Yl, Yh = tensor_to_coeffs(x.unsqueeze(0).unsqueeze(0), self.dic_size)
-                return torch.view_as_complex(
-                    (self.Aop((Yl, Yh)).squeeze(0)).permute(1, 2, 0).contiguous()
-                )
-        else:
-            if self.batchmode:
-                Yl, Yh = tensor_to_coeffs(x, self.dic_size)
-
-                return self.Aop((Yl, Yh))
-            else:
-                Yl, Yh = tensor_to_coeffs(x.unsqueeze(0).unsqueeze(0), self.dic_size)
-                return self.Aop((Yl, Yh)).squeeze(0).squeeze(0)
+        x, is_complex = self._as_real_channels(x)
+        create_graph = torch.is_grad_enabled() and x.requires_grad
+        with torch.enable_grad():
+            prototype = torch.zeros(
+                (*x.shape[:2], *self.size_in[-2:]),
+                dtype=x.dtype,
+                device=x.device,
+                requires_grad=True,
+            )
+            Yl, Yh = self._analysis(prototype)
+            coefficients = _coeffs_to_tensor(Yl, Yh)
+            (image,) = torch.autograd.grad(
+                coefficients,
+                prototype,
+                grad_outputs=x,
+                create_graph=create_graph,
+            )
+        return self._restore_layout(image, is_complex)

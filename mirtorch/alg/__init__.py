@@ -1,12 +1,7 @@
-import logging
-
 from .cg import CG
-from .spectral import power_iter
-from .pogm import POGM
-from .fista import FISTA
 from .fbpd import FBPD
+from .fista import FISTA
+from .pogm import POGM
+from .spectral import power_iter
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-__all__ = ["CG", "power_iter", "POGM", "FISTA", "FBPD"]
+__all__ = ["CG", "FBPD", "FISTA", "POGM", "power_iter"]

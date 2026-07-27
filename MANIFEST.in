@@ -1,0 +1,10 @@
+prune .github
+prune docs
+prune examples
+prune tests
+exclude .pre-commit-config.yaml
+exclude .readthedocs.yaml
+
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude .DS_Store
