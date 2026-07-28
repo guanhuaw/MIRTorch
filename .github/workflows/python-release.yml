@@ -22,11 +22,14 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Check out workflow commit
+      - name: Check out release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
+
+      - name: Pin the release branch to the workflow commit
+        run: git reset --hard ${{ github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
