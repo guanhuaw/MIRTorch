@@ -1,9 +1,57 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import torch
 import torchvision
 from torch import Tensor, nn
+
+
+def reduce_broadcast_batch_gradient(gradient: Tensor, batch: int) -> Tensor:
+    """Sum a broadcast batch gradient back to its original size."""
+    if batch == 1 and gradient.shape[0] != 1:
+        return gradient.sum(dim=0, keepdim=True)
+    return gradient
+
+
+def nufft_trajectory_vjp(
+    modes: Tensor,
+    trajectory: Tensor,
+    grad_samples: Tensor,
+    transform: Callable[[Tensor, Tensor], Tensor],
+) -> Tensor:
+    r"""Apply the coordinate-weighted NUFFT trajectory VJP.
+
+    This evaluates ``-1j * A(x * r[d])`` for every spatial dimension in one
+    batched transform, following Wang and Fessler, IEEE TCI 2023.
+    """
+    weighted_modes = []
+    spatial_shape = modes.shape[2:]
+    for dimension, size in enumerate(spatial_shape):
+        coordinates = torch.arange(
+            -(size // 2),
+            (size - 1) // 2 + 1,
+            dtype=modes.real.dtype,
+            device=modes.device,
+        )
+        shape = [1] * len(spatial_shape)
+        shape[dimension] = size
+        weighted_modes.append(modes * coordinates.reshape(shape))
+
+    batch, transforms = modes.shape[:2]
+    weighted = torch.stack(weighted_modes, dim=1).reshape(
+        batch,
+        len(spatial_shape) * transforms,
+        *spatial_shape,
+    )
+    derivatives = -1j * transform(weighted, trajectory)
+    derivatives = derivatives.reshape(
+        batch,
+        len(spatial_shape),
+        transforms,
+        grad_samples.shape[-1],
+    )
+    gradient = (grad_samples.conj().unsqueeze(1) * derivatives).real.sum(dim=2)
+    return gradient.to(dtype=trajectory.dtype)
 
 
 def adjoint_fft_norm(norm: str | None) -> str:

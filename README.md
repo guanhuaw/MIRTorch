@@ -13,11 +13,12 @@ proximal operators, iterative solvers, and MRI and SPECT system models.
 
 ## New
 
-Non-Cartesian and B0-informed MRI now use FINUFFT on supported non-macOS CPU
-systems and cuFINUFFT on CUDA when installed. In warm NVIDIA A10 benchmarks,
-the new paths measured up to **5.2× faster NUFFT**, **9.4× faster Toeplitz
-normal operations**, and **12.3× faster iterative solvers**. These are
-workload-specific measurements, not universal speedups.
+FINUFFT/cuFINUFFT now accelerate non-Cartesian and B0-informed MRI; warm NVIDIA
+A10 benchmarks measured up to **5.2× faster NUFFT**, **9.4× faster Toeplitz**,
+and **12.3× faster iterative solvers** (workload-dependent). Both NUFFT
+backends also support efficient first-order trajectory gradients, enabling
+SNOPY-style sampling-pattern optimization directly in MIRTorch
+([Wang and Fessler, 2023](https://arxiv.org/abs/2111.02912)).
 
 ## Install
 
@@ -59,6 +60,8 @@ The notebooks choose CUDA, Apple Metal, or CPU at runtime:
   CG-SENSE and B0-informed PWLS
 - [`demo_3d.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_3d.ipynb):
   3D non-Cartesian MRI and Toeplitz embedding
+- [`demo_trajectory_optimization.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_trajectory_optimization.ipynb):
+  SNOPY-style radial trajectory optimization
 - [`demo_cs.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_cs.ipynb):
   compressed-sensing MRI
 - [`demo_mlem.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mlem.ipynb):
@@ -75,9 +78,25 @@ MIRTorch is inspired by
 [MIRT.jl](https://github.com/JeffFessler/MIRT.jl),
 [SigPy](https://github.com/mikgroup/sigpy), and
 [PyLops](https://github.com/PyLops/pylops).
+
+If MIRTorch is useful in your work, please cite:
+
+```bibtex
+@inproceedings{wang:22:mirtorch,
+  title={{MIRTorch}: A {PyTorch}-powered Differentiable Toolbox for Fast Image
+         Reconstruction and Scan Protocol Optimization},
+  author={Wang, Guanhua and Shah, Neel and Zhu, Keyue and Noll, Douglas C. and
+          Fessler, Jeffrey A.},
+  booktitle={Proceedings of the International Society for Magnetic Resonance
+             in Medicine (ISMRM)},
+  pages={4982},
+  year={2022}
+}
+```
+
 See the
 [documentation](https://mirtorch.readthedocs.io/en/latest/README.html#citation-and-acknowledgments)
-for the MIRTorch, BJORK, and SPECT citations.
+for the BJORK and SPECT citations.
 
 MIRTorch is distributed under the
 [BSD 3-Clause License](https://github.com/guanhuaw/MIRTorch/blob/master/LICENSE).

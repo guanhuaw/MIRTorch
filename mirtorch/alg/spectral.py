@@ -1,4 +1,5 @@
 import logging
+import math
 
 import torch
 
@@ -19,39 +20,45 @@ def power_iter(A, x0, max_iter=100, tol=1e-6, alert=True):
         x0: initial guess of singular vector corresponding to max singular value
 
     Returns:
-        The spectral norm (x) and the principal right singular vector (sig1)
+        A tuple containing the principal right singular vector and the
+        estimated spectral norm.  The estimate is not a certified upper
+        bound; step-size rules should use backtracking or a safety margin.
     """
 
-    if max_iter < 0:
-        raise ValueError("max_iter must be non-negative")
-    if tol < 0:
-        raise ValueError("tol must be non-negative")
+    if not isinstance(max_iter, int) or max_iter < 0:
+        raise ValueError("max_iter must be a non-negative integer")
+    tol = float(tol)
+    if not math.isfinite(tol) or tol < 0:
+        raise ValueError("tol must be finite and non-negative")
     initial_norm = l2_norm(x0)
     if initial_norm.item() == 0:
         raise ValueError("x0 must be nonzero")
 
     x = x0 / initial_norm
-    ratio_old = float("inf")
     for iteration in range(max_iter):
         Ax = A * x
         ratio = l2_norm(Ax)
-        if ratio.item() == 0:
-            return x, ratio
-        relative_change = torch.abs(ratio - ratio_old) / ratio
-        if relative_change.item() < tol:
+        normal_x = A.adjoint(Ax)
+        normal_norm = l2_norm(normal_x)
+        scale = normal_norm.clamp_min(torch.finfo(normal_norm.dtype).tiny)
+        next_x = torch.where(normal_norm > 0, normal_x / scale, x)
+
+        # A stable eigen-residual is more informative than comparing two
+        # successive singular-value estimates, especially for clustered spectra.
+        if tol > 0:
+            eigen_residual = l2_norm(normal_x - ratio.square() * x)
+            relative_residual = eigen_residual / scale
+        else:
+            relative_residual = None
+        if relative_residual is not None and relative_residual.item() < tol:
             if alert:
                 logger.info(
                     "The calculation of max singular value accomplished at %d iterations.",
                     iteration + 1,
                 )
             break
-        ratio_old = ratio
-        x = A.adjoint(Ax)
-        norm = l2_norm(x)
-        if norm.item() == 0:
-            return x0 / initial_norm, torch.zeros_like(ratio)
-        x = x / norm
-    sig1 = l2_norm(A * x) / l2_norm(x)
+        x = next_x
+    sig1 = l2_norm(A * x)
     if alert:
         logger.info("The spectral norm is %s.", float(sig1))
     return x, sig1

@@ -7,11 +7,13 @@ import math
 import sys
 import warnings
 from importlib.util import find_spec
+from typing import cast
 
 import torch
 import torch.nn.functional as F
 import torchkbnufft as tkbn
 from torch import Tensor
+from torch.autograd.function import once_differentiable
 from torch.fft import fftn, ifftn
 
 from ._finufft import (
@@ -22,7 +24,13 @@ from ._finufft import (
     finufft_type2,
 )
 from .linearmaps import LinearMap
-from .util import adjoint_fft_norm, fftshift, ifftshift
+from .util import (
+    adjoint_fft_norm,
+    fftshift,
+    ifftshift,
+    nufft_trajectory_vjp,
+    reduce_broadcast_batch_gradient,
+)
 
 _MAX_B0_KERNEL_BYTES = 2 * 1024**3
 _MAX_B0_WORKSPACE_BYTES = 512 * 1024**2
@@ -124,9 +132,10 @@ def mri_exp_approx(
 ) -> tuple[Tensor, Tensor, Tensor]:
     r"""Approximate ``exp(-2j*pi*b0*t)`` using PyTorch time segmentation.
 
-    Histogram selection is intentionally non-differentiable, while the fitted
-    temporal basis and spatial phase coefficients retain gradients with respect
-    to ``t`` and ``b0``.
+    Histogram membership and MIRT percentile segment placement are intentionally
+    non-differentiable model-selection steps. The fitted target exponential
+    retains gradients with respect to ``t``, and the spatial phase retains
+    gradients with respect to ``b0``.
     """
     if not isinstance(b0, Tensor) or not isinstance(t, Tensor):
         raise TypeError("b0 and t must be torch tensors")
@@ -140,6 +149,8 @@ def mri_exp_approx(
         raise ValueError("lseg must be positive")
     if t.ndim != 1 or t.numel() < 1:
         raise ValueError("t must be a non-empty one-dimensional tensor")
+    if not torch.isfinite(t).all():
+        raise ValueError("t must contain only finite values")
     if b0.device != t.device:
         raise ValueError("b0 and t must be on the same device")
     if not b0.is_floating_point() or not t.is_floating_point():
@@ -150,9 +161,9 @@ def mri_exp_approx(
     t = t.to(dtype=real_dtype)
     angular_frequency = 2 * math.pi * b0.reshape(-1)
 
-    # Histogram membership has no useful derivative with respect to the sample
-    # locations. Only this discrete model-selection step is detached; the
-    # fitted basis and spatial coefficients remain differentiable.
+    # Histogram membership has no useful derivative with respect to the field
+    # values. The discrete assignments are detached, while bin edges, fitted
+    # coefficients, and spatial phases retain their continuous gradient paths.
     hist_wt, bin_edges = _uniform_histogram(angular_frequency, bins)
     bin_width = bin_edges[1] - bin_edges[0]
     if autocorrelation:
@@ -170,32 +181,62 @@ def mri_exp_approx(
         bin_centers = bin_edges[1:] - bin_width / 2
 
     complex_dtype = torch.complex128 if real_dtype == torch.float64 else torch.complex64
-    zk = (1j * bin_centers).to(dtype=complex_dtype)
-    fractions = torch.linspace(
-        0,
-        1,
-        lseg,
-        dtype=real_dtype,
-        device=b0.device,
-    )
-    tl = (t[0] + fractions * (t[-1] - t[0])) / 1000
 
-    ch = torch.exp(-tl[:, None] * zk[None, :])
-    sqrt_histogram = hist_wt.sqrt()
-    weighted_basis = sqrt_histogram[:, None] * ch.transpose(0, 1)
-    # PyTorch currently implements complex MPS SVD as an implicit CPU
-    # fallback. Make that small setup transfer explicit so users do not get a
-    # backend warning; autograd still follows both device copies.
-    fit_basis = (
-        weighted_basis.cpu() if weighted_basis.device.type == "mps" else weighted_basis
+    # The temporal fit is a tiny, often ill-conditioned least-squares problem.
+    # Running its pseudoinverse in complex64 gives platform-dependent zmap and
+    # time gradients even when the fitted coefficients agree. CPU complex128
+    # keeps those derivatives stable; the transferred tensors are only O(bins
+    # + segments + samples), independent of the image size.
+    fit_bin_centers = bin_centers.cpu().to(torch.float64)
+    fit_histogram = hist_wt.cpu().to(torch.float64)
+    fit_times = t.cpu().to(torch.float64)
+    selection_times = fit_times.detach()
+    if lseg == 1:
+        # MIRT places a single time segment at the mean readout time.
+        fit_tl = selection_times.mean().reshape(1)
+    else:
+        # Match MIRT's jf_prctile definition: sorted samples are located at
+        # (j - 1/2) / M and the requested, uniformly spaced percentiles are
+        # linearly interpolated between them. This differs slightly from the
+        # default NumPy/PyTorch quantile convention, even for uniform samples.
+        sorted_times = selection_times.sort().values
+        fit_fractions = torch.linspace(0, 1, lseg, dtype=torch.float64)
+        positions = (fit_fractions * selection_times.numel() - 0.5).clamp(
+            0,
+            selection_times.numel() - 1,
+        )
+        lower_positions = positions.floor()
+        upper_positions = positions.ceil()
+        weights = positions - lower_positions
+        fit_tl = torch.lerp(
+            sorted_times[lower_positions.to(torch.long)],
+            sorted_times[upper_positions.to(torch.long)],
+            weights,
+        )
+    # Segment placement is a basis-selection step, not a physical dependence
+    # of the signal on the sample times. Differentiating through the selected
+    # order statistics makes the near-singular pseudoinverse backward unstable;
+    # holding the MIRT basis fixed preserves the physical target-exp gradient.
+    fit_tl = fit_tl / 1000
+    fit_frequencies = 1j * fit_bin_centers
+    fit_basis = torch.exp(-fit_tl[:, None] * fit_frequencies[None, :]).transpose(0, 1)
+    sqrt_histogram = fit_histogram.sqrt()
+    fit_basis = sqrt_histogram[:, None] * fit_basis
+    # Keep nearly redundant time segments out of the differentiated subspace.
+    fit_dimension = max(fit_basis.shape)
+    fit_rtol = max(
+        fit_dimension * torch.finfo(real_dtype).eps,
+        math.sqrt(fit_dimension * torch.finfo(torch.float64).eps),
     )
-    interpolator = torch.linalg.pinv(fit_basis).to(b0.device)
+    interpolator = torch.linalg.pinv(fit_basis, rtol=fit_rtol)
     interpolator = interpolator * sqrt_histogram[None, :]
-    target = torch.exp(-zk[:, None] * t[None, :] / 1000)
+    target = torch.exp(-fit_frequencies[:, None] * fit_times[None, :] / 1000)
     temporal = (interpolator @ target).transpose(0, 1)
+    temporal = temporal.to(dtype=complex_dtype).to(device=b0.device)
     if autocorrelation:
         temporal = temporal.real
 
+    tl = fit_tl.to(dtype=real_dtype).to(device=b0.device)
     spatial_frequency = (2j * math.pi * b0.reshape(-1)).to(complex_dtype)
     spatial = torch.exp(-tl[:, None] * spatial_frequency[None, :]).transpose(0, 1)
     return temporal, spatial, tl
@@ -268,6 +309,140 @@ def _resolve_nufft_backend(backend: str, device: torch.device) -> str:
             f"not {backend!r}."
         )
     return backend
+
+
+class _KbNufftType2(torch.autograd.Function):
+    """KbNufft with an efficient trajectory VJP."""
+
+    @staticmethod
+    def forward(ctx, modes, trajectory, forward_operator, adjoint_operator, norm):
+        ctx.forward_operator = forward_operator
+        ctx.adjoint_operator = adjoint_operator
+        ctx.norm = norm
+        ctx.save_for_backward(modes, trajectory)
+        return forward_operator(modes, trajectory, norm=norm)
+
+    @staticmethod
+    @once_differentiable
+    def backward(  # pyright: ignore[reportIncompatibleMethodOverride]
+        ctx, grad_samples
+    ):
+        modes, trajectory = ctx.saved_tensors
+        need_modes, need_trajectory, *_ = ctx.needs_input_grad
+
+        grad_modes = None
+        if need_modes:
+            grad_modes = ctx.adjoint_operator(
+                grad_samples,
+                trajectory,
+                norm=ctx.norm,
+            )
+
+        grad_trajectory = None
+        if need_trajectory:
+            grad_trajectory = nufft_trajectory_vjp(
+                modes,
+                trajectory,
+                grad_samples,
+                lambda weighted, traj: ctx.forward_operator(
+                    weighted,
+                    traj,
+                    norm=ctx.norm,
+                ),
+            )
+            grad_trajectory = reduce_broadcast_batch_gradient(
+                grad_trajectory,
+                trajectory.shape[0],
+            )
+        return grad_modes, grad_trajectory, None, None, None
+
+
+class _KbNufftType1(torch.autograd.Function):
+    """KbNufftAdjoint with an efficient trajectory VJP."""
+
+    @staticmethod
+    def forward(ctx, samples, trajectory, forward_operator, adjoint_operator, norm):
+        ctx.forward_operator = forward_operator
+        ctx.adjoint_operator = adjoint_operator
+        ctx.norm = norm
+        ctx.save_for_backward(samples, trajectory)
+        return adjoint_operator(samples, trajectory, norm=norm)
+
+    @staticmethod
+    @once_differentiable
+    def backward(  # pyright: ignore[reportIncompatibleMethodOverride]
+        ctx, grad_modes
+    ):
+        samples, trajectory = ctx.saved_tensors
+        need_samples, need_trajectory, *_ = ctx.needs_input_grad
+
+        grad_samples = None
+        if need_samples:
+            grad_samples = ctx.forward_operator(
+                grad_modes,
+                trajectory,
+                norm=ctx.norm,
+            )
+
+        grad_trajectory = None
+        if need_trajectory:
+            grad_trajectory = nufft_trajectory_vjp(
+                grad_modes,
+                trajectory,
+                samples,
+                lambda weighted, traj: ctx.forward_operator(
+                    weighted,
+                    traj,
+                    norm=ctx.norm,
+                ),
+            )
+            grad_trajectory = reduce_broadcast_batch_gradient(
+                grad_trajectory,
+                trajectory.shape[0],
+            )
+        return grad_samples, grad_trajectory, None, None, None
+
+
+def _kb_type2(
+    modes: Tensor,
+    trajectory: Tensor,
+    forward_operator: tkbn.KbNufft,
+    adjoint_operator: tkbn.KbNufftAdjoint,
+    norm: str | None,
+) -> Tensor:
+    if trajectory.requires_grad:
+        return cast(
+            Tensor,
+            _KbNufftType2.apply(
+                modes,
+                trajectory,
+                forward_operator,
+                adjoint_operator,
+                norm,
+            ),
+        )
+    return forward_operator(modes, trajectory, norm=norm)
+
+
+def _kb_type1(
+    samples: Tensor,
+    trajectory: Tensor,
+    forward_operator: tkbn.KbNufft,
+    adjoint_operator: tkbn.KbNufftAdjoint,
+    norm: str | None,
+) -> Tensor:
+    if trajectory.requires_grad:
+        return cast(
+            Tensor,
+            _KbNufftType1.apply(
+                samples,
+                trajectory,
+                forward_operator,
+                adjoint_operator,
+                norm,
+            ),
+        )
+    return adjoint_operator(samples, trajectory, norm=norm)
 
 
 def _complex_dtype_like(tensor: Tensor) -> torch.dtype:
@@ -442,8 +617,11 @@ class NuSense(LinearMap):
     Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
     The automatic backend uses an installed FINUFFT or cuFINUFFT library on a
     supported device, and otherwise uses Matthew Muckley's torchkbnufft.
-    Trajectory gradients are available with FINUFFT/cuFINUFFT; torchkbnufft
-    does not connect its interpolation coordinates to autograd.
+    Both backends use the coordinate-weighted NUFFT Jacobian for efficient
+    first-order trajectory gradients.
+
+    Trajectory coordinates are in radians per voxel. For an image stored as
+    ``[..., ny, nx]``, the corresponding coordinate order is ``(ky, kx)``.
 
     Broadcasting behavior:
     - If smaps or traj have shape [1, ...], they will be broadcast to the batch size
@@ -552,23 +730,29 @@ class NuSense(LinearMap):
 
         image = x if self.batchmode else x.unsqueeze(0).unsqueeze(0)
         smaps = self.smaps if self.batchmode else self.smaps.unsqueeze(0)
+        trajectory = self.traj if self.batchmode else self.traj.unsqueeze(0)
         if self.sequential:
-            transformed = torch.empty(
-                image.shape[0],
-                smaps.shape[1],
-                self.traj.shape[-1],
-                dtype=torch.promote_types(x.dtype, smaps.dtype),
-                device=x.device,
+            transformed = torch.cat(
+                [
+                    _kb_type2(
+                        image * smaps[:, coil : coil + 1],
+                        trajectory,
+                        self.A,
+                        self.AT,
+                        self.norm,
+                    )
+                    for coil in range(smaps.shape[1])
+                ],
+                dim=1,
             )
-            for coil in range(smaps.shape[1]):
-                transformed[:, coil : coil + 1] = self.A(
-                    image,
-                    self.traj,
-                    smaps=smaps[:, coil : coil + 1],
-                    norm=self.norm,
-                )
         else:
-            transformed = self.A(image, self.traj, smaps=smaps, norm=self.norm)
+            transformed = _kb_type2(
+                image * smaps,
+                trajectory,
+                self.A,
+                self.AT,
+                self.norm,
+            )
         return transformed if self.batchmode else transformed.squeeze(0)
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
@@ -588,6 +772,7 @@ class NuSense(LinearMap):
 
         samples = x if self.batchmode else x.unsqueeze(0)
         smaps = self.smaps if self.batchmode else self.smaps.unsqueeze(0)
+        trajectory = self.traj if self.batchmode else self.traj.unsqueeze(0)
         if self.sequential:
             image = torch.zeros(
                 (samples.shape[0], 1, *self.size_in[-len(self.grid_size) :]),
@@ -595,14 +780,23 @@ class NuSense(LinearMap):
                 device=x.device,
             )
             for coil in range(smaps.shape[1]):
-                image = image + self.AT(
+                coil_image = _kb_type1(
                     samples[:, coil : coil + 1],
-                    self.traj,
-                    smaps=smaps[:, coil : coil + 1],
-                    norm=self.norm,
+                    trajectory,
+                    self.A,
+                    self.AT,
+                    self.norm,
                 )
+                image = image + coil_image * smaps[:, coil : coil + 1].conj()
         else:
-            image = self.AT(samples, self.traj, smaps=smaps, norm=self.norm)
+            coil_images = _kb_type1(
+                samples,
+                trajectory,
+                self.A,
+                self.AT,
+                self.norm,
+            )
+            image = (coil_images * smaps.conj()).sum(dim=1, keepdim=True)
         return image if self.batchmode else image.squeeze(0).squeeze(0)
 
 
@@ -611,7 +805,8 @@ class NuSenseGram(LinearMap):
     Gram operator (A'A) of the Non-Cartesian sense operator: "SENSE: Sensitivity encoding for fast MRI"
     With a compatible installed native library, the automatic backend builds a
     FINUFFT or cuFINUFFT Toeplitz embedding for a fixed trajectory. Otherwise
-    it uses torchkbnufft.
+    it uses torchkbnufft. A trainable trajectory uses the direct
+    ``NuSense.H * NuSense`` path so gradients are preserved.
 
     Broadcasting behavior:
     - If smaps or traj have shape [1, ...], they will be broadcast to the batch size
@@ -646,11 +841,6 @@ class NuSenseGram(LinearMap):
         backend: str = "auto",
         eps: float = 1e-6,
     ):
-        if traj.requires_grad:
-            raise ValueError(
-                "NuSenseGram requires fixed trajectories; use "
-                "NuSense.H * NuSense for a trainable trajectory."
-            )
         self.smaps = smaps
         self.norm = norm
         self.traj = traj
@@ -658,8 +848,6 @@ class NuSenseGram(LinearMap):
         self.backend = _resolve_nufft_backend(backend, smaps.device)
         self.eps = eps
         backend = self.backend
-        if backend == "torchkbnufft":
-            self.toep_op = tkbn.ToepNufft()
 
         spatial_shape = _spatial_shape(smaps, batchmode)
         self.grid_size = _grid_shape(spatial_shape, grid_size)
@@ -671,6 +859,24 @@ class NuSenseGram(LinearMap):
             size_in = (nbatch, 1) + spatial_shape
         else:
             size_in = spatial_shape
+
+        self._uses_direct_gram = traj.requires_grad
+        if self._uses_direct_gram:
+            self._direct_operator = NuSense(
+                smaps=smaps,
+                traj=traj,
+                norm=norm,
+                batchmode=batchmode,
+                numpoints=numpoints,
+                grid_size=grid_size,
+                backend=backend,
+                eps=eps,
+            )
+            super().__init__(size_in, size_in)
+            return
+
+        if backend == "torchkbnufft":
+            self.toep_op = tkbn.ToepNufft()
 
         if backend == "torchkbnufft":
             self.kernel = tkbn.calc_toeplitz_kernel(
@@ -701,6 +907,18 @@ class NuSenseGram(LinearMap):
         self._trajectory_state = _tensor_state_key(self.traj)
         super().__init__(size_in, size_in)
 
+    def _check_direct_aliases(self) -> None:
+        for name in ("smaps", "traj"):
+            if getattr(self, name) is not getattr(self._direct_operator, name):
+                raise RuntimeError(
+                    f"{name} was replaced on a direct NuSenseGram operator; "
+                    "create a new operator instead."
+                )
+
+    def _sync_direct_aliases(self) -> None:
+        self.smaps = self._direct_operator.smaps
+        self.traj = self._direct_operator.traj
+
     def _check_fixed_trajectory(self) -> None:
         if _tensor_state_key(self.traj) != self._trajectory_state:
             raise RuntimeError(
@@ -709,6 +927,12 @@ class NuSenseGram(LinearMap):
             )
 
     def to(self, device: torch.device | str):
+        if self._uses_direct_gram:
+            self._check_direct_aliases()
+            self._direct_operator.to(device)
+            self._sync_direct_aliases()
+            return self
+
         self._check_fixed_trajectory()
         if self.backend == "finufft":
             self._finufft_backend.clear_plans()
@@ -723,6 +947,11 @@ class NuSenseGram(LinearMap):
         Returns:
             x:  tensor with dimension [nbatch, 1, nx, ny (nz)] (batchmode=True) or [nx, ny, (nz)]
         """
+        if self._uses_direct_gram:
+            self._check_direct_aliases()
+            samples = self._direct_operator(x)
+            return self._direct_operator.adjoint(samples)
+
         self._check_fixed_trajectory()
         if self.backend == "finufft":
             return self._finufft_backend.sense_gram(
@@ -746,9 +975,12 @@ class Gmri(LinearMap):
 
     The automatic backend uses an installed FINUFFT or cuFINUFFT library on a
     supported device, and otherwise uses torchkbnufft.
-    Trajectory gradients are available with FINUFFT/cuFINUFFT; torchkbnufft
-    does not connect its interpolation coordinates to autograd. Image,
-    sensitivity-map, field-map, and explicit-time gradients remain available.
+    Both backends use the coordinate-weighted NUFFT Jacobian for efficient
+    first-order trajectory gradients. Image, sensitivity-map, field-map, and
+    explicit-time gradients remain available.
+
+    Trajectory coordinates are in radians per voxel. For an image stored as
+    ``[..., ny, nx]``, the corresponding coordinate order is ``(ky, kx)``.
 
     Note that the data format is a little different from NuSENSE.
     The input/output size depends on the sensitivity maps.
@@ -923,7 +1155,13 @@ class Gmri(LinearMap):
                     self._finufft_backend,
                 )
             else:
-                transformed = self.A(modes, self.traj, norm=self.norm)
+                transformed = _kb_type2(
+                    modes,
+                    self.traj,
+                    self.A,
+                    self.AT,
+                    self.norm,
+                )
             segments = transformed.reshape(
                 self.nbatch,
                 segment_count,
@@ -961,7 +1199,13 @@ class Gmri(LinearMap):
                     self._finufft_backend,
                 )
             else:
-                modes = self.AT(samples, self.traj, norm=self.norm)
+                modes = _kb_type1(
+                    samples,
+                    self.traj,
+                    self.A,
+                    self.AT,
+                    self.norm,
+                )
             coil_images = modes.reshape(
                 self.nbatch,
                 segment_count,
@@ -990,8 +1234,9 @@ class GmriGram(LinearMap):
 
     The automatic backend uses an installed FINUFFT or cuFINUFFT library on a
     supported device, and otherwise uses torchkbnufft. The input and output
-    dimensions are both [nbatch, 1, nx, ny, (nz)]. Trainable ``zmap`` or ``T``
-    uses the exact composed ``Gmri.H * Gmri`` path so gradients are preserved.
+    dimensions are both [nbatch, 1, nx, ny, (nz)]. Trainable ``zmap``, ``traj``,
+    or ``T`` uses the exact composed ``Gmri.H * Gmri`` path so gradients are
+    preserved.
 
     Attributes:
         smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
@@ -1033,11 +1278,6 @@ class GmriGram(LinearMap):
         self.T = T
         self.backend = _resolve_nufft_backend(backend, smaps.device)
         self.eps = eps
-        if traj.requires_grad and self.backend != "finufft":
-            raise ValueError(
-                "Trainable trajectories require the FINUFFT backend; "
-                "torchkbnufft does not provide trajectory gradients."
-            )
         if not isinstance(L, int) or L < 1:
             raise ValueError("L must be a positive integer")
         if not isinstance(nbins, int) or nbins < 1:

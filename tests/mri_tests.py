@@ -1,3 +1,4 @@
+import math
 import sys
 from importlib.util import find_spec
 
@@ -25,6 +26,95 @@ def masks():
 @pytest.fixture
 def traj():
     return torch.rand(2, 2, 1000) * 2 - 1
+
+
+def _direct_nufft_phase(
+    spatial_shape: tuple[int, ...],
+    trajectory: torch.Tensor,
+    sign: int,
+) -> torch.Tensor:
+    coordinates = [
+        torch.arange(
+            -(size // 2),
+            (size - 1) // 2 + 1,
+            dtype=trajectory.dtype,
+            device=trajectory.device,
+        )
+        for size in spatial_shape
+    ]
+    grids = torch.meshgrid(*coordinates, indexing="ij")
+    sample_shape = (trajectory.shape[0], trajectory.shape[-1]) + (1,) * len(
+        spatial_shape
+    )
+    phase_argument = trajectory[:, 0].reshape(sample_shape) * grids[0]
+    for dimension in range(1, len(spatial_shape)):
+        phase_argument = (
+            phase_argument
+            + trajectory[:, dimension].reshape(sample_shape) * grids[dimension]
+        )
+    return torch.exp(sign * 1j * phase_argument)
+
+
+def _direct_type2(
+    modes: torch.Tensor,
+    trajectory: torch.Tensor,
+    norm: str | None,
+    grid_size: tuple[int, ...],
+) -> torch.Tensor:
+    phase = _direct_nufft_phase(tuple(modes.shape[2:]), trajectory, sign=-1)
+    spatial_dims = tuple(range(3, 3 + len(grid_size)))
+    result = (modes.unsqueeze(2) * phase.unsqueeze(1)).sum(dim=spatial_dims)
+    if norm == "ortho":
+        result = result / math.sqrt(math.prod(grid_size))
+    return result
+
+
+def _direct_type1(
+    samples: torch.Tensor,
+    trajectory: torch.Tensor,
+    spatial_shape: tuple[int, ...],
+    norm: str | None,
+    grid_size: tuple[int, ...],
+) -> torch.Tensor:
+    phase = _direct_nufft_phase(spatial_shape, trajectory, sign=1)
+    result = (
+        samples.reshape(samples.shape + (1,) * len(spatial_shape)) * phase.unsqueeze(1)
+    ).sum(dim=2)
+    if norm == "ortho":
+        result = result / math.sqrt(math.prod(grid_size))
+    return result
+
+
+def _relative_error(actual: torch.Tensor, expected: torch.Tensor) -> torch.Tensor:
+    return torch.linalg.vector_norm(actual - expected) / torch.linalg.vector_norm(
+        expected
+    )
+
+
+def _direct_gmri_forward(operator: Gmri, image: torch.Tensor) -> torch.Tensor:
+    spatial_shape = tuple(image.shape[2:])
+    modes = (image.unsqueeze(0) * operator.C * operator.smaps.unsqueeze(0)).permute(
+        1, 0, 2, *range(3, image.ndim + 1)
+    )
+    modes = modes.reshape(
+        operator.nbatch,
+        operator.L * operator.nc,
+        *spatial_shape,
+    )
+    transformed = _direct_type2(
+        modes,
+        operator.traj,
+        operator.norm,
+        operator.grid_size,
+    )
+    segments = transformed.reshape(
+        operator.nbatch,
+        operator.L,
+        operator.nc,
+        operator.nshot,
+        operator.npoints,
+    ).permute(1, 0, 2, 3, 4)
+    return (operator.B * segments).sum(dim=0)
 
 
 # ============================================================================
@@ -177,12 +267,178 @@ def test_nusense_selects_default_backend_for_platform(smaps, traj):
         NuSense(smaps, traj, backend="invalid")
 
 
-def test_nusense_gram_rejects_trainable_trajectory():
-    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
-    traj = torch.zeros(1, 2, 7, requires_grad=True)
+@pytest.mark.parametrize(
+    ("spatial_shape", "sensitivity_batch", "trajectory_batch", "sequential"),
+    [
+        pytest.param((5,), 1, 2, False, id="1d-shared-smaps"),
+        pytest.param((5, 6), 2, 1, False, id="2d-shared-trajectory"),
+        pytest.param((4, 5), 2, 1, True, id="2d-sequential"),
+        pytest.param((3, 4, 5), 2, 2, False, id="3d-per-batch"),
+    ],
+)
+def test_nusense_torchkbnufft_forward_gradient_matches_direct_nudft(
+    spatial_shape,
+    sensitivity_batch,
+    trajectory_batch,
+    sequential,
+):
+    torch.manual_seed(20260731)
+    batch, coils, points = 2, 2, 9
+    image = torch.randn(
+        batch,
+        1,
+        *spatial_shape,
+        dtype=torch.complex128,
+        requires_grad=True,
+    )
+    smaps = torch.randn(
+        sensitivity_batch,
+        coils,
+        *spatial_shape,
+        dtype=torch.complex128,
+        requires_grad=True,
+    )
+    trajectory = (
+        torch.rand(
+            trajectory_batch,
+            len(spatial_shape),
+            points,
+            dtype=torch.float64,
+        )
+        - 0.5
+    ).requires_grad_()
+    kwargs = {
+        "backend": "torchkbnufft",
+        "grid_size": 2,
+        "numpoints": 6,
+        "norm": "ortho",
+        "sequential": sequential,
+    }
+    operator = NuSense(smaps, trajectory, **kwargs)
+    actual = operator(image)
 
-    with pytest.raises(ValueError, match="fixed trajectories"):
-        NuSenseGram(smaps, traj, backend="torchkbnufft")
+    reference_image = image.detach().clone().requires_grad_()
+    reference_smaps = smaps.detach().clone().requires_grad_()
+    reference_trajectory = trajectory.detach().clone().requires_grad_()
+    expected = _direct_type2(
+        reference_image * reference_smaps,
+        reference_trajectory,
+        operator.norm,
+        operator.grid_size,
+    )
+    fixed_operator = NuSense(
+        smaps.detach(),
+        trajectory.detach(),
+        **kwargs,
+    )
+
+    assert torch.equal(actual.detach(), fixed_operator(image.detach()))
+    assert _relative_error(actual.detach(), expected.detach()) < 2e-3
+
+    probe = torch.randn_like(actual)
+    actual_gradients = torch.autograd.grad(
+        torch.vdot(probe.reshape(-1), actual.reshape(-1)).real,
+        (image, smaps, trajectory),
+    )
+    expected_gradients = torch.autograd.grad(
+        torch.vdot(probe.reshape(-1), expected.reshape(-1)).real,
+        (reference_image, reference_smaps, reference_trajectory),
+    )
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        assert _relative_error(actual_gradient, expected_gradient) < 3e-3
+
+
+@pytest.mark.parametrize(
+    ("norm", "sequential"),
+    [(None, False), ("ortho", True)],
+)
+def test_nusense_torchkbnufft_adjoint_gradient_matches_direct_nudft(
+    norm,
+    sequential,
+):
+    torch.manual_seed(20260732)
+    spatial_shape = (5, 6)
+    batch, coils, points = 2, 2, 11
+    samples = torch.randn(
+        batch,
+        coils,
+        points,
+        dtype=torch.complex128,
+        requires_grad=True,
+    )
+    smaps = torch.randn(
+        batch,
+        coils,
+        *spatial_shape,
+        dtype=torch.complex128,
+        requires_grad=True,
+    )
+    trajectory = (torch.rand(1, 2, points, dtype=torch.float64) - 0.5).requires_grad_()
+    operator = NuSense(
+        smaps,
+        trajectory,
+        backend="torchkbnufft",
+        grid_size=2,
+        numpoints=6,
+        norm=norm,
+        sequential=sequential,
+    )
+    actual = operator.adjoint(samples)
+
+    reference_samples = samples.detach().clone().requires_grad_()
+    reference_smaps = smaps.detach().clone().requires_grad_()
+    reference_trajectory = trajectory.detach().clone().requires_grad_()
+    coil_images = _direct_type1(
+        reference_samples,
+        reference_trajectory,
+        spatial_shape,
+        operator.norm,
+        operator.grid_size,
+    )
+    expected = (coil_images * reference_smaps.conj()).sum(dim=1, keepdim=True)
+
+    assert _relative_error(actual.detach(), expected.detach()) < 2e-3
+
+    probe = torch.randn_like(actual)
+    actual_gradients = torch.autograd.grad(
+        torch.vdot(probe.reshape(-1), actual.reshape(-1)).real,
+        (samples, smaps, trajectory),
+    )
+    expected_gradients = torch.autograd.grad(
+        torch.vdot(probe.reshape(-1), expected.reshape(-1)).real,
+        (reference_samples, reference_smaps, reference_trajectory),
+    )
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        assert _relative_error(actual_gradient, expected_gradient) < 3e-3
+
+
+def test_nusense_gram_trainable_trajectory_uses_direct_composition():
+    torch.manual_seed(20260731)
+    smaps = torch.randn(1, 2, 4, 5, dtype=torch.complex128)
+    traj = (torch.rand(1, 2, 9, dtype=torch.float64) - 0.5).requires_grad_()
+    image = torch.randn(1, 1, 4, 5, dtype=torch.complex128)
+    kwargs = {
+        "backend": "torchkbnufft",
+        "grid_size": 2,
+        "numpoints": 6,
+    }
+    gram = NuSenseGram(smaps, traj, **kwargs)
+    direct = NuSense(smaps, traj, **kwargs)
+
+    assert gram._uses_direct_gram
+    assert torch.equal(gram(image), direct.adjoint(direct(image)))
+    (gradient,) = torch.autograd.grad(gram(image).abs().square().sum(), traj)
+    assert gradient.shape == traj.shape
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) > 0
 
 
 @pytest.mark.parametrize("change", ["mutate", "replace"])
@@ -328,6 +584,32 @@ def test_nusense_non_batchmode_adjoint_property():
     assert torch.allclose(lhs, rhs, atol=1e-6)
 
 
+def test_nusense_non_batchmode_trainable_trajectory_gradient():
+    torch.manual_seed(20260733)
+    smaps = torch.randn(2, 4, 5, dtype=torch.complex128)
+    trajectory = (torch.rand(2, 9, dtype=torch.float64) - 0.5).requires_grad_()
+    image = torch.randn(4, 5, dtype=torch.complex128)
+    samples = torch.randn(2, 9, dtype=torch.complex128)
+    operator = NuSense(
+        smaps,
+        trajectory,
+        batchmode=False,
+        backend="torchkbnufft",
+        grid_size=2,
+        numpoints=6,
+    )
+
+    loss = (
+        operator(image).abs().square().mean()
+        + operator.adjoint(samples).abs().square().mean()
+    )
+    (gradient,) = torch.autograd.grad(loss, trajectory)
+
+    assert gradient.shape == trajectory.shape
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) > 0
+
+
 # ============================================================================
 # NuSenseGram Tests
 # ============================================================================
@@ -365,6 +647,115 @@ def test_nusense_gram_self_adjoint():
     assert torch.allclose(forward, adjoint, atol=1e-6)
 
 
+def test_gmri_torchkbnufft_trajectory_gradient_matches_direct_nudft():
+    torch.manual_seed(20260734)
+    batch, coils, shots, points = 2, 2, 2, 7
+    spatial_shape = (4, 5)
+    image = torch.randn(
+        batch,
+        1,
+        *spatial_shape,
+        dtype=torch.complex128,
+        requires_grad=True,
+    )
+    smaps = torch.randn(
+        batch,
+        coils,
+        *spatial_shape,
+        dtype=torch.complex128,
+        requires_grad=True,
+    )
+    zmap = (
+        torch.linspace(-40, 55, math.prod(spatial_shape), dtype=torch.float64)
+        .reshape(1, *spatial_shape)
+        .requires_grad_()
+    )
+    trajectory = (
+        torch.rand(1, 2, shots, points, dtype=torch.float64) - 0.5
+    ).requires_grad_()
+    times = (torch.arange(points, dtype=torch.float64) * 0.003).requires_grad_()
+    kwargs = {
+        "backend": "torchkbnufft",
+        "L": 3,
+        "nbins": 7,
+        "grid_size": 2,
+        "numpoints": 6,
+        "norm": "ortho",
+    }
+    operator = Gmri(smaps, zmap, trajectory, T=times, **kwargs)
+    actual = operator(image)
+
+    reference_image = image.detach().clone().requires_grad_()
+    reference_smaps = smaps.detach().clone().requires_grad_()
+    reference_zmap = zmap.detach().clone().requires_grad_()
+    reference_trajectory = trajectory.detach().clone().requires_grad_()
+    reference_times = times.detach().clone().requires_grad_()
+    reference_operator = Gmri(
+        reference_smaps,
+        reference_zmap,
+        reference_trajectory,
+        T=reference_times,
+        **kwargs,
+    )
+    expected = _direct_gmri_forward(reference_operator, reference_image)
+
+    assert _relative_error(actual.detach(), expected.detach()) < 2e-3
+
+    # Use one fixed cotangent to compare the two operator VJPs directly. A
+    # squared-norm objective would also feed the NUFFT's small forward error
+    # into the upstream gradient, obscuring the Jacobian comparison.
+    probe = torch.randn_like(actual)
+    actual_gradients = torch.autograd.grad(
+        (actual * probe.conj()).sum().real,
+        (image, smaps, zmap, trajectory, times),
+    )
+    expected_gradients = torch.autograd.grad(
+        (expected * probe.conj()).sum().real,
+        (
+            reference_image,
+            reference_smaps,
+            reference_zmap,
+            reference_trajectory,
+            reference_times,
+        ),
+    )
+    for name, actual_gradient, expected_gradient in zip(
+        ("image", "smaps", "zmap", "trajectory", "times"),
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        # zmap and time gradients can amplify the NUFFT's small forward error
+        # when the time-segment terms nearly cancel. The trajectory criterion
+        # remains close to the accuracy of the underlying NUFFT approximation.
+        tolerance = 5e-2 if name in ("zmap", "times") else 3e-3
+        assert _relative_error(actual_gradient, expected_gradient) < tolerance
+
+
+def test_gmri_gram_trainable_trajectory_uses_direct_composition():
+    torch.manual_seed(20260735)
+    smaps = torch.randn(1, 2, 4, 5, dtype=torch.complex128)
+    zmap = torch.linspace(-30, 40, 20, dtype=torch.float64).reshape(1, 4, 5)
+    trajectory = (torch.rand(1, 2, 2, 7, dtype=torch.float64) - 0.5).requires_grad_()
+    image = torch.randn(1, 1, 4, 5, dtype=torch.complex128)
+    kwargs = {
+        "backend": "torchkbnufft",
+        "L": 2,
+        "nbins": 5,
+        "grid_size": 2,
+        "numpoints": 6,
+    }
+    gram = GmriGram(smaps, zmap, trajectory, **kwargs)
+    direct = Gmri(smaps, zmap, trajectory, **kwargs)
+
+    assert gram._uses_direct_gram
+    assert torch.equal(gram(image), direct.adjoint(direct(image)))
+    (gradient,) = torch.autograd.grad(gram(image).abs().square().sum(), trajectory)
+    assert gradient.shape == trajectory.shape
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) > 0
+
+
 @pytest.mark.skipif(
     not torch.backends.mps.is_available(),
     reason="Apple Metal is unavailable",
@@ -392,21 +783,30 @@ def test_gmri_and_toeplitz_gram_run_on_mps():
     assert torch.isfinite(gram_image).all().item()
 
     trainable_zmap = zmap.detach().requires_grad_()
+    trainable_traj = traj.detach().requires_grad_()
     times = (torch.arange(8, device=device) * 0.004).requires_grad_()
     trainable = Gmri(
         smaps,
         trainable_zmap,
-        traj,
+        trainable_traj,
         T=times,
         **kwargs,
     )
-    loss = trainable(image).abs().square().mean()
-    zmap_gradient, time_gradient = torch.autograd.grad(
-        loss,
-        (trainable_zmap, times),
+    trainable_samples = samples.detach().requires_grad_()
+    loss = (
+        trainable(image).abs().square().mean()
+        + trainable.adjoint(trainable_samples).abs().square().mean()
+    )
+    zmap_gradient, trajectory_gradient, time_gradient, sample_gradient = (
+        torch.autograd.grad(
+            loss,
+            (trainable_zmap, trainable_traj, times, trainable_samples),
+        )
     )
     assert torch.isfinite(zmap_gradient).all().item()
+    assert torch.isfinite(trajectory_gradient).all().item()
     assert torch.isfinite(time_gradient).all().item()
+    assert torch.isfinite(sample_gradient).all().item()
 
 
 @pytest.mark.skipif(

@@ -73,7 +73,8 @@ def _direct_b0_encoding(
     zmap: torch.Tensor,
     trajectory: torch.Tensor,
     *,
-    dt: float,
+    dt: float | None = None,
+    times: torch.Tensor | None = None,
     grid_size: tuple[int, ...],
 ) -> torch.Tensor:
     spatial_shape = tuple(image.shape[2:])
@@ -97,15 +98,20 @@ def _direct_b0_encoding(
         * mode_grids[dimension]
         for dimension in range(len(spatial_shape))
     )
-    times = (
-        torch.arange(
-            trajectory.shape[-1],
-            dtype=trajectory.dtype,
-            device=trajectory.device,
+    if times is None:
+        if dt is None:
+            raise ValueError("dt is required when explicit times are omitted")
+        times = (
+            torch.arange(
+                trajectory.shape[-1],
+                dtype=trajectory.dtype,
+                device=trajectory.device,
+            )
+            * dt
         )
-        * dt
-        / 1000
-    )
+    elif dt is not None:
+        raise ValueError("provide either dt or explicit times, not both")
+    times = times / 1000
     field_phase = (
         2
         * math.pi
@@ -311,7 +317,7 @@ def test_b0_cg_reconstruction_recovers_a_synthetic_phantom():
     assert _relative_error(toeplitz_reconstruction, reconstruction) < 2e-3
 
 
-def test_gmri_all_parameter_gradients_match_directional_differences(monkeypatch):
+def test_gmri_all_parameter_gradients_match_references(monkeypatch):
     monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
     monkeypatch.setattr(FinufftSenseBackend, "type2", _exact_type2)
     torch.manual_seed(602)
@@ -380,6 +386,30 @@ def test_gmri_all_parameter_gradients_match_directional_differences(monkeypatch)
         )
     ]
 
+    # MIRT percentile locations are model-selection nodes. Their gradients are
+    # intentionally stopped because differentiating the near-singular basis
+    # fit gives a poor derivative of the physical signal. Validate the time
+    # gradient against the exact B0 encoding instead of against a perturbation
+    # that also redesigns those nodes.
+    reference_times = times.detach().clone().requires_grad_()
+    reference_samples = _direct_b0_encoding(
+        image.detach(),
+        smaps.detach(),
+        zmap.detach(),
+        trajectory.detach(),
+        times=reference_times,
+        grid_size=operator.grid_size,
+    )
+    reference_objective = torch.vdot(
+        probe.reshape(-1),
+        reference_samples.reshape(-1),
+    ).real
+    reference_time_gradient = torch.autograd.grad(
+        reference_objective,
+        reference_times,
+    )[0]
+    reference_time_derivative = (reference_time_gradient * directions[-1]).sum()
+
     detached_parameters = [parameter.detach() for parameter in parameters]
 
     def evaluate(values):
@@ -398,7 +428,7 @@ def test_gmri_all_parameter_gradients_match_directional_differences(monkeypatch)
 
     step = 1e-3
     for index, (analytic, direction) in enumerate(
-        zip(analytic_derivatives, directions, strict=True)
+        zip(analytic_derivatives[:-1], directions[:-1], strict=True)
     ):
         plus = [parameter.clone() for parameter in detached_parameters]
         minus = [parameter.clone() for parameter in detached_parameters]
@@ -411,3 +441,15 @@ def test_gmri_all_parameter_gradients_match_directional_differences(monkeypatch)
         )
         relative_error = (analytic - finite_difference).abs() / scale
         assert relative_error < 5e-5
+
+    time_scale = torch.maximum(
+        torch.maximum(
+            analytic_derivatives[-1].abs(),
+            reference_time_derivative.abs(),
+        ),
+        torch.tensor(1e-10, dtype=real_dtype),
+    )
+    time_relative_error = (
+        analytic_derivatives[-1] - reference_time_derivative
+    ).abs() / time_scale
+    assert time_relative_error < 2e-4
