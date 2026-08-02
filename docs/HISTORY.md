@@ -1,7 +1,19 @@
 # History
 
-Unreleased
-----------
+0.3.0 (2026-08-02)
+------------------
+
+- Add efficient first-order trajectory gradients for torchkbnufft and
+  FINUFFT/cuFINUFFT, with a SNOPY-style optimization tutorial.
+- Align B0 time-segmentation with MIRT's histogram-weighted fit while
+  preserving gradients with respect to the field map and sampling times.
+- Add solver diagnostics and warm starts, relative stopping for CG and
+  proximal methods, and adaptive restart for FISTA and POGM.
+- Rewrite the compressed-sensing tutorial with safer step sizes, comparable
+  metrics, and clearer reconstruction diagnostics.
+
+0.2.0 (2026-07-28)
+------------------
 
 - Add default FINUFFT/cuFINUFFT acceleration and Toeplitz normal operators for
   non-Cartesian and B0-informed MRI, with a torchkbnufft fallback.

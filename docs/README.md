@@ -84,6 +84,7 @@ The notebooks choose CUDA, Apple Metal, or CPU at runtime:
 
 - [MRI and B0-informed PWLS](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mri.ipynb)
 - [3D non-Cartesian MRI](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_3d.ipynb)
+- [SNOPY-style trajectory optimization](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_trajectory_optimization.ipynb)
 - [Compressed-sensing MRI](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_cs.ipynb)
 - [SPECT reconstruction](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mlem.ipynb)
 - [CG, FISTA, and POGM](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mnist.ipynb)

@@ -6,6 +6,22 @@ from mirtorch.linear import Gmri, GmriGram
 from mirtorch.linear.mri import mri_exp_approx, readout_times
 
 
+def _mirt_segment_times(times, segments):
+    if segments == 1:
+        return np.asarray([times.mean()]) / 1000
+
+    sorted_times = np.sort(times)
+    fractions = np.linspace(0, 1, segments)
+    positions = np.clip(fractions * times.size - 0.5, 0, times.size - 1)
+    lower_positions = np.floor(positions).astype(int)
+    upper_positions = np.ceil(positions).astype(int)
+    weights = positions - lower_positions
+    return (
+        sorted_times[lower_positions] * (1 - weights)
+        + sorted_times[upper_positions] * weights
+    ) / 1000
+
+
 def _numpy_mri_exp_approx(b0, bins, segments, times, autocorrelation):
     histogram, bin_edges = np.histogram(2 * np.pi * b0.reshape(-1), bins)
     bin_width = bin_edges[1] - bin_edges[0]
@@ -16,7 +32,7 @@ def _numpy_mri_exp_approx(b0, bins, segments, times, autocorrelation):
         bin_centers = bin_edges[1:] - bin_width / 2
 
     frequencies = 1j * bin_centers
-    segment_times = np.linspace(times[0], times[-1], segments) / 1000
+    segment_times = _mirt_segment_times(times, segments)
     basis = np.exp(-segment_times[:, None] * frequencies[None, :])
     weights = np.diag(np.sqrt(histogram))
     interpolator = np.linalg.pinv(weights @ basis.T) @ weights
@@ -50,8 +66,79 @@ def test_constant_field_map_uses_a_finite_histogram_range():
     assert torch.isfinite(segment_times).all()
 
 
+def test_nonfinite_readout_times_are_rejected():
+    zmap = torch.linspace(-20, 30, 6, dtype=torch.float64)
+    times = torch.tensor([0.0, float("nan")], dtype=torch.float64)
+
+    with pytest.raises(ValueError, match="only finite"):
+        mri_exp_approx(zmap, bins=4, lseg=2, t=times)
+
+
+@pytest.mark.parametrize(
+    ("segments", "expected"),
+    [
+        (1, [3.75]),
+        (3, [0.0, 2.5, 10.0]),
+        (4, [0.0, 5 / 6, 5.0, 10.0]),
+    ],
+)
+def test_segment_times_match_mirt_percentiles(segments, expected):
+    zmap = torch.linspace(-20, 30, 6, dtype=torch.float64)
+    times = torch.tensor([10.0, 0.0, 4.0, 1.0], dtype=torch.float64)
+
+    _, _, segment_times = mri_exp_approx(
+        zmap,
+        bins=4,
+        lseg=segments,
+        t=times,
+    )
+
+    torch.testing.assert_close(
+        segment_times,
+        torch.tensor(expected, dtype=torch.float64) / 1000,
+        rtol=0,
+        atol=1e-15,
+    )
+
+
+def test_mirt_percentiles_support_one_sample_and_multiple_segments():
+    zmap = torch.linspace(-20, 30, 6, dtype=torch.float64)
+    times = torch.tensor([2.0], dtype=torch.float64)
+
+    _, _, segment_times = mri_exp_approx(
+        zmap,
+        bins=4,
+        lseg=6,
+        t=times,
+    )
+
+    torch.testing.assert_close(
+        segment_times,
+        torch.full((6,), 0.002, dtype=torch.float64),
+        rtol=0,
+        atol=1e-15,
+    )
+
+
+def test_mirt_percentile_segment_time_selection_is_not_differentiated():
+    zmap = torch.linspace(-20, 30, 6, dtype=torch.float64)
+    times = torch.tensor(
+        [0.0, 1.0, 4.0, 10.0],
+        dtype=torch.float64,
+        requires_grad=True,
+    )
+
+    _, _, segment_times = mri_exp_approx(
+        zmap,
+        bins=4,
+        lseg=3,
+        t=times,
+    )
+    assert not segment_times.requires_grad
+
+
 @pytest.mark.parametrize("autocorrelation", [False, True])
-def test_torch_time_segmentation_matches_legacy_numpy_for_explicit_times(
+def test_torch_time_segmentation_matches_mirt_weighted_numpy_reference(
     autocorrelation,
 ):
     zmap = torch.linspace(-200, 180, 63, dtype=torch.float64).reshape(7, 9)
@@ -99,6 +186,150 @@ def test_time_segmentation_retains_zmap_and_time_gradients():
     assert torch.isfinite(time_gradient).all()
     assert zmap_gradient.abs().sum() > 0
     assert time_gradient.abs().sum() > 0
+
+
+def _time_segmentation_gradients(dtype, device, *, autocorrelation=False):
+    zmap = (
+        torch.linspace(-57, 73, 20, dtype=torch.float64)
+        .reshape(4, 5)
+        .to(dtype=dtype, device=device)
+        .requires_grad_()
+    )
+    times = (
+        (
+            torch.arange(7, dtype=torch.float64) * 0.031
+            + torch.linspace(0, 0.003, 7, dtype=torch.float64)
+        )
+        .to(dtype=dtype, device=device)
+        .requires_grad_()
+    )
+    temporal, spatial, segment_times = mri_exp_approx(
+        zmap,
+        bins=9,
+        lseg=3,
+        t=times,
+        autocorrelation=autocorrelation,
+    )
+    temporal_weight = torch.linspace(
+        -0.7,
+        0.9,
+        temporal.numel(),
+        dtype=dtype,
+        device=device,
+    ).reshape(temporal.shape)
+    spatial_weight = torch.linspace(
+        0.8,
+        -0.6,
+        spatial.numel(),
+        dtype=dtype,
+        device=device,
+    ).reshape(spatial.shape)
+    temporal_objective = (temporal * temporal_weight).sum()
+    if temporal.is_complex():
+        temporal_objective = (
+            temporal_objective.real
+            + 0.31 * (temporal.imag * temporal_weight.flip(0)).sum()
+        )
+    objective = (
+        temporal_objective
+        + (spatial.real * spatial_weight).sum()
+        - 0.23 * (spatial.imag * spatial_weight.flip(0)).sum()
+        + segment_times.sum()
+    )
+    return tuple(
+        gradient.detach().cpu().to(torch.float64)
+        for gradient in torch.autograd.grad(objective, (zmap, times))
+    )
+
+
+@pytest.mark.parametrize("autocorrelation", [False, True])
+def test_float32_time_segmentation_gradients_match_float64(autocorrelation):
+    reference = _time_segmentation_gradients(
+        torch.float64,
+        "cpu",
+        autocorrelation=autocorrelation,
+    )
+    actual = _time_segmentation_gradients(
+        torch.float32,
+        "cpu",
+        autocorrelation=autocorrelation,
+    )
+
+    for actual_gradient, reference_gradient in zip(actual, reference, strict=True):
+        torch.testing.assert_close(
+            actual_gradient,
+            reference_gradient,
+            rtol=2e-5,
+            atol=2e-7,
+        )
+
+
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(),
+    reason="Apple Metal is unavailable",
+)
+def test_float32_time_segmentation_gradients_match_between_cpu_and_mps():
+    reference = _time_segmentation_gradients(torch.float32, "cpu")
+    actual = _time_segmentation_gradients(torch.float32, "mps")
+
+    for actual_gradient, reference_gradient in zip(actual, reference, strict=True):
+        torch.testing.assert_close(
+            actual_gradient,
+            reference_gradient,
+            rtol=2e-5,
+            atol=2e-7,
+        )
+
+
+@pytest.mark.parametrize(
+    ("point_count", "gradient_tolerance"),
+    [(7, 5e-4), (512, 1e-4)],
+)
+def test_time_segmentation_gradients_match_exact_exponential(
+    point_count,
+    gradient_tolerance,
+):
+    zmap = torch.linspace(-100, 100, 20, dtype=torch.float64).requires_grad_()
+    times = (torch.arange(point_count, dtype=torch.float64) * 0.004).requires_grad_()
+    temporal, spatial, _ = mri_exp_approx(
+        zmap,
+        bins=20,
+        lseg=6,
+        t=times,
+    )
+    actual = spatial @ temporal.transpose(0, 1)
+
+    reference_zmap = zmap.detach().clone().requires_grad_()
+    reference_times = times.detach().clone().requires_grad_()
+    expected = torch.exp(
+        -2j * np.pi * reference_zmap[:, None] * reference_times[None, :] / 1000
+    )
+    probe = torch.complex(
+        torch.linspace(-0.7, 0.9, actual.numel(), dtype=torch.float64),
+        torch.linspace(0.6, -0.4, actual.numel(), dtype=torch.float64),
+    ).reshape(actual.shape)
+    actual_gradients = torch.autograd.grad(
+        (actual * probe.conj()).sum().real,
+        (zmap, times),
+    )
+    expected_gradients = torch.autograd.grad(
+        (expected * probe.conj()).sum().real,
+        (reference_zmap, reference_times),
+    )
+
+    relative_output_error = torch.linalg.vector_norm(
+        actual - expected
+    ) / torch.linalg.vector_norm(expected)
+    assert relative_output_error < 1e-6
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients,
+        expected_gradients,
+        strict=True,
+    ):
+        relative_gradient_error = torch.linalg.vector_norm(
+            actual_gradient - expected_gradient
+        ) / torch.linalg.vector_norm(expected_gradient)
+        assert relative_gradient_error < gradient_tolerance
 
 
 @pytest.mark.parametrize("segments", [1, 2, 3])

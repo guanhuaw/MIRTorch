@@ -304,14 +304,24 @@ def test_finufft_toeplitz_embedding_matches_exact_normal(
     assert _relative_error(gram.H(image), expected) < 2e-14
 
 
-def test_finufft_toeplitz_rejects_trainable_or_changed_trajectory(monkeypatch):
+def test_finufft_toeplitz_uses_direct_for_trainable_trajectory(monkeypatch):
     monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
-    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
-    trainable_traj = torch.zeros(1, 2, 7, requires_grad=True)
+    monkeypatch.setattr(FinufftSenseBackend, "type2", _exact_type2)
+    torch.manual_seed(20260731)
+    smaps = torch.randn(1, 2, 4, 4, dtype=torch.complex128)
+    trainable_traj = (torch.rand(1, 2, 7, dtype=torch.float64) - 0.5).requires_grad_()
+    image = torch.randn(1, 1, 4, 4, dtype=torch.complex128)
 
-    with pytest.raises(ValueError, match="fixed trajectories"):
-        NuSenseGram(smaps, trainable_traj, backend="finufft")
+    trainable_gram = NuSenseGram(smaps, trainable_traj, backend="finufft")
+    assert trainable_gram._uses_direct_gram
+    (gradient,) = torch.autograd.grad(
+        trainable_gram(image).abs().square().sum(),
+        trainable_traj,
+    )
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) > 0
 
+    smaps = smaps.to(torch.complex64)
     traj = torch.zeros(1, 2, 7)
     gram = NuSenseGram(smaps, traj, backend="finufft")
     traj.add_(0.1)

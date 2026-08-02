@@ -15,6 +15,8 @@ import torch
 from torch import Tensor
 from torch.autograd.function import once_differentiable
 
+from .util import nufft_trajectory_vjp, reduce_broadcast_batch_gradient
+
 
 def _as_batched_image(image: Tensor, batchmode: bool) -> Tensor:
     return image if batchmode else image.unsqueeze(0).unsqueeze(0)
@@ -48,12 +50,6 @@ def _expand_batch(tensor: Tensor, batch: int) -> Tensor:
     raise ValueError(
         f"Cannot broadcast a tensor with batch size {tensor.shape[0]} to {batch}"
     )
-
-
-def _reduce_broadcast_gradient(gradient: Tensor, original_batch: int) -> Tensor:
-    if original_batch == 1 and gradient.shape[0] != 1:
-        return gradient.sum(dim=0, keepdim=True)
-    return gradient
 
 
 def _complex_dtype_name(dtype: torch.dtype) -> str:
@@ -526,41 +522,6 @@ class FinufftSenseBackend:
             outputs.append(filtered[crop])
         return torch.cat(outputs, dim=1)
 
-    def trajectory_vjp(
-        self,
-        coil_images: Tensor,
-        traj: Tensor,
-        grad_samples: Tensor,
-    ) -> Tensor:
-        real_dtype = _real_dtype(coil_images.dtype)
-        weighted_images = []
-        for dimension, size in enumerate(self.im_size):
-            modes = torch.arange(
-                -(size // 2),
-                (size - 1) // 2 + 1,
-                dtype=real_dtype,
-                device=coil_images.device,
-            )
-            shape = [1] * len(self.im_size)
-            shape[dimension] = size
-            weighted_images.append(coil_images * modes.reshape(shape))
-
-        batch, coils = coil_images.shape[:2]
-        weighted = torch.stack(weighted_images, dim=1)
-        weighted = weighted.reshape(
-            batch,
-            len(self.im_size) * coils,
-            *self.im_size,
-        )
-        derivatives = -1j * self.type2(weighted, traj)
-        derivatives = derivatives.reshape(
-            batch,
-            len(self.im_size),
-            coils,
-            grad_samples.shape[-1],
-        )
-        return (grad_samples.conj().unsqueeze(1) * derivatives).real.sum(dim=2)
-
 
 class _FinufftType2(torch.autograd.Function):
     @staticmethod
@@ -592,9 +553,15 @@ class _FinufftType2(torch.autograd.Function):
         grad_traj = None
         if need_traj:
             grad_traj = (
-                backend.trajectory_vjp(modes, traj, grad_samples) * backend.scale
+                nufft_trajectory_vjp(
+                    modes,
+                    traj,
+                    grad_samples,
+                    backend.type2,
+                )
+                * backend.scale
             )
-            grad_traj = _reduce_broadcast_gradient(grad_traj, traj.shape[0])
+            grad_traj = reduce_broadcast_batch_gradient(grad_traj, traj.shape[0])
         return grad_modes, grad_traj, None
 
 
@@ -628,9 +595,15 @@ class _FinufftType1(torch.autograd.Function):
         grad_traj = None
         if need_traj:
             grad_traj = (
-                backend.trajectory_vjp(grad_modes, traj, samples) * backend.scale
+                nufft_trajectory_vjp(
+                    grad_modes,
+                    traj,
+                    samples,
+                    backend.type2,
+                )
+                * backend.scale
             )
-            grad_traj = _reduce_broadcast_gradient(grad_traj, traj.shape[0])
+            grad_traj = reduce_broadcast_batch_gradient(grad_traj, traj.shape[0])
         return grad_samples, grad_traj, None
 
 

@@ -5,16 +5,23 @@ import math
 import pytest
 import torch
 
-from mirtorch.alg import CG, FISTA, POGM
+from mirtorch.alg import CG, FBPD, FISTA, POGM
 from mirtorch.linear import (
     Convolve2d,
     Diag,
     Diff1d,
+    Diffnd,
     FFTCn,
     Identity,
     LinearMap,
 )
-from mirtorch.prox import BoxConstraint, L2Regularizer, SquaredL2Regularizer
+from mirtorch.prox import (
+    BoxConstraint,
+    Const,
+    L1Regularizer,
+    L2Regularizer,
+    SquaredL2Regularizer,
+)
 
 
 def _real_inner(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
@@ -365,3 +372,46 @@ def test_proximal_solver_produces_plausible_blur_reconstruction(solver):
     relative_reference_error = _l2_norm(result - reference) / _l2_norm(reference)
     assert relative_reference_error < 0.005
     assert psnr(result) > psnr(data) + 3
+
+
+def test_fbpd_produces_plausible_tv_reconstruction():
+    torch.manual_seed(303)
+    size = 16
+    row, column = torch.meshgrid(
+        torch.arange(size),
+        torch.arange(size),
+        indexing="ij",
+    )
+    truth = (
+        0.8 * (((column - 5).square() + (row - 6).square()) < 12)
+        + ((column >= 10) & (column < 14) & (row >= 10) & (row < 14))
+    ).clamp_max(1)
+    truth = truth.to(torch.float64)[None, None]
+    kernel_1d = torch.tensor([1.0, 2.0, 1.0], dtype=torch.float64)
+    kernel = kernel_1d[:, None] * kernel_1d[None, :]
+    kernel = kernel / kernel.sum()
+    forward = Convolve2d(truth.shape, kernel[None, None], padding=1)
+    data = forward(truth) + 0.008 * torch.randn_like(truth)
+    gradient = Diffnd(truth.shape, [2, 3])
+    regularization = 0.006
+
+    initial = torch.zeros_like(truth)
+    result = FBPD(
+        g_grad=lambda value: forward.H(forward(value) - data),
+        f_prox=Const(),
+        h_prox=L1Regularizer(regularization),
+        g_L=1.0,
+        G=gradient,
+        G_norm_squared=8.0,
+        max_iter=100,
+    ).run(initial)
+
+    def objective(value):
+        fidelity = 0.5 * (forward(value) - data).square().sum()
+        return fidelity + regularization * gradient(value).abs().sum()
+
+    def psnr(value):
+        return 10 * torch.log10(1 / (value - truth).square().mean())
+
+    assert objective(result) < 0.05 * objective(initial)
+    assert psnr(result) > psnr(data) + 15
