@@ -3,7 +3,7 @@
 ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/guanhuaw/mirtorch?include_prereleases)
 ![Read the Docs](https://img.shields.io/readthedocs/mirtorch)
 
-A differentiable PyTorch toolbox for medical-image reconstruction, developed
+A differentiable PyTorch toolbox for medical imaging reconstruction, developed
 at the University of Michigan. MIRTorch provides composable linear maps,
 proximal operators, iterative solvers, and MRI and SPECT system models.
 
