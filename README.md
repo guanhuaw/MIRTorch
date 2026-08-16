@@ -56,6 +56,8 @@ automatically when PyTorch provides it. Other inputs stay eager; pass
 
 The notebooks choose CUDA, Apple Metal, or CPU at runtime:
 
+- [`demo_mr_physics.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mr_physics.ipynb):
+  MR contrast, encoding, inverse problems, and optimization
 - [`demo_mri.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mri.ipynb):
   CG-SENSE and B0-informed PWLS
 - [`demo_3d.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_3d.ipynb):

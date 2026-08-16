@@ -48,8 +48,8 @@ MRI system models
    :nosignatures:
 
    mirtorch.linear.mri.FFTCn
-   mirtorch.linear.mri.NuSense
    mirtorch.linear.mri.Sense
+   mirtorch.linear.mri.NuSense
    mirtorch.linear.mri.NuSenseGram
    mirtorch.linear.mri.Gmri
    mirtorch.linear.mri.GmriGram

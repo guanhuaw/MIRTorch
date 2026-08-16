@@ -4,6 +4,9 @@ MIRTorch is a differentiable PyTorch toolbox for medical-image reconstruction,
 developed at the University of Michigan. It provides composable linear maps,
 proximal operators, iterative solvers, and MRI and SPECT system models.
 
+New to reconstruction? Start with the self-contained
+[`demo_mr_physics.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mr_physics.ipynb).
+
 The project is inspired by
 [MIRT](https://github.com/JeffFessler/mirt) and is intended for rapid
 prototyping of model-based, learning-based, and acquisition-optimization
@@ -82,6 +85,7 @@ input and output shapes.
 
 The notebooks choose CUDA, Apple Metal, or CPU at runtime:
 
+- [MR physics to inverse problems](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mr_physics.ipynb)
 - [MRI and B0-informed PWLS](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mri.ipynb)
 - [3D non-Cartesian MRI](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_3d.ipynb)
 - [SNOPY-style trajectory optimization](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_trajectory_optimization.ipynb)
