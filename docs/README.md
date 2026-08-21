@@ -83,7 +83,10 @@ input and output shapes.
 
 ## Examples
 
-The notebooks choose CUDA, Apple Metal, or CPU at runtime:
+Each notebook has an **Open in Colab** badge and a Colab-only setup cell; local
+runs continue to use the current checkout. Most examples choose CUDA, Apple
+Metal, or CPU at runtime. The dictionary-learning example deliberately stays
+on CPU because it exchanges sparse arrays with SciPy:
 
 - [MR physics to inverse problems](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mr_physics.ipynb)
 - [MRI and B0-informed PWLS](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mri.ipynb)

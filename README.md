@@ -54,7 +54,10 @@ automatically when PyTorch provides it. Other inputs stay eager; pass
 
 ## Examples
 
-The notebooks choose CUDA, Apple Metal, or CPU at runtime:
+Each notebook has an **Open in Colab** badge and a Colab-only setup cell; local
+runs continue to use the current checkout. Most examples choose CUDA, Apple
+Metal, or CPU at runtime. The dictionary-learning example deliberately stays
+on CPU because it exchanges sparse arrays with SciPy:
 
 - [`demo_mr_physics.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mr_physics.ipynb):
   MR contrast, encoding, inverse problems, and optimization
