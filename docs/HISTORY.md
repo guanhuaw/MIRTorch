@@ -1,5 +1,13 @@
 # History
 
+0.3.1 (2026-08-20)
+------------------
+
+- Add a self-contained tutorial connecting MR physics, signal encoding,
+  inverse problems, and optimization.
+- Make every example notebook runnable from Colab with reproducible setup,
+  complete dependencies, portable links, and safe opt-in large-data sections.
+
 0.3.0 (2026-08-02)
 ------------------
 
