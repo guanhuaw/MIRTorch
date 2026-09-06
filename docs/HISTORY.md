@@ -1,5 +1,38 @@
 # History
 
+Unreleased
+----------
+
+- Add portable 2D parallel-/fan-beam CT with physical ray lengths, matched
+  adjoints, differentiable Beer–Lambert counts, and a reconstruction notebook.
+- Add full-field, anisotropic SPECT rotation grids, correctly oriented PSFs,
+  calibrated Gaussian parallel-hole responses, and optional voxel-integrated
+  self-attenuation. Update the SPECT tutorial with explicit physical units.
+- Preserve small implicit CG gradients using a normalized relative backward
+  solve; document its first-order contract and reject unsupported double backward.
+- Reject ambiguous unrolled CG gradients through zero-residual recurrences
+  without changing forward results or normal inference.
+- Preserve complex proximal derivatives at zero and complex output dtypes in
+  block-diagonal and Kronecker operators.
+- Correct second derivatives of squared norms and L2 proximal operators,
+  including weighted updates and zero step sizes at smooth points.
+- Support complex patch adjoints and backpropagation on Metal; correct the
+  legacy FFT convolution adjoint for asymmetric and complex kernels.
+- Use an explicit wavelet adjoint, supporting inference mode and accurate
+  double-precision filters while reducing repeated reconstruction overhead.
+- Make B0 Toeplitz operators match the same time-segmented forward model,
+  including cross terms; bound their increased kernel memory with a direct fallback.
+- Prevent stale NUFFT plans and B0 coefficients after trajectory storage reuse,
+  inference-mode updates, logical-view changes, and device moves; fix
+  shared-trajectory B0 batching and native NUFFT conjugate/negative inputs.
+- Reuse native plans across trajectory updates and reduce saved NUFFT activations,
+  trajectory-gradient workspace, and B0 FFT temporaries. Avoid redundant CG
+  reductions and full-size identity weights in unweighted proximal updates.
+- Move torchvision to optional example dependencies and import it only when
+  the legacy image-rotation helper is used. Remove the unused einops dependency.
+- Execute self-contained physics and trajectory tutorials against an installed
+  wheel in CI; add opt-in CUDA/Metal release acceptance on self-hosted runners.
+
 0.3.1 (2026-08-20)
 ------------------
 

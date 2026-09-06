@@ -308,18 +308,14 @@ class BlockDiagonal(LinearMap):
         super().__init__(tuple(size_in), tuple(size_out))
 
     def _apply(self, x: Tensor) -> Tensor:
-        out = torch.empty(
-            self.size_out, dtype=x.dtype, device=x.device, layout=x.layout
+        return torch.stack(
+            [operator.apply(x[..., k]) for k, operator in enumerate(self.A)], dim=-1
         )
-        for k, operator in enumerate(self.A):
-            out[..., k] = operator.apply(x[..., k])
-        return out
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
-        out = torch.empty(self.size_in, dtype=x.dtype, device=x.device, layout=x.layout)
-        for k, operator in enumerate(self.A):
-            out[..., k] = operator.adjoint(x[..., k])
-        return out
+        return torch.stack(
+            [operator.adjoint(x[..., k]) for k, operator in enumerate(self.A)], dim=-1
+        )
 
 
 class Kron(LinearMap):
@@ -345,18 +341,10 @@ class Kron(LinearMap):
         super().__init__(tuple(size_in), tuple(size_out))
 
     def _apply(self, x: Tensor) -> Tensor:
-        out = torch.empty(
-            self.size_out, dtype=x.dtype, device=x.device, layout=x.layout
-        )
-        for k in range(self.n):
-            out[..., k] = self.A.apply(x[..., k])
-        return out
+        return torch.stack([self.A.apply(x[..., k]) for k in range(self.n)], dim=-1)
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
-        out = torch.empty(self.size_in, dtype=x.dtype, device=x.device, layout=x.layout)
-        for k in range(self.n):
-            out[..., k] = self.A.adjoint(x[..., k])
-        return out
+        return torch.stack([self.A.adjoint(x[..., k]) for k in range(self.n)], dim=-1)
 
 
 class Vstack(LinearMap):

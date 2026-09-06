@@ -89,8 +89,8 @@ class FinufftSenseBackend:
     _plan_point_signatures: dict[tuple[Any, ...], tuple[Any, ...]] = field(
         default_factory=dict
     )
-    _coordinate_cache: OrderedDict[tuple[Any, ...], Tensor] = field(
-        default_factory=OrderedDict
+    _coordinate_cache: OrderedDict[tuple[Any, ...], tuple[Tensor, Tensor, object]] = (
+        field(default_factory=OrderedDict)
     )
 
     def __post_init__(self) -> None:
@@ -163,8 +163,10 @@ class FinufftSenseBackend:
         dtype: torch.dtype,
         device: torch.device,
         mode_size: tuple[int, ...] | None = None,
-        coordinate_slot: tuple[Any, ...] | None = None,
+        coordinate_slot: int = 0,
     ):
+        # A batch slot reuses its plan across newly computed trajectories;
+        # the coordinate token separately determines when setpts is needed.
         mode_size = self.im_size if mode_size is None else mode_size
         dtype_name = _complex_dtype_name(dtype)
         device_index = device.index
@@ -224,6 +226,8 @@ class FinufftSenseBackend:
             *cls._coordinate_identity(coordinates),
             coordinates._version,
             coordinates.dtype,
+            coordinates.is_conj(),
+            coordinates.is_neg(),
         )
 
     def _converted_coordinates(
@@ -231,16 +235,26 @@ class FinufftSenseBackend:
         coordinates: Tensor,
         dtype: torch.dtype,
     ) -> tuple[Tensor, tuple[Any, ...]]:
+        # Inference tensors have no mutation counter. Re-convert and reset the
+        # native points each time rather than reusing possibly stale coordinates.
+        if torch.is_inference(coordinates):
+            return coordinates.to(dtype=dtype).contiguous(), (object(),)
+
         signature = (*self._coordinate_signature(coordinates), dtype)
-        cached = self._coordinate_cache.get(signature)
-        if cached is None:
-            cached = coordinates.to(dtype=dtype).contiguous()
-            self._coordinate_cache[signature] = cached
+        entry = self._coordinate_cache.get(signature)
+        if entry is None:
+            source = coordinates.detach()
+            cached = source.to(dtype=dtype).contiguous()
+            # Retain the source storage: its address cannot be recycled while
+            # this conversion is cached. A unique token also invalidates a
+            # surviving native plan after this cache entry has been evicted.
+            entry = (source, cached, object())
+            self._coordinate_cache[signature] = entry
             while len(self._coordinate_cache) > self.max_plans:
                 self._coordinate_cache.popitem(last=False)
         else:
             self._coordinate_cache.move_to_end(signature)
-        return cached, signature
+        return entry[1], (entry[2],)
 
     def clear_plans(self) -> None:
         """Release cached native plans and converted trajectory coordinates."""
@@ -250,7 +264,7 @@ class FinufftSenseBackend:
 
     @staticmethod
     def _backend_array(tensor: Tensor):
-        tensor = tensor.detach().contiguous()
+        tensor = tensor.detach().resolve_conj().resolve_neg().contiguous()
         if tensor.device.type == "cpu":
             return tensor.numpy()
         return tensor
@@ -267,9 +281,9 @@ class FinufftSenseBackend:
         data: Tensor,
         coordinates: Tensor,
         mode_size: tuple[int, ...] | None = None,
+        coordinate_slot: int = 0,
     ) -> Tensor:
         n_trans = data.shape[0]
-        coordinate_slot = self._coordinate_identity(coordinates)
         plan_key, plan = self._plan(
             nufft_type,
             n_trans,
@@ -337,6 +351,7 @@ class FinufftSenseBackend:
                         item.unsqueeze(0),
                         traj[batch_index],
                         mode_size=mode_size,
+                        coordinate_slot=batch_index,
                     )
                     for item in batch_data
                 ]
@@ -347,6 +362,7 @@ class FinufftSenseBackend:
                     batch_data,
                     traj[batch_index],
                     mode_size=mode_size,
+                    coordinate_slot=batch_index,
                 )
             output_batches.append(batch_output)
         return torch.stack(output_batches)
@@ -367,8 +383,13 @@ class FinufftSenseBackend:
         traj: Tensor,
         dtype: torch.dtype,
         weights: Tensor | None = None,
+        *,
+        hermitian: bool = True,
     ) -> Tensor:
-        """Build the FFT response for a fixed-trajectory weighted normal operator."""
+        """Build the FFT response for a fixed-trajectory weighted normal operator.
+
+        Use ``hermitian=False`` for complex off-diagonal segment weights.
+        """
         _complex_dtype_name(dtype)
         if traj.requires_grad:
             raise ValueError(
@@ -419,8 +440,9 @@ class FinufftSenseBackend:
         )
 
         spatial_dims = tuple(range(2, kernel.ndim))
-        reflected = kernel.conj().flip(spatial_dims)
-        kernel = (kernel + reflected) / 2
+        if hermitian:
+            reflected = kernel.conj().flip(spatial_dims)
+            kernel = (kernel + reflected) / 2
         kernel = kernel * self.scale**2
 
         embedding_size = tuple(2 * size for size in self.im_size)
@@ -434,6 +456,13 @@ class FinufftSenseBackend:
             slice(0, size) for size in difference_size
         )
         embedded[difference_slices] = kernel
+        # Put zero lag at the FFT origin, so adjoint filters are obtained by
+        # conjugating the frequency response (also for complex cross weights).
+        embedded = torch.roll(
+            embedded,
+            shifts=tuple(1 - size for size in self.im_size),
+            dims=spatial_dims,
+        )
         return torch.fft.fftn(embedded, dim=spatial_dims)
 
     def sense_gram(
@@ -497,9 +526,6 @@ class FinufftSenseBackend:
         image_slices = (slice(None), slice(None)) + tuple(
             slice(0, size) for size in self.im_size
         )
-        crop = (slice(None), slice(None)) + tuple(
-            slice(size - 1, 2 * size - 1) for size in self.im_size
-        )
         outputs = []
         for start in range(0, transforms, transform_chunk_size):
             stop = min(start + transform_chunk_size, transforms)
@@ -519,7 +545,7 @@ class FinufftSenseBackend:
                 torch.fft.fftn(padded, dim=spatial_dims) * kernel_chunk,
                 dim=spatial_dims,
             )
-            outputs.append(filtered[crop])
+            outputs.append(filtered[image_slices])
         return torch.cat(outputs, dim=1)
 
 
@@ -533,7 +559,8 @@ class _FinufftType2(torch.autograd.Function):
     ) -> Tensor:
         output = backend.type2(modes, traj) * backend.scale
         ctx.backend = backend
-        ctx.save_for_backward(modes, traj)
+        # The adjoint needs only the trajectory unless its gradient is requested.
+        ctx.save_for_backward(modes if ctx.needs_input_grad[1] else None, traj)
         return output
 
     @staticmethod
@@ -575,7 +602,7 @@ class _FinufftType1(torch.autograd.Function):
     ) -> Tensor:
         output = backend.type1(samples, traj) * backend.scale
         ctx.backend = backend
-        ctx.save_for_backward(samples, traj)
+        ctx.save_for_backward(samples if ctx.needs_input_grad[1] else None, traj)
         return output
 
     @staticmethod

@@ -5,7 +5,7 @@
 
 A differentiable PyTorch toolbox for medical imaging reconstruction, developed
 at the University of Michigan. MIRTorch provides composable linear maps,
-proximal operators, iterative solvers, and MRI and SPECT system models.
+proximal operators, iterative solvers, and MRI, CT, and SPECT system models.
 
 [Documentation](https://mirtorch.readthedocs.io/en/latest/) ·
 [Examples](https://github.com/guanhuaw/MIRTorch/tree/master/examples) ·
@@ -70,7 +70,9 @@ on CPU because it exchanges sparse arrays with SciPy:
 - [`demo_cs.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_cs.ipynb):
   compressed-sensing MRI
 - [`demo_mlem.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mlem.ipynb):
-  SPECT reconstruction
+  full-field SPECT, attenuation, and depth-dependent collimator response
+- [`demo_ct.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_ct.ipynb):
+  2D parallel-/fan-beam CT, photon counts, and nonnegative reconstruction
 - [`demo_mnist.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_mnist.ipynb):
   CG, FISTA, and POGM
 - [`demo_dl.ipynb`](https://github.com/guanhuaw/MIRTorch/blob/master/examples/demo_dl.ipynb):

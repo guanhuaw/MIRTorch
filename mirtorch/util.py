@@ -19,13 +19,21 @@ R = TypeVar("R")
 
 
 def squared_l2_norm(value: Tensor) -> Tensor:
-    """Return the squared Euclidean norm without a complex norm kernel."""
-    return torch.sum(value.abs().square())
+    """Return the smooth squared Euclidean norm without a complex norm kernel."""
+    result = value.real.square().sum()
+    return result + value.imag.square().sum() if value.is_complex() else result
 
 
 def l2_norm(value: Tensor) -> Tensor:
-    """Return the Euclidean norm without a complex norm kernel."""
-    return squared_l2_norm(value).sqrt()
+    """Return the Euclidean norm, choosing the zero subgradient at the origin.
+
+    The norm itself is not differentiable at zero. Masking before the square
+    root keeps that convention finite in inactive proximal-operator branches.
+    """
+    squared = squared_l2_norm(value)
+    positive = squared > 0
+    safe_squared = torch.where(positive, squared, torch.ones_like(squared))
+    return torch.where(positive, safe_squared.sqrt(), torch.zeros_like(squared))
 
 
 def is_compiling() -> bool:

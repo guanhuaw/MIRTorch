@@ -224,3 +224,50 @@ def test_patch3d_adjoint(device):
     out = P.H * x
     # CUDA may accumulate overlapping patches in a different order.
     assert torch.allclose(out, exp, rtol=1e-3, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("operator", "shape"),
+    [(basics.Patch2D, (1, 2, 6, 7)), (basics.Patch3D, (1, 2, 6, 7, 8))],
+)
+@pytest.mark.parametrize("padded", [False, True])
+@pytest.mark.parametrize("stride", [1, 2])
+def test_complex_patches_adjoint_and_gradients(operator, shape, padded, stride, device):
+    torch.manual_seed(71)
+    patch = operator(shape, 3, stride=stride, padded=padded)
+    reference_x = torch.randn(shape, dtype=torch.complex64)
+    reference_y = torch.randn(patch.size_out, dtype=torch.complex64)
+    x = reference_x.to(device).requires_grad_()
+    y = reference_y.to(device).requires_grad_()
+
+    forward = patch(x)
+    adjoint = patch.H(y)
+    torch.testing.assert_close(forward.cpu(), patch(reference_x), rtol=2e-5, atol=2e-5)
+    torch.testing.assert_close(
+        adjoint.cpu(), patch.H(reference_y), rtol=2e-5, atol=2e-5
+    )
+    torch.testing.assert_close(
+        (forward.conj() * y).sum(),
+        (x.conj() * adjoint).sum(),
+        rtol=3e-5,
+        atol=3e-5,
+    )
+    vjp = torch.autograd.grad(forward, x, y, create_graph=True)[0]
+    torch.testing.assert_close(vjp, adjoint, rtol=2e-5, atol=2e-5)
+    adjoint_vjp = torch.autograd.grad(adjoint, y, x, create_graph=True)[0]
+    torch.testing.assert_close(adjoint_vjp, forward, rtol=2e-5, atol=2e-5)
+    mixed_derivative = torch.autograd.grad(vjp.real.sum(), y)[0]
+    torch.testing.assert_close(mixed_derivative, patch(torch.ones_like(x)))
+
+
+@pytest.mark.parametrize(
+    ("operator", "shape"),
+    [(basics.Patch2D, (1, 1, 3, 4)), (basics.Patch3D, (1, 1, 3, 3, 4))],
+)
+def test_complex_patches_gradcheck(operator, shape):
+    patch = operator(shape, 2, stride=2, padded=True)
+    x = torch.randn(shape, dtype=torch.complex128, requires_grad=True)
+    y = torch.randn(patch.size_out, dtype=torch.complex128, requires_grad=True)
+    for function, argument in [(patch, x), (patch.H, y)]:
+        assert torch.autograd.gradcheck(function, (argument,), fast_mode=True)
+        assert torch.autograd.gradgradcheck(function, (argument,), fast_mode=True)

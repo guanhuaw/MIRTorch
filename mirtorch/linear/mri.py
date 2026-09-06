@@ -452,12 +452,14 @@ def _complex_dtype_like(tensor: Tensor) -> torch.dtype:
 def _tensor_state_key(tensor: Tensor) -> tuple:
     """Identify a tensor and mutations that can invalidate cached MRI data."""
     return (
-        tensor.untyped_storage().data_ptr(),
+        tensor.untyped_storage(),
         tensor.storage_offset(),
-        tensor._version,
+        None if torch.is_inference(tensor) else tensor._version,
         tensor.device,
         tensor.dtype,
         tensor.requires_grad,
+        tensor.is_conj(),
+        tensor.is_neg(),
         tuple(tensor.shape),
         tuple(tensor.stride()),
     )
@@ -860,7 +862,9 @@ class NuSenseGram(LinearMap):
         else:
             size_in = spatial_shape
 
-        self._uses_direct_gram = traj.requires_grad
+        # Inference tensors have no mutation counter, so their coordinates
+        # cannot safely back a fixed, mutation-checked Toeplitz kernel.
+        self._uses_direct_gram = traj.requires_grad or torch.is_inference(traj)
         if self._uses_direct_gram:
             self._direct_operator = NuSense(
                 smaps=smaps,
@@ -936,7 +940,11 @@ class NuSenseGram(LinearMap):
         self._check_fixed_trajectory()
         if self.backend == "finufft":
             self._finufft_backend.clear_plans()
-        result = super().to(device)
+        # Device copies must retain version counters even when the caller is
+        # in inference mode; fixed kernels still need mutation detection.
+        grad_enabled = torch.is_grad_enabled()
+        with torch.inference_mode(False), torch.set_grad_enabled(grad_enabled):
+            result = super().to(device)
         self._trajectory_state = _tensor_state_key(self.traj)
         return result
 
@@ -1104,7 +1112,15 @@ class Gmri(LinearMap):
         trainable = self.zmap.requires_grad or (
             self.T is not None and self.T.requires_grad
         )
-        if not force and not trainable and state == self._coefficient_state:
+        unversioned = torch.is_inference(self.zmap) or (
+            self.T is not None and torch.is_inference(self.T)
+        )
+        if (
+            not force
+            and not trainable
+            and not unversioned
+            and state == self._coefficient_state
+        ):
             return self.B, self.C
 
         times = readout_times(
@@ -1229,14 +1245,19 @@ class GmriGram(LinearMap):
     r"""
     Toeplitz approximation to the B0-informed MRI normal operator.
 
-    Autocorrelation time segmentation follows MIRT and Fessler et al.,
-    IEEE TSP 2005, producing a Hermitian O(L) approximation.
+    Uses the same time segmentation as :class:`Gmri`, retaining all segment
+    cross terms. This is the Gram of that approximation, up to NUFFT kernel
+    accuracy, rather than a separate signed autocorrelation approximation.
+    The upper-triangular kernels require ``L * (L + 1) / 2`` padded grids;
+    forward and inverse FFTs are shared across segment pairs.
 
     The automatic backend uses an installed FINUFFT or cuFINUFFT library on a
     supported device, and otherwise uses torchkbnufft. The input and output
     dimensions are both [nbatch, 1, nx, ny, (nz)]. Trainable ``zmap``, ``traj``,
     or ``T`` uses the exact composed ``Gmri.H * Gmri`` path so gradients are
-    preserved.
+    preserved. Inference tensors and large kernel/workspace estimates also
+    use direct composition. Its positive-semidefinite structure is preserved
+    to the numerical accuracy of the underlying NUFFT.
 
     Attributes:
         smaps: tensor with dimension [batch, ncoil, nx, ny, (nz)] (must have a batch dimension). Sensitivity maps.
@@ -1297,7 +1318,7 @@ class GmriGram(LinearMap):
 
         kernel_dtype = _complex_dtype_like(smaps)
         padded_elements = math.prod(2 * size for size in spatial_shape)
-        # Allow room for padded modes, kernels, FFTs, products, and scratch.
+        # Share the segment FFTs, chunking coils to bound temporary storage.
         bytes_per_mode = (
             8
             * self.nbatch
@@ -1305,30 +1326,37 @@ class GmriGram(LinearMap):
             * torch.empty((), dtype=kernel_dtype).element_size()
         )
         modes_per_chunk = max(1, _MAX_B0_WORKSPACE_BYTES // bytes_per_mode)
-        self._segment_chunk_size = min(self.L, modes_per_chunk)
         self._coil_chunk_size = min(
             self.nc,
-            max(1, modes_per_chunk // self._segment_chunk_size),
+            max(1, modes_per_chunk // self.L),
         )
         estimated_kernel_bytes = (
-            self.L
+            (self.L * (self.L + 1) // 2)
             * self.nbatch
             * padded_elements
             * torch.empty((), dtype=kernel_dtype).element_size()
         )
-        memory_fallback = estimated_kernel_bytes > _MAX_B0_KERNEL_BYTES
+        memory_fallback = (
+            estimated_kernel_bytes > _MAX_B0_KERNEL_BYTES or self.L > modes_per_chunk
+        )
         trainable_parameters = (
             zmap.requires_grad
             or traj.requires_grad
             or (T is not None and T.requires_grad)
         )
-        self._uses_direct_gram = memory_fallback or trainable_parameters
+        unversioned_parameters = any(
+            torch.is_inference(value) for value in (zmap, traj, T) if value is not None
+        )
+        self._uses_direct_gram = (
+            memory_fallback or trainable_parameters or unversioned_parameters
+        )
         if self._uses_direct_gram:
             if memory_fallback:
                 warnings.warn(
-                    "The estimated B0 Toeplitz kernels require "
+                    "The B0 Toeplitz kernel/workspace estimate exceeds the "
+                    "memory budget (kernels: "
                     f"{estimated_kernel_bytes / 1024**3:.2f} GiB; "
-                    "using direct Gmri.H*Gmri.",
+                    "using direct Gmri.H*Gmri).",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -1363,7 +1391,6 @@ class GmriGram(LinearMap):
             segments=self.L,
             times=times,
             complex_dtype=_complex_dtype_like(self.smaps),
-            autocorrelation=True,
         )
         self._coefficient_state = self._coefficient_state_key()
 
@@ -1380,37 +1407,50 @@ class GmriGram(LinearMap):
         spatial_shape: tuple[int, ...],
         numpoints: int | list[int],
     ) -> None:
-        if self.backend == "torchkbnufft":
-            self.toep_op = tkbn.ToepNufft()
-            self.kernel = [
-                tkbn.calc_toeplitz_kernel(
-                    self.traj,
-                    list(spatial_shape),
-                    grid_size=self.grid_size,
-                    numpoints=numpoints,
-                    norm=self.norm,
-                    weights=self._segment_weights(segment),
-                )
-                for segment in range(self.L)
-            ]
-            return
-
-        self._finufft_backend = FinufftSenseBackend(
-            im_size=spatial_shape,
-            grid_size=self.grid_size,
-            norm=self.norm,
-            batchmode=True,
-            sequential=False,
-            eps=self.eps,
-        )
-        self.kernel = [
-            self._finufft_backend.toeplitz_kernel(
-                self.traj,
-                _complex_dtype_like(self.smaps),
-                weights=self._segment_weights(segment),
+        if self.backend == "finufft":
+            self._finufft_backend = FinufftSenseBackend(
+                im_size=spatial_shape,
+                grid_size=self.grid_size,
+                norm=self.norm,
+                batchmode=True,
+                sequential=False,
+                eps=self.eps,
             )
-            for segment in range(self.L)
-        ]
+
+        self.kernel = []
+        for row in range(self.L):
+            for column in range(row, self.L):
+                weights = self.B[row].conj() * self.B[column]
+                weights = weights.expand(-1, -1, self.nshot, -1).reshape(
+                    self.nbatch, 1, self.nshot * self.npoints
+                )
+                if self.backend == "finufft":
+                    kernel = self._finufft_backend.toeplitz_kernel(
+                        self.traj,
+                        _complex_dtype_like(self.smaps),
+                        weights=weights,
+                        hermitian=row == column,
+                    )[:, 0]
+                else:
+                    # torchkbnufft assumes real weights and hermitizes its
+                    # kernel. Construct a complex cross term by linearity.
+                    def real_kernel(real_weights: Tensor) -> Tensor:
+                        return tkbn.calc_toeplitz_kernel(
+                            self.traj.expand(self.nbatch, -1, -1),
+                            list(spatial_shape),
+                            grid_size=self.grid_size,
+                            numpoints=numpoints,
+                            norm=self.norm,
+                            weights=real_weights,
+                        )
+
+                    kernel = real_kernel(weights.real)
+                    if row != column:
+                        kernel = kernel + 1j * real_kernel(weights.imag)
+                    # Use ordinary FFT/inverse-FFT normalization below.
+                    if self.norm is None:
+                        kernel = kernel * math.prod(2 * n for n in spatial_shape)
+                self.kernel.append(kernel)
 
     def _sync_direct_aliases(self) -> None:
         direct = self._direct_operator
@@ -1448,13 +1488,6 @@ class GmriGram(LinearMap):
                 "kernels were constructed; create a new GmriGram operator."
             )
 
-    def _segment_weights(self, segment: int) -> Tensor:
-        return (
-            self.B[segment]
-            .expand(-1, -1, self.nshot, -1)
-            .reshape(self.nbatch, 1, self.nshot * self.npoints)
-        )
-
     def _check_fixed_trajectory(self) -> None:
         if _tensor_state_key(self.traj) != self._trajectory_state:
             raise RuntimeError(
@@ -1473,45 +1506,12 @@ class GmriGram(LinearMap):
         self._check_fixed_trajectory()
         if self.backend == "finufft":
             self._finufft_backend.clear_plans()
-        result = super().to(device)
+        grad_enabled = torch.is_grad_enabled()
+        with torch.inference_mode(False), torch.set_grad_enabled(grad_enabled):
+            result = super().to(device)
         self._coefficient_state = self._coefficient_state_key()
         self._trajectory_state = _tensor_state_key(self.traj)
         return result
-
-    def _filter_toeplitz_modes(
-        self,
-        modes: Tensor,
-        kernel_stack: Tensor,
-    ) -> Tensor:
-        """Apply one stack of Toeplitz kernels to batched segment/coil modes."""
-        batch, segments, coils = modes.shape[:3]
-        spatial_shape = tuple(modes.shape[3:])
-
-        if self.backend == "finufft":
-            kernels = kernel_stack.transpose(0, 1)
-            kernels = kernels.expand(
-                batch,
-                segments,
-                coils,
-                *kernels.shape[3:],
-            ).reshape(batch, segments * coils, *kernels.shape[3:])
-            filtered = self._finufft_backend.toeplitz_filter(
-                modes.reshape(batch, segments * coils, *spatial_shape),
-                kernels,
-            )
-        else:
-            kernels = kernel_stack.transpose(0, 1).reshape(
-                batch * segments,
-                1,
-                *kernel_stack.shape[2:],
-            )
-            filtered = self.toep_op(
-                modes.reshape(batch * segments, coils, *spatial_shape),
-                kernels,
-                norm=self.norm,
-            )
-
-        return filtered.reshape(batch, segments, coils, *spatial_shape)
 
     def _apply(self, x: Tensor) -> Tensor:
         r"""
@@ -1531,39 +1531,39 @@ class GmriGram(LinearMap):
         self._check_fixed_trajectory()
 
         spatial_shape = _spatial_shape(self.smaps)
+        spatial_dims = tuple(range(-len(spatial_shape), 0))
+        embedding_shape = tuple(2 * size for size in spatial_shape)
+        crop = (slice(None),) * 2 + tuple(slice(0, n) for n in spatial_shape)
         output = torch.zeros_like(x)
-        for segment_start in range(0, self.L, self._segment_chunk_size):
-            segment_stop = min(
-                segment_start + self._segment_chunk_size,
-                self.L,
-            )
-            segment_count = segment_stop - segment_start
-            coefficients = self.C[segment_start:segment_stop]
-            segment_images = x.unsqueeze(0) * coefficients
-            accumulated = torch.zeros(
-                self.nbatch,
-                segment_count,
-                1,
-                *spatial_shape,
-                dtype=x.dtype,
-                device=x.device,
-            )
-
-            kernels = torch.stack(self.kernel[segment_start:segment_stop])
-            for coil_start in range(0, self.nc, self._coil_chunk_size):
-                coil_stop = min(coil_start + self._coil_chunk_size, self.nc)
-                smaps = self.smaps[:, coil_start:coil_stop]
-                modes = (segment_images * smaps.unsqueeze(0)).transpose(0, 1)
-                filtered = self._filter_toeplitz_modes(
-                    modes,
-                    kernels,
-                )
-                accumulated = accumulated + (smaps.unsqueeze(1).conj() * filtered).sum(
-                    dim=2, keepdim=True
-                )
-
-            coefficients = coefficients.transpose(0, 1)
-            output = output + (coefficients.conj() * accumulated).sum(dim=1)
+        for coil_start in range(0, self.nc, self._coil_chunk_size):
+            smaps = self.smaps[:, coil_start : coil_start + self._coil_chunk_size]
+            modes = self.C * (x * smaps).unsqueeze(0)
+            padded = modes.new_zeros(*modes.shape[:3], *embedding_shape)
+            padded[(slice(None),) + crop] = modes
+            spectra = fftn(padded, dim=spatial_dims)
+            del padded, modes
+            # One FFT per source segment, reused by every cross term. The
+            # lower triangle is the adjoint of the cached upper triangle.
+            filtered = [torch.zeros_like(spectra[0]) for _ in range(self.L)]
+            index = 0
+            for row in range(self.L):
+                for column in range(row, self.L):
+                    kernel = self.kernel[index].unsqueeze(1)
+                    filtered[row] = torch.addcmul(
+                        filtered[row], kernel, spectra[column]
+                    )
+                    if row != column:
+                        filtered[column] = torch.addcmul(
+                            filtered[column], kernel.conj(), spectra[row]
+                        )
+                    index += 1
+            images = ifftn(torch.stack(filtered), dim=spatial_dims)[
+                (slice(None),) + crop
+            ]
+            output = output + (self.C.conj() * smaps.unsqueeze(0).conj() * images).sum(
+                dim=(0, 2)
+            ).unsqueeze(1)
+            del spectra, filtered, images
         return output
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:

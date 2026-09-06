@@ -13,7 +13,6 @@ from mirtorch.linear import LinearMap
 from mirtorch.util import l2_norm
 
 FloatLike = float | torch.Tensor
-EPS = 1e-15
 
 
 def _validate_regularization_parameter(value) -> float:
@@ -26,42 +25,39 @@ def _validate_regularization_parameter(value) -> float:
     return parameter
 
 
-def _solve_weighted_l2_scale(
-    value: torch.Tensor,
+def _solve_weighted_l2_radius(
+    value_squared: torch.Tensor,
     weights_squared: torch.Tensor,
     strength: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Solve ``||w*v / (s + w**2)|| = strength`` for ``s``.
+    r"""Solve ``||w*v / (r + strength*w**2)|| = 1`` for ``r = ||w*x||``.
 
-    The proximal point is ``s*v / (s + w**2)``. Bisection uses the analytic
-    upper bound ``||w*v|| / strength``; an implicit Newton correction gives
-    the converged root its exact autograd derivative.
+    Bisection finds the positive root in ``[0, ||w*v||]``, including at zero
+    strength. Two differentiable Newton refinements recover first and second
+    derivatives of the implicit root without retaining the bisection graph.
     """
     weight2 = weights_squared.detach()
-    value2 = value.detach().abs().square()
+    value2 = value_squared.detach()
     target = strength.detach()
-
-    def weighted_norm(scale):
-        return torch.sqrt(torch.sum(weight2 * value2 / (scale + weight2).square()))
-
     low = torch.zeros_like(target)
-    high = torch.sqrt(torch.sum(weight2 * value2)) / target
-    for _ in range(torch.finfo(value.dtype).bits):
+    high = torch.sqrt(torch.sum(weight2 * value2))
+    for _ in range(torch.finfo(value2.dtype).bits):
         midpoint = (low + high) / 2
-        root_is_higher = weighted_norm(midpoint) > target
+        norm_squared = torch.sum(
+            weight2 * value2 / (midpoint + target * weight2).square()
+        )
+        root_is_higher = norm_squared > 1
         low = torch.where(root_is_higher, midpoint, low)
         high = torch.where(root_is_higher, high, midpoint)
 
-    scale = ((low + high) / 2).detach()
-    denominator = scale + weights_squared
-    norm = torch.sqrt(
-        torch.sum(weights_squared * value.abs().square() / denominator.square())
-    )
-    derivative = torch.sum(
-        weights_squared * value.abs().square() / denominator.pow(3)
-    ) / norm.clamp_min(torch.finfo(norm.dtype).tiny)
-    derivative = derivative.detach().clamp_min(torch.finfo(derivative.dtype).tiny)
-    return scale + (norm - strength) / derivative
+    radius = ((low + high) / 2).detach()
+    for _ in range(2):
+        denominator = radius + strength * weights_squared
+        numerator = weights_squared * value_squared
+        residual = torch.sum(numerator / denominator.square()) - 1
+        slope = 2 * torch.sum(numerator / denominator.pow(3))
+        radius = radius + residual / slope
+    return radius
 
 
 class Prox:
@@ -91,10 +87,7 @@ class Prox:
         if self.T is not None:
             v = self.T(v)
 
-        if v.is_complex():
-            out = self._complex(v) * self._apply(v.abs(), alpha)
-        else:
-            out = self._apply(v, alpha)
+        out = self._apply(v, alpha)
 
         if self.T is not None:
             out = self.T.H(out)
@@ -158,23 +151,12 @@ class Prox:
         if alpha_value < 0:
             raise ValueError(f"alpha should be non-negative, got {alpha}.")
 
-        strength = torch.as_tensor(alpha, dtype=v.dtype, device=v.device) * parameter
+        strength = (
+            torch.as_tensor(alpha, dtype=v.real.dtype, device=v.device) * parameter
+        )
         if strength.numel() != 1:
             raise ValueError("alpha must be a scalar")
         return strength
-
-    def _complex(self, v) -> torch.Tensor:
-        """
-        Args:
-            v: input tensor
-
-        Returns:
-            x: output proximal results
-        """
-        # To avoid the influence of noise
-        # Without thresholding, numerical issues may happen for some unitary transform (wavelets)
-        # TODO:"This is a temporary fix, we need to find a better solution."
-        return v / v.abs().clamp_min(EPS)
 
 
 class L1Regularizer(Prox):
@@ -203,8 +185,14 @@ class L1Regularizer(Prox):
 
     def _apply(self, v, alpha) -> torch.Tensor:
         strength = self._strength(v, self.Lambda, alpha)
-        threshold = strength * self._diagonal_weights(v)
-        return torch.sign(v) * torch.clamp(v.abs() - threshold, min=0)
+        threshold = strength if self.P is None else strength * self._diagonal_weights(v)
+        magnitude = v.abs()
+        active = magnitude > threshold
+        denominator = torch.where(active, magnitude, torch.ones_like(magnitude))
+        scale = torch.where(
+            active, 1 - threshold / denominator, (threshold == 0).to(magnitude.dtype)
+        )
+        return scale * v
 
 
 class L0Regularizer(Prox):
@@ -236,7 +224,9 @@ class L0Regularizer(Prox):
         threshold = torch.sqrt(2 * strength)
         if self.P is not None:
             threshold = threshold * (self._diagonal_weights(v) != 0)
-        return torch.where(v.abs() > threshold, v, torch.zeros_like(v))
+        return torch.where(
+            (v.abs() > threshold) | (threshold == 0), v, torch.zeros_like(v)
+        )
 
 
 class L2Regularizer(Prox):
@@ -251,6 +241,11 @@ class L2Regularizer(Prox):
         Lambda: float, regularization parameter.
         P: LinearMap, optional, diagonal LinearMap
         T: LinearMap, optional, unitary LinearMap
+
+    First and second derivatives are supported away from shrinkage boundaries.
+    At zero step size, step derivatives are right derivatives when the weighted
+    input norm is nonzero; no joint derivative exists at a zero-norm boundary.
+    Higher-order derivatives of the weighted root solve are not guaranteed.
     """
 
     def __init__(
@@ -271,13 +266,21 @@ class L2Regularizer(Prox):
         strength = self._strength(v, self.Lambda, alpha)
         if self.P is None:
             norm = l2_norm(v)
-            safe_norm = norm.clamp_min(torch.finfo(norm.dtype).tiny)
-            scale = (1.0 - strength / safe_norm).clamp_min(0)
+            active = norm > strength
+            denominator = torch.where(active, norm, torch.ones_like(norm))
+            scale = torch.where(
+                active, 1 - strength / denominator, (strength == 0).to(norm.dtype)
+            )
             return scale * v
 
-        weights = self._diagonal_weights(v)
-        weights_squared = weights.square()
-        positive = weights > 0
+        diagonal = self._diagonal_entries(v)
+        weights_squared = diagonal.real.square()
+        if diagonal.is_complex():
+            weights_squared = weights_squared + diagonal.imag.square()
+        value_squared = v.real.square()
+        if v.is_complex():
+            value_squared = value_squared + v.imag.square()
+        positive = weights_squared > 0
         safe_weights_squared = torch.where(
             positive, weights_squared, torch.ones_like(weights_squared)
         )
@@ -285,32 +288,36 @@ class L2Regularizer(Prox):
             torch.sum(
                 torch.where(
                     positive,
-                    v.abs().square() / safe_weights_squared,
-                    torch.zeros_like(v),
+                    value_squared / safe_weights_squared,
+                    torch.zeros_like(v.real),
                 )
             )
         )
         zero_solution = inverse_weighted_norm <= strength
-        has_root = (strength > 0) & ~zero_solution
+        has_root = ~zero_solution
 
-        # Keep the unselected solver branch finite at alpha=0 and in the
-        # zero-solution region. The synthetic values never affect the result.
-        solver_value = torch.where(has_root, v, torch.ones_like(v))
+        # Keep the unselected solver branch finite in the zero-solution
+        # region. The synthetic values never affect the result.
+        solver_value_squared = torch.where(
+            has_root, value_squared, torch.ones_like(value_squared)
+        )
         solver_weights_squared = torch.where(
             has_root, weights_squared, torch.ones_like(weights_squared)
         )
         solver_strength = torch.where(
             has_root, strength, torch.full_like(strength, 0.5)
         )
-        scale = _solve_weighted_l2_scale(
-            solver_value,
+        radius = _solve_weighted_l2_radius(
+            solver_value_squared,
             solver_weights_squared,
             solver_strength,
         )
-        result = v * scale / (scale + weights_squared)
+        result = v * (radius / (radius + strength * weights_squared))
         weighted_zero = torch.where(positive, torch.zeros_like(v), v)
         result = torch.where(zero_solution, weighted_zero, result)
-        return torch.where(strength == 0, v, result)
+        # At the joint zero-norm/zero-strength boundary, keep the identity
+        # derivative with respect to v for a fixed zero step.
+        return torch.where((strength == 0) & zero_solution, v, result)
 
 
 class SquaredL2Regularizer(Prox):
@@ -338,7 +345,12 @@ class SquaredL2Regularizer(Prox):
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
         strength = self._strength(v, self.Lambda, alpha)
-        weights_squared = self._diagonal_weights(v).square()
+        if self.P is None:
+            return torch.div(v, 1 + 2 * strength)
+        diagonal = self._diagonal_entries(v)
+        weights_squared = diagonal.real.square()
+        if diagonal.is_complex():
+            weights_squared = weights_squared + diagonal.imag.square()
         return torch.div(v, 1 + 2 * strength * weights_squared)
 
 
@@ -354,6 +366,10 @@ class BoxConstraint(Prox):
     Scaling an indicator function by a positive step size or regularization
     parameter does not change its feasible set. Therefore ``alpha`` and
     ``Lambda`` do not change this projection.
+
+    For complex inputs, the bounds apply to magnitudes and the input phase is
+    preserved. At zero, a nonzero projected magnitude uses the positive real
+    direction, where the phase is otherwise undefined.
 
     Attributes:
         Lambda: legacy regularization parameter retained for API compatibility
@@ -379,10 +395,11 @@ class BoxConstraint(Prox):
             raise ValueError("lower must not be greater than upper")
 
     def _apply(self, v: torch.Tensor, alpha: FloatLike) -> torch.Tensor:
-        if self.P is None:
-            x = torch.clamp(v, self.l, self.u)
-        else:
-            diagonal = self._diagonal_entries(v)
+        value = v.abs() if v.is_complex() else v
+        low = torch.as_tensor(self.l, dtype=value.dtype, device=value.device)
+        high = torch.as_tensor(self.u, dtype=value.dtype, device=value.device)
+        if self.P is not None:
+            diagonal = self._diagonal_entries(value)
             if diagonal.is_complex():
                 if bool((diagonal.imag != 0).any().item()):
                     raise TypeError(
@@ -390,10 +407,8 @@ class BoxConstraint(Prox):
                     )
                 diagonal = diagonal.real
 
-            lower = torch.as_tensor(self.l, dtype=v.dtype, device=v.device)
-            upper = torch.as_tensor(self.u, dtype=v.dtype, device=v.device)
             zero = diagonal == 0
-            zero_is_in_box = (lower <= 0) & (upper >= 0)
+            zero_is_in_box = (low <= 0) & (high >= 0)
             if bool((zero & ~zero_is_in_box).any().item()):
                 raise ValueError(
                     "BoxConstraint is infeasible where P has a zero diagonal "
@@ -401,13 +416,23 @@ class BoxConstraint(Prox):
                 )
 
             safe_diagonal = torch.where(zero, torch.ones_like(diagonal), diagonal)
-            first_bound = lower / safe_diagonal
-            second_bound = upper / safe_diagonal
+            first_bound = low / safe_diagonal
+            second_bound = high / safe_diagonal
             low = torch.minimum(first_bound, second_bound)
             high = torch.maximum(first_bound, second_bound)
-            projected = torch.maximum(low, torch.minimum(v, high))
-            x = torch.where(zero, v, projected)
-        return x
+            low = torch.where(zero, -torch.inf, low)
+            high = torch.where(zero, torch.inf, high)
+
+        projected = torch.clamp(value, min=low, max=high)
+        if not v.is_complex():
+            return projected
+
+        nonzero = value != 0
+        denominator = torch.where(nonzero, value, torch.ones_like(value))
+        # A disk projection is locally the identity at its origin. Restoring
+        # the phase as v / |v| would lose this derivative even with a safe divide.
+        at_origin = projected.to(v.dtype) + v * ((low <= 0) & (high > 0))
+        return torch.where(nonzero, v * (projected / denominator), at_origin)
 
 
 class Stack(Prox):

@@ -1,6 +1,7 @@
 import importlib.util
 import math
 import sys
+import weakref
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,11 @@ import torch
 
 from mirtorch.alg import CG
 from mirtorch.linear import Gmri, GmriGram, Identity, NuSense, NuSenseGram
-from mirtorch.linear._finufft import FinufftSenseBackend
+from mirtorch.linear._finufft import (
+    FinufftSenseBackend,
+    finufft_type1,
+    finufft_type2,
+)
 
 
 def _finufft_device() -> torch.device:
@@ -207,6 +212,233 @@ def test_finufft_plan_reuses_fixed_coordinates_and_invalidates_mutations(monkeyp
     backend.clear_plans()
     assert not backend._plans
     assert not backend._coordinate_cache
+
+
+@pytest.fixture
+def exact_native_plans(monkeypatch):
+    """Exercise native-plan caching using an exact DFT instead of OpenMP."""
+    plans = []
+
+    class ExactPlan:
+        def __init__(self, nufft_type, mode_size, **_kwargs):
+            self.nufft_type = nufft_type
+            self.im_size = mode_size
+            self.setpts_calls = 0
+            plans.append(self)
+
+        def setpts(self, *coordinates):
+            self.setpts_calls += 1
+            self.traj = torch.stack([torch.as_tensor(p).clone() for p in coordinates])[
+                None
+            ]
+
+        def execute(self, data):
+            data = torch.as_tensor(data)[None]
+            if self.nufft_type == 1:
+                result = _exact_type1(self, data, self.traj)
+            else:
+                result = _exact_type2(self, data, self.traj)
+            return result[0].numpy()
+
+    class ExactLibrary:
+        Plan = ExactPlan
+
+    monkeypatch.setattr(
+        FinufftSenseBackend, "_library", lambda _self, _device: ExactLibrary()
+    )
+    return plans
+
+
+@pytest.fixture(params=["exact", "native"])
+def finufft_execution(request):
+    if request.param == "exact":
+        request.getfixturevalue("exact_native_plans")
+        return torch.device("cpu")
+    return _finufft_device()
+
+
+@pytest.mark.parametrize("view", ["conjugate", "negative", "both"])
+def test_finufft_adjoint_and_backward_resolve_logical_views(finufft_execution, view):
+    device = finufft_execution
+    smaps = torch.randn(1, 2, 5, 6, dtype=torch.complex64, device=device)
+    trajectory = torch.randn(1, 2, 13, device=device)
+    operator = NuSense(smaps, trajectory, backend="finufft")
+    samples = torch.randn(operator.size_out, dtype=torch.complex64, device=device)
+    image = torch.randn(
+        operator.size_in, dtype=torch.complex64, device=device, requires_grad=True
+    )
+    probe = samples.conj() if view != "negative" else samples
+    if view != "conjugate":
+        probe = torch._neg_view(probe)
+    expected = operator.H(probe.clone())
+    torch.testing.assert_close(operator.H(probe), expected, rtol=3e-5, atol=3e-5)
+    gradient = torch.autograd.grad(operator(image), image, probe)[0]
+    torch.testing.assert_close(gradient, expected, rtol=3e-5, atol=3e-5)
+
+
+def test_finufft_cache_distinguishes_negative_coordinate_views(finufft_execution):
+    device = finufft_execution
+    smaps = torch.randn(1, 2, 5, 6, dtype=torch.complex64, device=device)
+    trajectory = torch.randn(1, 2, 13, device=device, requires_grad=True)
+    operator = NuSense(smaps, trajectory, backend="finufft")
+    image = torch.randn(operator.size_in, dtype=torch.complex64, device=device)
+    positive_output = operator(image)
+    operator.traj = torch._neg_view(trajectory)
+    negative_output = operator(image)
+    expected = _direct_sense(image, smaps, -trajectory, operator._finufft_backend.scale)
+    torch.testing.assert_close(negative_output, expected, rtol=3e-5, atol=3e-5)
+    probe = torch.randn_like(expected)
+    actual_gradient = torch.autograd.grad(negative_output, trajectory, probe)[0]
+    expected_gradient = torch.autograd.grad(expected, trajectory, probe)[0]
+    torch.testing.assert_close(actual_gradient, expected_gradient, rtol=4e-5, atol=4e-5)
+    operator.traj = trajectory
+    torch.testing.assert_close(operator(image), positive_output, rtol=3e-5, atol=3e-5)
+
+
+@pytest.mark.parametrize("batch", [1, 3])
+@pytest.mark.parametrize("sequential", [False, True])
+def test_finufft_reuses_plans_per_batch_slot_after_new_trajectories(
+    finufft_execution, batch, sequential
+):
+    device = finufft_execution
+    smaps = torch.randn(1, 2, 4, 5, dtype=torch.complex64, device=device)
+    trajectory = torch.randn(batch, 2, 11, device=device)
+    operator = NuSense(smaps, trajectory, backend="finufft", sequential=sequential)
+    image = torch.randn(operator.size_in, dtype=torch.complex64, device=device)
+    backend = operator._finufft_backend
+    for update in range(5):
+        operator.traj = torch.randn_like(trajectory)
+        expected = _direct_sense(image, smaps, operator.traj, backend.scale)
+        torch.testing.assert_close(operator(image), expected, rtol=3e-5, atol=3e-5)
+        torch.testing.assert_close(operator(image), expected, rtol=3e-5, atol=3e-5)
+        assert len(backend._plans) == batch
+        for plan in backend._plans.values():
+            if hasattr(plan, "setpts_calls"):
+                assert plan.setpts_calls == update + 1
+
+
+def test_finufft_reused_plans_backpropagate_saved_trajectories(finufft_execution):
+    device = finufft_execution
+    smaps = torch.randn(1, 2, 4, 5, dtype=torch.complex64, device=device)
+    trajectories = [
+        torch.randn(2, 2, 11, device=device, requires_grad=True) for _ in range(3)
+    ]
+    operator = NuSense(smaps, trajectories[0], backend="finufft")
+    images = [
+        torch.randn(
+            operator.size_in, dtype=torch.complex64, device=device, requires_grad=True
+        )
+        for _ in trajectories
+    ]
+    actual, expected, probes = [], [], []
+    for image, trajectory in zip(images, trajectories, strict=True):
+        operator.traj = trajectory
+        actual.append(operator(image))
+        expected.append(
+            _direct_sense(image, smaps, trajectory, operator._finufft_backend.scale)
+        )
+        probes.append(torch.randn_like(actual[-1]))
+    # All forward calls have reused the plans before any saved graph runs backward.
+    inputs = (*images, *trajectories)
+    gradients = torch.autograd.grad(actual, inputs, probes)
+    reference = torch.autograd.grad(expected, inputs, probes)
+    for gradient, target in zip(gradients, reference, strict=True):
+        torch.testing.assert_close(gradient, target, rtol=4e-5, atol=4e-5)
+
+
+def test_finufft_plan_batch_slots_remain_isolated_by_cuda_stream(
+    exact_native_plans, monkeypatch
+):
+    class Stream:
+        cuda_stream = 101
+
+    stream = Stream()
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda device: stream)
+    backend = FinufftSenseBackend((4, 5), (8, 10), "ortho", True, False, 1e-6)
+    args = (2, 1, torch.complex64, torch.device("cuda", 0))
+    _, first = backend._plan(*args, coordinate_slot=0)
+    stream.cuda_stream = 202
+    _, second = backend._plan(*args, coordinate_slot=0)
+    stream.cuda_stream = 101
+    _, reused = backend._plan(*args, coordinate_slot=0)
+    assert first is reused and first is not second
+    assert len(backend._plans) == 2
+
+
+@pytest.mark.parametrize("nufft_type", [1, 2])
+@pytest.mark.parametrize("trainable_trajectory", [False, True])
+def test_finufft_saves_data_only_for_trajectory_gradients(
+    finufft_execution, nufft_type, trainable_trajectory
+):
+    device = finufft_execution
+    backend = FinufftSenseBackend((4, 5), (8, 10), "ortho", True, False, 1e-6)
+    trajectory = torch.randn(
+        1, 2, 13, device=device, requires_grad=trainable_trajectory
+    )
+    shape = (1, 2, 13) if nufft_type == 1 else (1, 2, 4, 5)
+    data = torch.randn(shape, dtype=torch.complex64, device=device, requires_grad=True)
+    transform = finufft_type1 if nufft_type == 1 else finufft_type2
+    saved = []
+
+    def pack(tensor):
+        saved.append(tensor.numel() * tensor.element_size())
+        return tensor
+
+    with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
+        result = transform(data, trajectory, backend)
+    expected_bytes = trajectory.numel() * trajectory.element_size()
+    if trainable_trajectory:
+        expected_bytes += data.numel() * data.element_size()
+    assert sum(saved) == expected_bytes
+    probe = torch.randn_like(result)
+    gradient = torch.autograd.grad(result, data, probe)[0]
+    reference = (
+        _exact_type2(backend, probe, trajectory)
+        if nufft_type == 1
+        else _exact_type1(backend, probe, trajectory)
+    ) * backend.scale
+    torch.testing.assert_close(gradient, reference, rtol=3e-5, atol=3e-5)
+
+
+def test_finufft_coordinate_conversion_retains_source_until_eviction(
+    exact_native_plans,
+):
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    # Conversion to image precision allocates another storage, which used to
+    # leave the source address available for a different trajectory to reuse.
+    trajectory = torch.randn(1, 2, 12, dtype=torch.float64)
+    storage = weakref.ref(trajectory.untyped_storage())
+    operator = NuSense(smaps, trajectory, backend="finufft")
+    image = torch.randn(1, 1, 4, 4, dtype=torch.complex64)
+    operator(image)
+    del trajectory
+    for _ in range(50):
+        operator.traj = torch.randn(1, 2, 12, dtype=torch.float64)
+        actual = operator(image)
+        fresh = NuSense(smaps, operator.traj, backend="finufft")
+        assert torch.equal(actual, fresh(image))
+        if len(operator._finufft_backend._coordinate_cache) == 2:
+            assert storage() is not None
+    # Both cache size and retained storage remain bounded during optimization.
+    assert len(operator._finufft_backend._coordinate_cache) == 32
+    assert storage() is None
+
+
+def test_finufft_inference_trajectory_mutations_update_native_points(
+    exact_native_plans,
+):
+    with torch.inference_mode():
+        smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+        traj = torch.rand(1, 2, 12, dtype=torch.float64)
+        image = torch.randn(1, 1, 4, 4, dtype=torch.complex64)
+        operator = NuSense(smaps, traj, backend="finufft")
+        before = operator(image)
+        traj.add_(0.25)
+        after = operator(image)
+        fresh = NuSense(smaps, traj, backend="finufft")
+        assert not torch.allclose(before, after)
+        assert torch.equal(after, fresh(image))
+        assert not operator._finufft_backend._coordinate_cache
 
 
 def test_finufft_gmri_batches_all_segments_into_one_transform(monkeypatch):
@@ -1178,7 +1410,7 @@ def test_finufft_gmri_runs_on_supported_cpu_or_cuda():
     assert _relative_error(finufft_gram(image), legacy_gram(image)) < 3e-3
 
 
-def test_finufft_gmri_gram_autocorrelation_matches_b0_normal(monkeypatch):
+def test_finufft_gmri_gram_cross_terms_match_b0_normal(monkeypatch):
     monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
     torch.manual_seed(46)
     dtype = torch.complex128
@@ -1213,7 +1445,7 @@ def test_finufft_gmri_gram_autocorrelation_matches_b0_normal(monkeypatch):
     gram = GmriGram(smaps, zmap, traj, **kwargs)
     actual = gram(image)
 
-    assert gram.B.imag.abs().max() == 0
+    assert len(gram.kernel) == gram.L * (gram.L + 1) // 2
     assert _relative_error(actual, expected) < 2e-3
 
     torchkbnufft_gram = GmriGram(
@@ -1229,6 +1461,91 @@ def test_finufft_gmri_gram_autocorrelation_matches_b0_normal(monkeypatch):
     lhs = (probe.conj() * gram(image)).sum()
     rhs = (gram(probe).conj() * image).sum()
     assert torch.allclose(lhs, rhs, rtol=2e-12, atol=2e-12)
+
+
+@pytest.mark.parametrize("backend", ["finufft", "torchkbnufft"])
+@pytest.mark.parametrize("norm", [None, "ortho"])
+def test_b0_gram_long_readout_matches_composition_and_cg(monkeypatch, backend, norm):
+    """The old signed L=6 autocorrelation fit was indefinite in this regime."""
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    monkeypatch.setattr(FinufftSenseBackend, "type2", _exact_type2)
+    torch.manual_seed(361)
+    smaps = torch.ones(1, 1, 8, 8, dtype=torch.complex128)
+    zmap = torch.linspace(-200, 200, 64, dtype=torch.float64).reshape(1, 8, 8)
+    traj = (torch.rand(1, 2, 4, 16, dtype=torch.float64) - 0.5) * 2 * torch.pi
+    times = torch.linspace(0, 8, 16, dtype=torch.float64)
+    kwargs = {"T": times, "backend": backend, "norm": norm}
+    operator = Gmri(smaps, zmap, traj, **kwargs)
+    gram = GmriGram(smaps, zmap, traj, **kwargs)
+    image = torch.randn(1, 1, 8, 8, dtype=torch.complex128)
+    reference = operator.H(operator(image))
+    tolerance = 2e-3 if backend == "torchkbnufft" else 2e-12
+    assert _relative_error(gram(image), reference) < tolerance
+
+    basis = torch.eye(64, dtype=torch.complex128).reshape(64, 1, 1, 8, 8)
+    matrix = torch.stack([gram(column).reshape(-1) for column in basis], dim=1)
+    assert _relative_error(matrix, matrix.mH) < 2e-12
+    # Gridding introduces a small numerical approximation; the exact Fourier
+    # oracle must be PSD without an artificial diagonal stabilization.
+    minimum = torch.linalg.eigvalsh(matrix).amin()
+    assert minimum > (-1e-12 if backend == "finufft" else -1e-4)
+    regularization = 1e-3 * (256 if norm is None else 1)
+    normal = gram + regularization * Identity(gram.size_in)
+    solution = CG(normal, max_iter=150, tol=1e-18).run(
+        torch.zeros_like(image), reference
+    )
+    expected = torch.linalg.solve(
+        matrix + regularization * torch.eye(64, dtype=matrix.dtype),
+        reference.reshape(-1),
+    ).reshape_as(image)
+    assert _relative_error(solution, expected) < 2e-6
+
+
+def test_finufft_gmri_gram_sensitivity_and_image_gradients_match_composition(
+    monkeypatch,
+):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    monkeypatch.setattr(FinufftSenseBackend, "type2", _exact_type2)
+    torch.manual_seed(362)
+    smaps = torch.randn(1, 2, 4, 4, dtype=torch.complex128, requires_grad=True)
+    image = torch.randn(1, 1, 4, 4, dtype=torch.complex128, requires_grad=True)
+    zmap = torch.linspace(-200, 200, 16, dtype=torch.float64).reshape(1, 4, 4)
+    traj = torch.rand(1, 2, 2, 16, dtype=torch.float64) * 2 * torch.pi
+    kwargs = {"T": torch.linspace(0, 8, 16, dtype=torch.float64), "backend": "finufft"}
+    operator = Gmri(smaps, zmap, traj, **kwargs)
+    gram = GmriGram(smaps, zmap, traj, **kwargs)
+    probe = torch.randn_like(image)
+    actual = torch.autograd.grad(
+        (gram(image) * probe.conj()).real.sum(), (image, smaps)
+    )
+    expected = torch.autograd.grad(
+        (operator.H(operator(image)) * probe.conj()).real.sum(), (image, smaps)
+    )
+    for derivative, reference in zip(actual, expected, strict=True):
+        assert _relative_error(derivative, reference) < 3e-12
+
+
+@pytest.mark.parametrize("backend", ["finufft", "torchkbnufft"])
+def test_gmri_gram_shared_trajectory_keeps_distinct_batch_field_maps(
+    monkeypatch, backend
+):
+    monkeypatch.setattr(FinufftSenseBackend, "type1", _exact_type1)
+    monkeypatch.setattr(FinufftSenseBackend, "type2", _exact_type2)
+    torch.manual_seed(363)
+    smaps = torch.randn(2, 2, 4, 4, dtype=torch.complex128)
+    image = torch.randn(2, 1, 4, 4, dtype=torch.complex128)
+    zmap = (
+        torch.stack((torch.linspace(-20, 20, 16), torch.linspace(-200, 200, 16)))
+        .double()
+        .reshape(2, 4, 4)
+    )
+    trajectory = torch.rand(1, 2, 2, 16, dtype=torch.float64) * 2 * torch.pi
+    kwargs = {"T": torch.linspace(0, 8, 16, dtype=torch.float64), "backend": backend}
+    encoding = Gmri(smaps, zmap, trajectory, **kwargs)
+    gram = GmriGram(smaps, zmap, trajectory, **kwargs)
+    expected = encoding.H(encoding(image))
+    tolerance = 2e-3 if backend == "torchkbnufft" else 2e-12
+    assert _relative_error(gram(image), expected) < tolerance
 
 
 def test_finufft_gmri_gram_rejects_changed_trajectory(monkeypatch):

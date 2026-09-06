@@ -7,6 +7,18 @@ on:
       - develop
       - feature/*
   workflow_dispatch:
+    inputs:
+      accelerator:
+        description: Optional self-hosted accelerator acceptance
+        type: choice
+        default: none
+        options:
+          - none
+          - cuda
+          - mps
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -74,7 +86,7 @@ jobs:
         run: sphinx-build -W --keep-going -b html docs docs/_build/html
 
   package:
-    name: Installed-wheel smoke test
+    name: Installed wheel and CPU notebooks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -117,3 +129,112 @@ jobs:
           torch.testing.assert_close(reconstructed, image, rtol=2e-5, atol=2e-5)
           print(mirtorch.__version__, package_path)
           PY
+
+      - name: Install notebook dependencies from the wheel
+        run: |
+          for wheel in dist/*.whl; do
+            python -m pip install "${wheel}[examples]"
+          done
+          python -m ipykernel install --sys-prefix --name mirtorch-ci
+
+      - name: Execute self-contained notebooks with the installed package
+        env:
+          MIRTORCH_EXAMPLE_DEVICE: cpu
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          mkdir -p "$RUNNER_TEMP/mirtorch-notebooks"
+          cp examples/demo_mr_physics.ipynb examples/demo_trajectory_optimization.ipynb examples/demo_ct.ipynb "$RUNNER_TEMP/mirtorch-notebooks/"
+          cd "$RUNNER_TEMP/mirtorch-notebooks"
+          python -m nbconvert --execute --to notebook --inplace \
+            --ExecutePreprocessor.timeout=600 \
+            --ExecutePreprocessor.kernel_name=mirtorch-ci *.ipynb
+
+      - name: Save executed CPU notebooks
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: notebooks-cpu
+          path: ${{ runner.temp }}/mirtorch-notebooks/*.ipynb
+          if-no-files-found: ignore
+
+  accelerator:
+    name: Optional ${{ inputs.accelerator }} acceptance
+    if: github.event_name == 'workflow_dispatch' && inputs.accelerator != 'none'
+    runs-on: [self-hosted, "${{ inputs.accelerator }}"]
+    timeout-minutes: 45
+    env:
+      MIRTORCH_EXAMPLE_DEVICE: ${{ inputs.accelerator }}
+      PYTORCH_ENABLE_MPS_FALLBACK: "0"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Create an isolated acceptance environment
+        run: |
+          python -m venv "$RUNNER_TEMP/mirtorch-acceptance"
+          echo "$RUNNER_TEMP/mirtorch-acceptance/bin" >> "$GITHUB_PATH"
+
+      - name: Install the package and optional accelerator backend
+        run: |
+          python -m pip install --upgrade pip
+          if [ "$MIRTORCH_EXAMPLE_DEVICE" = cuda ]; then
+            python -m pip install ".[test,examples,cufinufft]"
+          else
+            python -m pip install ".[test,examples]"
+          fi
+          python -m ipykernel install --sys-prefix --name mirtorch-ci
+
+      - name: Require a working accelerator and native CUDA NUFFT
+        run: |
+          python -I - <<'PY'
+          import os
+          from pathlib import Path
+
+          import mirtorch
+          import torch
+          from mirtorch.linear import NuSense
+
+          assert "site-packages" in Path(mirtorch.__file__).resolve().parts
+          device = os.environ["MIRTORCH_EXAMPLE_DEVICE"]
+          if device == "cuda":
+              import cufinufft
+              assert torch.cuda.is_available(), "CUDA is not available"
+              backend = "finufft"
+          else:
+              assert torch.backends.mps.is_available(), "MPS is not available"
+              backend = "torchkbnufft"
+          image = torch.ones(1, 1, 8, 8, dtype=torch.complex64, device=device, requires_grad=True)
+          trajectory = torch.linspace(-2, 2, 24, device=device).reshape(1, 2, 12).requires_grad_()
+          operator = NuSense(torch.ones_like(image), trajectory, backend=backend)
+          samples = operator(image)
+          assert samples.device.type == device
+          gradients = torch.autograd.grad(samples.abs().square().sum(), (image, trajectory))
+          assert all(torch.isfinite(gradient).all().item() for gradient in gradients)
+          print(torch.__version__, device, operator.backend)
+          PY
+
+      - name: Run numerical and gradient tests
+        run: python -m pytest
+
+      - name: Execute reconstruction notebooks on the selected accelerator
+        run: |
+          mkdir -p "$RUNNER_TEMP/mirtorch-notebooks"
+          cp examples/demo_mr_physics.ipynb examples/demo_trajectory_optimization.ipynb examples/demo_3d.ipynb examples/demo_ct.ipynb examples/demo_mlem.ipynb "$RUNNER_TEMP/mirtorch-notebooks/"
+          cd "$RUNNER_TEMP/mirtorch-notebooks"
+          python -m nbconvert --execute --to notebook --inplace \
+            --ExecutePreprocessor.timeout=600 \
+            --ExecutePreprocessor.kernel_name=mirtorch-ci *.ipynb
+
+      - name: Save executed accelerator notebooks
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: notebooks-${{ inputs.accelerator }}
+          path: ${{ runner.temp }}/mirtorch-notebooks/*.ipynb
+          if-no-files-found: ignore
