@@ -505,9 +505,10 @@ def test_gmri_gram_uses_direct_normal_when_kernel_budget_is_exceeded(monkeypatch
 def test_gmri_gram_limits_internal_toeplitz_workspace(monkeypatch):
     smaps, zmap, traj, image, kwargs = _b0_cache_inputs()
     monkeypatch.setattr("mirtorch.linear.mri._MAX_B0_WORKSPACE_BYTES", 1)
-    gram = GmriGram(smaps, zmap, traj, **kwargs)
+    with pytest.warns(RuntimeWarning, match="direct Gmri"):
+        gram = GmriGram(smaps, zmap, traj, **kwargs)
 
-    assert gram._segment_chunk_size == 1
+    assert gram._uses_direct_gram
     assert gram._coil_chunk_size == 1
     assert torch.isfinite(gram(image)).all()
 

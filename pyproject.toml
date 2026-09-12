@@ -22,7 +22,6 @@ classifiers = [
 ]
 dependencies = [
     "torch>=1.13",
-    "torchvision",
     "torchkbnufft>=1.4.0,<1.5.2",
     "finufft>=2.5,<3; platform_system != 'Darwin' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
     "numpy>=1.24",
@@ -32,11 +31,13 @@ dependencies = [
 
 [project.optional-dependencies]
 examples = [
-    "einops",
     "gdown",
     "h5py",
+    "ipykernel",
     "matplotlib",
+    "nbconvert",
     "scikit-image",
+    "torchvision",
 ]
 cufinufft = [
     "cufinufft>=2.5,<3; platform_system == 'Linux' or platform_system == 'Windows'",
@@ -61,8 +62,8 @@ dev = [
     "wget",
     "scikit-image",
     "scikit-learn",
-    "einops",
     "matplotlib",
+    "torchvision",
     "coverage",
     "pytest",
     "check-manifest",
@@ -105,6 +106,8 @@ include = ["mirtorch*"]
 include = [
     "mirtorch/alg",
     "mirtorch/linear/_finufft.py",
+    "mirtorch/linear/ct.py",
+    "mirtorch/linear/spect.py",
     "mirtorch/linear/linearmaps.py",
     "mirtorch/prox/prox.py",
 ]
@@ -137,4 +140,4 @@ source = ["mirtorch"]
 
 [tool.coverage.report]
 fail_under = 70
-omit = ["mirtorch/vendors/*"]
+omit = ["*/mirtorch/vendors/*"]

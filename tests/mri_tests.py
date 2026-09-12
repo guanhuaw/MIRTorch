@@ -756,6 +756,108 @@ def test_gmri_gram_trainable_trajectory_uses_direct_composition():
     assert torch.count_nonzero(gradient) > 0
 
 
+def test_mri_tensor_state_distinguishes_logical_views():
+    value = torch.randn(3, 4, dtype=torch.complex64)
+    assert mri._tensor_state_key(value) != mri._tensor_state_key(value.conj())
+    assert mri._tensor_state_key(value.imag) != mri._tensor_state_key(value.conj().imag)
+
+
+@pytest.mark.parametrize("operator_type", [Gmri, GmriGram])
+@pytest.mark.parametrize("parameter", ["zmap", "T"])
+def test_b0_cache_detects_same_storage_negative_views(operator_type, parameter):
+    torch.manual_seed(367)
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex128)
+    image = torch.randn_like(smaps)
+    trajectory = torch.randn(1, 2, 2, 8, dtype=torch.float64)
+    values = {
+        "zmap": torch.linspace(-40, 90, 16, dtype=torch.float64).reshape(1, 4, 4),
+        "T": torch.linspace(0, 2, 8, dtype=torch.float64),
+    }
+    storage = torch.complex(torch.zeros_like(values[parameter]), values[parameter])
+    values[parameter] = storage.imag
+    kwargs = {"L": 3, "nbins": 8, "backend": "torchkbnufft"}
+    operator = operator_type(smaps, values["zmap"], trajectory, T=values["T"], **kwargs)
+    original = operator(image)
+    negative = storage.conj().imag
+    assert negative.is_neg()
+    assert negative.data_ptr() == values[parameter].data_ptr()
+    assert negative._version == values[parameter]._version
+    setattr(operator, parameter, negative)
+
+    if operator_type is GmriGram:
+        with pytest.raises(RuntimeError, match="field map or readout times changed"):
+            operator(image)
+    else:
+        values[parameter] = negative
+        fresh = Gmri(smaps, values["zmap"], trajectory, T=values["T"], **kwargs)
+        updated = operator(image)
+        assert not torch.allclose(updated, original)
+        torch.testing.assert_close(updated, fresh(image))
+
+
+@pytest.mark.parametrize("operator_type", [NuSenseGram, GmriGram])
+def test_fixed_gram_detects_same_storage_negative_trajectory(operator_type):
+    storage = torch.randn(1, 2, 1, 8, dtype=torch.complex128)
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex128)
+    if operator_type is NuSenseGram:
+        operator = NuSenseGram(smaps, storage.imag.flatten(2), backend="torchkbnufft")
+    else:
+        operator = GmriGram(
+            smaps, torch.zeros(1, 4, 4), storage.imag, L=2, backend="torchkbnufft"
+        )
+    operator.traj = storage.conj().imag.flatten(2)
+    with pytest.raises(RuntimeError, match="trajectory changed"):
+        operator(smaps)
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_mri_inference_tensors_recompute_mutated_parameters(device):
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("Apple Metal is unavailable")
+    with torch.inference_mode():
+        smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64, device=device)
+        zmap = torch.linspace(-200, 200, 16, device=device).reshape(1, 4, 4)
+        traj = torch.rand(1, 2, 2, 8, device=device) * 2 * torch.pi
+        times = torch.linspace(0, 8, 8, device=device)
+        image = torch.randn(1, 1, 4, 4, dtype=torch.complex64, device=device)
+        kwargs = {"T": times, "backend": "torchkbnufft", "L": 4}
+        operator = Gmri(smaps, zmap, traj, **kwargs)
+        gram = GmriGram(smaps, zmap, traj, **kwargs)
+        nu_gram = NuSenseGram(smaps, traj.reshape(1, 2, -1), backend="torchkbnufft")
+        assert gram._uses_direct_gram and nu_gram._uses_direct_gram
+        before = operator(image)
+        zmap.add_(50)
+        times.mul_(0.8)
+        traj.add_(0.1)
+        fresh = Gmri(smaps, zmap, traj, **kwargs)
+        assert not torch.allclose(before, operator(image))
+        torch.testing.assert_close(operator(image), fresh(image))
+        torch.testing.assert_close(gram(image), fresh.H(fresh(image)))
+        nu = NuSense(smaps, traj.reshape(1, 2, -1), backend="torchkbnufft")
+        torch.testing.assert_close(nu_gram(image), nu.H(nu(image)))
+
+
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(), reason="Apple Metal unavailable"
+)
+@pytest.mark.parametrize("operator_class", [GmriGram, NuSenseGram])
+def test_fixed_gram_device_copy_in_inference_mode_still_detects_mutation(
+    operator_class,
+):
+    smaps = torch.ones(1, 1, 4, 4, dtype=torch.complex64)
+    traj = torch.rand(1, 2, 1, 8)
+    if operator_class is GmriGram:
+        gram = GmriGram(smaps, torch.zeros(1, 4, 4), traj, L=2, backend="torchkbnufft")
+    else:
+        gram = NuSenseGram(smaps, traj.reshape(1, 2, -1), backend="torchkbnufft")
+    with torch.inference_mode():
+        gram.to("mps")
+        assert not torch.is_inference(gram.traj)
+        gram.traj.add_(0.1)
+        with pytest.raises(RuntimeError, match="trajectory changed"):
+            gram(torch.ones(1, 1, 4, 4, dtype=torch.complex64, device="mps"))
+
+
 @pytest.mark.skipif(
     not torch.backends.mps.is_available(),
     reason="Apple Metal is unavailable",

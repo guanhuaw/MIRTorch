@@ -468,6 +468,9 @@ class Patch2D(LinearMap):
             y: [nbatch, nchannel, npatchx, npatchy, kernel_size, kernel_size] (normal)
                 [nbatch, nchannel, kernel_size*kernel_size, npatchx*npatchy] (padded)
         """
+        # MPS has real unfold/fold kernels but no complex backward kernels.
+        if x.device.type == "mps" and x.is_complex():
+            return torch.complex(self._apply(x.real), self._apply(x.imag))
         x = (
             x.unfold(2, self.size_kernel, self.stride)
             .unfold(3, self.size_kernel, self.stride)
@@ -480,6 +483,10 @@ class Patch2D(LinearMap):
         return x
 
     def _apply_adjoint(self, x) -> Tensor:
+        if x.device.type == "mps" and x.is_complex():
+            return torch.complex(
+                self._apply_adjoint(x.real), self._apply_adjoint(x.imag)
+            )
         if self.padded:
             # to [nbatch, nchannel*kernel_size*kernel_size, npatchx*npatchy]
             x = x.reshape(
@@ -555,6 +562,9 @@ class Patch3D(LinearMap):
 
 
         """
+        # Split before unfolding so autograd also uses the supported real path.
+        if x.device.type == "mps" and x.is_complex():
+            return torch.complex(self._apply(x.real), self._apply(x.imag))
         x = (
             x.unfold(2, self.size_kernel, self.stride)
             .unfold(3, self.size_kernel, self.stride)
@@ -572,6 +582,10 @@ class Patch3D(LinearMap):
             return x
 
     def _apply_adjoint(self, x) -> Tensor:
+        if x.device.type == "mps" and x.is_complex():
+            return torch.complex(
+                self._apply_adjoint(x.real), self._apply_adjoint(x.imag)
+            )
         # This code is following https://discuss.pytorch.org/t/how-to-extract-smaller-image-patches-3d/16837/71
         # Pytorch's fold only supports 2d, though it actually has vol2im function ...
         # First, do the fold on the last two dimensions

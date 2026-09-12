@@ -37,6 +37,271 @@ def test_cg_with_evaluation_history_backpropagates():
     assert torch.allclose(rhs.grad, torch.ones_like(rhs))
 
 
+@pytest.mark.parametrize("device", ["cpu", "mps", "cuda"])
+def test_cg_default_backward_preserves_mean_loss_gradient(device):
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("Apple Metal is unavailable")
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    rhs = torch.ones(1000, device=device, requires_grad=True)
+    solution = CG(Identity([1000])).run(torch.zeros_like(rhs), rhs)
+
+    solution.mean().backward()
+
+    torch.testing.assert_close(rhs.grad, torch.full_like(rhs, 0.001))
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps", "cuda"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.complex64])
+@pytest.mark.parametrize(
+    "tolerances",
+    [{}, {"atol": 0.1}, {"rtol": 0.7}, {"tol": 0}, {"rtol": 0, "atol": 0}],
+)
+def test_cg_implicit_backward_is_independent_of_loss_scale(device, dtype, tolerances):
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("Apple Metal is unavailable")
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    diagonal = torch.tensor([1.0, 2.0, 4.0, 8.0], device=device)
+    rhs = torch.ones(4, device=device, dtype=dtype, requires_grad=True)
+    solver = CG(Diag(diagonal), max_iter=8, **tolerances)
+    cotangent = torch.tensor([1.0, -2.0, 0.5, 3.0], device=device, dtype=dtype)
+    if dtype.is_complex:
+        cotangent = cotangent + 0.5j * cotangent.flip(0)
+
+    for scale in (1e-20, 1e-3, 1.0, 1e20):
+        solution = solver.run(torch.zeros_like(rhs), rhs)
+        (gradient,) = torch.autograd.grad(solution, rhs, scale * cotangent)
+        torch.testing.assert_close(
+            gradient.cpu() / scale,
+            (cotangent / diagonal).cpu(),
+            atol=2e-6,
+            rtol=2e-5,
+        )
+
+
+@pytest.mark.parametrize("dtype", [torch.float64, torch.complex128])
+def test_cg_implicit_gradient_matches_double_precision_finite_differences(dtype):
+    diagonal = torch.tensor([1.0, 2.0, 4.0, 8.0], dtype=torch.float64)
+    rhs = torch.tensor([1.0, -2.0, 0.5, 3.0], dtype=dtype, requires_grad=True)
+    solver = CG(Diag(diagonal), max_iter=8, rtol=1e-13)
+
+    assert torch.autograd.gradcheck(
+        lambda value: solver.run(torch.zeros_like(value), value),
+        (rhs,),
+    )
+
+
+def test_cg_implicit_rejects_double_backward():
+    rhs = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)
+    solution = CG(Diag(torch.tensor([2.0, 4.0])), tol=1e-14).run(
+        torch.zeros_like(rhs), rhs
+    )
+    (gradient,) = torch.autograd.grad(solution.square().sum(), rhs, create_graph=True)
+
+    with pytest.raises(RuntimeError, match="once_differentiable"):
+        gradient.sum().backward()
+
+
+@pytest.mark.parametrize("dtype", [torch.float64, torch.complex128])
+def test_cg_unrolled_supports_double_backward(dtype):
+    rhs = torch.tensor([1.0, -2.0, 0.5], dtype=dtype, requires_grad=True)
+    solver = CG(
+        Diag(torch.tensor([1.0, 2.0, 4.0], dtype=torch.float64)),
+        max_iter=2,
+        tol=0,
+        backward_mode="unrolled",
+    )
+
+    assert torch.autograd.gradgradcheck(
+        lambda value: solver.run(torch.zeros_like(value), value),
+        (rhs,),
+    )
+
+
+@pytest.mark.parametrize("dtype", [torch.float64, torch.complex128])
+def test_cg_unrolled_zero_components_have_correct_second_derivatives(dtype):
+    rhs = torch.tensor([0.0, 1.0, 0.0, -2.0], dtype=dtype, requires_grad=True)
+    solver = CG(
+        Diag(torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float64)),
+        max_iter=1,
+        tol=0,
+        backward_mode="unrolled",
+    )
+    # A Hermitian residual dot product is smooth at zero components; replacing
+    # it by abs().square() would preserve values but lose their second derivatives.
+    assert torch.autograd.gradcheck(
+        lambda value: solver.run(torch.zeros_like(value), value), (rhs,)
+    )
+    assert torch.autograd.gradgradcheck(
+        lambda value: solver.run(torch.zeros_like(value), value), (rhs,)
+    )
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps", "cuda"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.complex64])
+@pytest.mark.parametrize("tolerances", [{"tol": 0}, {"rtol": 1e-5, "atol": 0}])
+def test_cg_unrolled_zero_rhs_preserves_values_but_rejects_backward(
+    device, dtype, tolerances
+):
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("Apple Metal is unavailable")
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    rhs = torch.zeros(2, device=device, dtype=dtype, requires_grad=True)
+    result = CG(Identity([2]), max_iter=2, backward_mode="unrolled", **tolerances).run(
+        torch.zeros_like(rhs), rhs
+    )
+
+    torch.testing.assert_close(result, rhs)
+    with pytest.raises(RuntimeError, match="zero-residual recurrence"):
+        torch.autograd.grad(result.real.sum(), rhs, create_graph=True)
+
+
+@pytest.mark.parametrize("dtype", [torch.float64, torch.complex128])
+@pytest.mark.parametrize("parameter", ["initial", "rhs", "operator"])
+def test_cg_unrolled_exact_warm_start_guards_parameter_gradients(dtype, parameter):
+    initial = torch.ones(2, dtype=dtype, requires_grad=parameter == "initial")
+    diagonal = torch.tensor(
+        [1.0, 2.0], dtype=torch.float64, requires_grad=parameter == "operator"
+    )
+    rhs = diagonal.detach().to(dtype).clone().requires_grad_(parameter == "rhs")
+    result = CG(Diag(diagonal), max_iter=2, tol=0, backward_mode="unrolled").run(
+        initial, rhs
+    )
+
+    torch.testing.assert_close(result, initial)
+    with pytest.raises(RuntimeError, match="zero-residual recurrence"):
+        result.real.sum().backward()
+
+
+@pytest.mark.parametrize("dtype", [torch.float64, torch.complex128])
+def test_cg_unrolled_late_exact_convergence_rejects_ambiguous_derivative(dtype):
+    rhs = torch.tensor([1.0, 0.0], dtype=dtype, requires_grad=True)
+    result = CG(
+        Diag(torch.tensor([1.0, 2.0], dtype=torch.float64)),
+        max_iter=2,
+        tol=0,
+        backward_mode="unrolled",
+    ).run(torch.zeros_like(rhs), rhs)
+
+    torch.testing.assert_close(result, rhs)
+    # The masked second iteration used to give db[1]=1 instead of the 0.5
+    # obtained by perturbing the second component and executing both iterations.
+    with pytest.raises(RuntimeError, match="zero-residual recurrence"):
+        result.real.sum().backward()
+
+
+@pytest.mark.parametrize("context", [torch.no_grad, torch.inference_mode])
+def test_cg_unrolled_zero_residual_is_valid_without_gradients(context):
+    rhs = torch.ones(2, dtype=torch.complex64, requires_grad=True)
+    with context():
+        result = CG(Identity([2]), max_iter=2, tol=0, backward_mode="unrolled").run(
+            rhs.clone(), rhs
+        )
+        torch.testing.assert_close(result, rhs)
+        assert not result.requires_grad
+
+
+def test_cg_unrolled_zero_iterations_keep_initialization_derivative():
+    initial = torch.ones(2, dtype=torch.float64, requires_grad=True)
+    rhs = torch.ones_like(initial, requires_grad=True)
+    result = CG(Identity([2]), max_iter=0, tol=0, backward_mode="unrolled").run(
+        initial, rhs
+    )
+    initial_gradient, rhs_gradient = torch.autograd.grad(
+        result.sum(), (initial, rhs), allow_unused=True
+    )
+
+    torch.testing.assert_close(initial_gradient, torch.ones_like(initial))
+    assert rhs_gradient is None
+
+
+@pytest.mark.parametrize("tolerances", [{"tol": 1e-2}, {"atol": 1e-2}, {"rtol": 1e-2}])
+def test_cg_unrolled_positive_stopping_margin_keeps_stopped_map_gradient(tolerances):
+    initial = torch.ones(2, dtype=torch.float64, requires_grad=True)
+    rhs = torch.ones_like(initial, requires_grad=True)
+    result = CG(Identity([2]), max_iter=2, backward_mode="unrolled", **tolerances).run(
+        initial, rhs, return_info=True
+    )
+    initial_gradient, rhs_gradient = torch.autograd.grad(
+        result.solution.sum(), (initial, rhs), allow_unused=True
+    )
+
+    assert result.iterations == 0 and result.converged
+    torch.testing.assert_close(initial_gradient, torch.ones_like(initial))
+    assert rhs_gradient is None
+
+
+def test_cg_unrolled_constant_zero_residual_has_zero_preconditioner_derivative():
+    weights = torch.ones(2, dtype=torch.float64, requires_grad=True)
+    rhs = torch.ones_like(weights)
+    result = CG(
+        Identity([2]),
+        P=Diag(weights),
+        max_iter=2,
+        tol=0,
+        backward_mode="unrolled",
+    ).run(rhs.clone(), rhs)
+    (gradient,) = torch.autograd.grad(result.sum(), weights)
+
+    torch.testing.assert_close(gradient, torch.zeros_like(weights))
+
+
+def test_cg_unrolled_derivative_guard_synchronizes_only_once_in_backward(monkeypatch):
+    original_item = torch.Tensor.item
+    calls = 0
+
+    def counted_item(value, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_item(value, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "item", counted_item)
+    rhs = torch.ones(4, dtype=torch.float64, requires_grad=True)
+    result = CG(
+        Diag(torch.arange(1, 5, dtype=torch.float64)),
+        max_iter=2,
+        tol=0,
+        backward_mode="unrolled",
+    ).run(torch.zeros_like(rhs), rhs)
+    assert calls == 1  # Existing final positive-definiteness check only.
+    result.sum().backward()
+    assert calls == 2  # The derivative guard checks once, outside the iteration loop.
+
+
+@pytest.mark.parametrize("tol", [0, 1e-2])
+@pytest.mark.parametrize("max_iter", [0, 4])
+def test_cg_implicit_zero_cotangent_and_zero_iterations_are_finite(tol, max_iter):
+    rhs = torch.ones(3, requires_grad=True)
+    initial = torch.full_like(rhs, 2.0)
+    solution = CG(Identity([3]), max_iter=max_iter, tol=tol).run(initial, rhs)
+    (gradient,) = torch.autograd.grad(solution, rhs, torch.zeros_like(rhs))
+
+    torch.testing.assert_close(gradient, torch.zeros_like(rhs))
+    if max_iter == 0:
+        torch.testing.assert_close(solution, initial)
+        solution = CG(Identity([3]), max_iter=0, tol=tol).run(initial, rhs)
+        (gradient,) = torch.autograd.grad(solution.sum(), rhs)
+        torch.testing.assert_close(gradient, torch.zeros_like(rhs))
+
+
+@pytest.mark.parametrize("max_iter", [0, 2])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_cg_rejects_nonfinite_rhs_even_without_iterations(max_iter, value):
+    with pytest.raises(RuntimeError, match="non-finite"):
+        CG(Identity([1]), max_iter=max_iter).run(torch.zeros(1), torch.tensor([value]))
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_cg_implicit_rejects_nonfinite_cotangent(value):
+    rhs = torch.ones(1, requires_grad=True)
+    solution = CG(Identity([1])).run(torch.zeros_like(rhs), rhs)
+
+    with pytest.raises(RuntimeError, match="non-finite"):
+        torch.autograd.grad(solution, rhs, torch.full_like(rhs, value))
+
+
 @pytest.mark.parametrize("backward_mode", ["implicit", "unrolled"])
 def test_cg_tol_zero_handles_exact_convergence(backward_mode):
     class CountingIdentity(LinearMap):
@@ -62,8 +327,12 @@ def test_cg_tol_zero_handles_exact_convergence(backward_mode):
 
     assert torch.equal(result, rhs)
     assert operator.calls == 4  # A*x0 followed by exactly max_iter A*p calls.
-    result.sum().backward()
-    torch.testing.assert_close(rhs.grad, torch.ones_like(rhs))
+    if backward_mode == "unrolled":
+        with pytest.raises(RuntimeError, match="zero-residual recurrence"):
+            result.sum().backward()
+    else:
+        result.sum().backward()
+        torch.testing.assert_close(rhs.grad, torch.ones_like(rhs))
 
 
 def test_cg_fixed_iterations_do_not_check_convergence_each_iteration(monkeypatch):

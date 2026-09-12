@@ -2,10 +2,8 @@ from collections.abc import Sequence
 
 import pywt
 import torch
+import torch.nn.functional as F
 from torch import Tensor
-
-from mirtorch.vendors.pytorch_wavelets import DWTForward
-from mirtorch.vendors.pytorch_wavelets.dwt import lowlevel
 
 from .linearmaps import LinearMap
 
@@ -41,8 +39,9 @@ class Wavelet2D(LinearMap):
     """Packed multilevel two-dimensional discrete wavelet transform.
 
     ``A.H`` is the exact discrete Hermitian adjoint, including boundary
-    padding. It equals the inverse for orthogonal wavelets with periodization,
-    but not for general biorthogonal wavelets or padding modes.
+    padding. It equals the inverse for orthogonal wavelets with periodization
+    when both spatial dimensions are divisible by ``2**J``, but not for
+    general biorthogonal wavelets, boundary modes, or odd-length extensions.
 
     Attributes:
         size_in: ``[batch, channel, nx, ny]`` or ``[nx, ny]``.
@@ -81,38 +80,97 @@ class Wavelet2D(LinearMap):
         if any(not isinstance(size, int) or size < 1 for size in size_in):
             raise ValueError("size_in must contain positive integers")
         try:
-            pywt.Wavelet(wave_type)
+            wavelet = pywt.Wavelet(wave_type)
         except ValueError as error:
             raise ValueError(f"unknown wavelet {wave_type!r}") from error
 
-        self.Fop = DWTForward(J=self.J, mode=self.padding, wave=self.wave_type).to(
-            device
+        # Retain the original coefficients for double-precision input, rather
+        # than promoting filters that have already been rounded to float32.
+        self._filter_values = (wavelet.dec_lo[::-1], wavelet.dec_hi[::-1])
+        self._filters = torch.tensor(self._filter_values, device=device)
+        self._level_shapes = [spatial_shape]
+        self._extensions = []
+        for _ in range(J):
+            shape = self._level_shapes[-1]
+            self._extensions.append(
+                tuple(self._extension(n, wavelet.dec_len, device) for n in shape)
+            )
+            self._level_shapes.append(
+                tuple(pywt.dwt_coeff_len(n, wavelet.dec_len, padding) for n in shape)
+            )
+        packed_shape = tuple(
+            self._level_shapes[-1][d]
+            + sum(shape[d] for shape in self._level_shapes[1:])
+            for d in range(2)
         )
-        prototype = torch.zeros((1, 1, *spatial_shape), device=device)
-        Yl, Yh = self._analysis(prototype)
-        wl_cat = _coeffs_to_tensor(Yl, Yh)
-        size_out = (*size_in[:-2], *wl_cat.shape[-2:])
+        size_out = (*size_in[:-2], *packed_shape)
         super().__init__(size_in, size_out)
+
+    def _extension(self, length: int, filter_length: int, device):
+        """Describe boundary extension before a stride-two convolution."""
+        if self.padding == "periodization":
+            even_length = length + length % 2
+            indices = torch.arange(
+                1 - filter_length // 2,
+                even_length + filter_length // 2 - 1,
+                device=device,
+            )
+            # Odd-length periodization repeats the last sample before wrapping.
+            return indices.remainder(even_length).clamp_max(length - 1)
+
+        output_length = pywt.dwt_coeff_len(length, filter_length, self.padding)
+        total = 2 * (output_length - 1) - length + filter_length
+        before, after = total // 2, (total + 1) // 2
+        if self.padding == "zero":
+            return before, after
+        indices = torch.arange(-before, length + after, device=device)
+        if self.padding == "symmetric":
+            indices = indices.remainder(2 * length)
+            return torch.minimum(indices, 2 * length - 1 - indices)
+        if length == 1:
+            return torch.zeros_like(indices)
+        indices = indices.remainder(2 * (length - 1))
+        return torch.minimum(indices, 2 * (length - 1) - indices)
+
+    def _filter_bank(self, x: Tensor, dim: int, channels: int) -> Tensor:
+        if x.dtype == self._filters.dtype:
+            filters = self._filters.to(device=x.device)
+        else:
+            filters = x.new_tensor(self._filter_values)
+        shape = (2, 1, -1, 1) if dim == 2 else (2, 1, 1, -1)
+        return filters.reshape(shape).repeat(channels, 1, 1, 1)
+
+    def _analysis_axis(self, x: Tensor, dim: int, extension) -> Tensor:
+        filters = self._filter_bank(x, dim, x.shape[1])
+        if isinstance(extension, tuple):
+            pad = (0, 0, *extension) if dim == 2 else (*extension, 0, 0)
+            x = F.pad(x, pad)
+        else:
+            x = x.index_select(dim, extension.to(x.device))
+        stride = (2, 1) if dim == 2 else (1, 2)
+        return F.conv2d(x, filters, stride=stride, groups=x.shape[1])
+
+    def _adjoint_axis(self, x: Tensor, dim: int, extension, length: int) -> Tensor:
+        """Transpose filtering and sum every extended sample into its source."""
+        channels = x.shape[1] // 2
+        filters = self._filter_bank(x, dim, channels)
+        stride = (2, 1) if dim == 2 else (1, 2)
+        extended = F.conv_transpose2d(x, filters, stride=stride, groups=channels)
+        if isinstance(extension, tuple):
+            return extended.narrow(dim, extension[0], length)
+        shape = list(extended.shape)
+        shape[dim] = length
+        return extended.new_zeros(shape).index_add(
+            dim, extension.to(x.device), extended
+        )
 
     def _analysis(self, x: Tensor) -> tuple[Tensor, list[Tensor]]:
         """Apply the DWT using native operations with an exact autograd VJP."""
         details = []
         low = x
-        for _ in range(self.J):
-            bands = lowlevel.afb1d(
-                low,
-                self.Fop.h0_row,
-                self.Fop.h1_row,
-                mode=self.padding,
-                dim=3,
-            )
-            bands = lowlevel.afb1d(
-                bands,
-                self.Fop.h0_col,
-                self.Fop.h1_col,
-                mode=self.padding,
-                dim=2,
-            )
+        for rows, columns in self._extensions:
+            bands = self._analysis_axis(low, 3, columns)
+            bands = self._analysis_axis(bands, 2, rows)
             shape = bands.shape
             bands = bands.reshape(
                 shape[0],
@@ -132,7 +190,7 @@ class Wavelet2D(LinearMap):
         if is_complex:
             batch, channels, height, width = x.shape
             x = (
-                torch.view_as_real(x)
+                torch.view_as_real(x.resolve_conj())
                 .permute(0, 1, 4, 2, 3)
                 .reshape(batch, 2 * channels, height, width)
             )
@@ -158,20 +216,24 @@ class Wavelet2D(LinearMap):
 
     def _apply_adjoint(self, x: Tensor) -> Tensor:
         x, is_complex = self._as_real_channels(x)
-        create_graph = torch.is_grad_enabled() and x.requires_grad
-        with torch.enable_grad():
-            prototype = torch.zeros(
-                (*x.shape[:2], *self.size_in[-2:]),
-                dtype=x.dtype,
-                device=x.device,
-                requires_grad=True,
-            )
-            Yl, Yh = self._analysis(prototype)
-            coefficients = _coeffs_to_tensor(Yl, Yh)
-            (image,) = torch.autograd.grad(
-                coefficients,
-                prototype,
-                grad_outputs=x,
-                create_graph=create_graph,
-            )
-        return self._restore_layout(image, is_complex)
+        height, width = self._level_shapes[-1]
+        low = x[..., :height, :width]
+        row, column = height, width
+        for level in range(self.J - 1, -1, -1):
+            height, width = self._level_shapes[level + 1]
+            bands = torch.stack(
+                (
+                    low,
+                    x[..., row : row + height, :width],
+                    x[..., :height, column : column + width],
+                    x[..., row : row + height, column : column + width],
+                ),
+                dim=2,
+            ).flatten(1, 2)
+            rows, columns = self._extensions[level]
+            input_height, input_width = self._level_shapes[level]
+            bands = self._adjoint_axis(bands, 2, rows, input_height)
+            low = self._adjoint_axis(bands, 3, columns, input_width)
+            row += height
+            column += width
+        return self._restore_layout(low, is_complex)

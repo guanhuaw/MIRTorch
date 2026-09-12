@@ -3,7 +3,7 @@ import math
 import pytest
 import torch
 
-from mirtorch.linear.spect import SPECT, project
+from mirtorch.linear.spect import SPECT, project, required_rotation_shape
 
 
 def _phantom_model(dtype=torch.float64, device="cpu"):
@@ -216,3 +216,86 @@ def test_spect_adjoint_and_parameter_gradients_on_mps():
             rtol=1.2e-2,
             atol=3e-4,
         )
+
+
+def test_full_grid_joint_gradients_and_second_derivatives():
+    torch.manual_seed(234)
+    shape = (3, 4, 2)
+    width, depth = required_rotation_shape(shape, 0.7, dx=1.1)
+    image = torch.randn(shape, dtype=torch.float64, requires_grad=True)
+    mumap = (0.05 + 0.01 * torch.rand_like(image)).requires_grad_()
+    psfs = (0.1 + torch.rand(2, 3, depth, 2, dtype=image.dtype)).requires_grad_()
+    angles = torch.tensor([23.4, 119.2], dtype=image.dtype, requires_grad=True)
+    probe = torch.randn(width, shape[2], 2, dtype=image.dtype)
+
+    def objective(x, mu, psf, theta):
+        model = SPECT(
+            shape,
+            probe.shape,
+            mu,
+            psf,
+            0.7,
+            angles=theta,
+            dx=1.1,
+            attenuation="voxel",
+            view_chunk_size=1,
+        )
+        return (model(x) * probe).sum()
+
+    parameters = (image, mumap, psfs, angles)
+    assert torch.autograd.gradcheck(objective, parameters, fast_mode=True)
+    assert torch.autograd.gradgradcheck(objective, parameters, fast_mode=True)
+
+
+_DEVICES = ["cpu"]
+if torch.backends.mps.is_available():
+    _DEVICES.append("mps")
+if torch.cuda.is_available():
+    _DEVICES.append("cuda")
+
+
+@pytest.mark.parametrize("device", _DEVICES)
+@pytest.mark.parametrize("complex_signal", [False, True])
+def test_full_grid_values_adjoints_and_gradients_across_devices(device, complex_signal):
+    torch.manual_seed(235)
+    shape = (4, 5, 2)
+    width, depth = required_rotation_shape(shape, 0.7, dx=1.1)
+    signal_dtype = torch.complex64 if complex_signal else torch.float32
+    image = torch.randn(shape, dtype=signal_dtype)
+    mumap = 0.05 + 0.01 * torch.rand(shape)
+    psfs = 0.1 + torch.rand(2, 3, depth, 3)
+    angles = torch.tensor([23.4, 119.2, 249.1])
+    probe = torch.randn(width, shape[2], 3, dtype=signal_dtype)
+
+    def evaluate(target):
+        x, mu, psf, theta = (
+            value.to(target).detach().requires_grad_()
+            for value in (image, mumap, psfs, angles)
+        )
+        weights = probe.to(target)
+        model = SPECT(
+            shape,
+            probe.shape,
+            mu,
+            psf,
+            0.7,
+            angles=theta,
+            dx=1.1,
+            attenuation="voxel",
+            view_chunk_size=2,
+        )
+        forward = model(x)
+        adjoint = model.H(weights)
+        loss = (forward.conj() * weights).real.sum()
+        gradients = torch.autograd.grad(loss, (x, mu, psf, theta))
+        torch.testing.assert_close(gradients[0], adjoint, rtol=2e-5, atol=2e-5)
+        torch.testing.assert_close(
+            (forward.conj() * weights).sum(),
+            (x.conj() * adjoint).sum(),
+            rtol=2e-5,
+            atol=3e-5,
+        )
+        return tuple(value.detach().cpu() for value in (forward, adjoint, *gradients))
+
+    for actual, expected in zip(evaluate(device), evaluate("cpu")):
+        torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)

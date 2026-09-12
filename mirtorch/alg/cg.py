@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import torch
 from torch import Tensor
+from torch.autograd.function import once_differentiable
 
 from mirtorch.util import squared_l2_norm
 
@@ -28,27 +29,69 @@ class CG_func(torch.autograd.Function):
         return solution
 
     @staticmethod
-    def backward(ctx, *grad_outputs):
+    @once_differentiable
+    def backward(ctx, *grad_outputs):  # pyright: ignore[reportIncompatibleMethodOverride]
         dx = grad_outputs[0]
         solver = ctx.solver
+        # An absolute forward threshold can discard a small cotangent (e.g. a
+        # mean loss). Normalize before solving to also avoid under/overflow in
+        # the recurrence inner products, then restore the original scale.
+        # Real components avoid unstable complex magnitude/division on MPS.
+        components = torch.view_as_real(dx.resolve_conj()) if dx.is_complex() else dx
+        scale = components.abs().amax()
+        safe_scale = torch.where(scale > 0, scale, torch.ones_like(scale))
+        normalized_rhs = components / safe_scale
+        if dx.is_complex():
+            normalized_rhs = torch.view_as_complex(normalized_rhs)
+        relative_tolerance = max(1e-12, 10 * torch.finfo(dx.real.dtype).eps)
+        if solver.rtol is not None and solver.rtol > 0:
+            relative_tolerance = min(relative_tolerance, solver.rtol)
+        fixed_iterations = (
+            solver.tol == 0
+            if solver.rtol is None and solver.atol is None
+            else not stopping_is_enabled(solver.rtol or 0.0, solver.atol or 0.0)
+        )
+        gradient = cg_block(
+            torch.zeros_like(dx),
+            normalized_rhs,
+            solver.A,
+            0,
+            solver.max_iter,
+            solver.alert,
+            None,
+            solver.P,
+            rtol=0.0 if fixed_iterations else relative_tolerance,
+            atol=0.0,
+        )
         return (
-            cg_block(
-                torch.zeros_like(dx),
-                dx,
-                solver.A,
-                solver.tol,
-                solver.max_iter,
-                solver.alert,
-                None,
-                solver.P,
-                rtol=solver.rtol,
-                atol=solver.atol,
-            ),
+            gradient * safe_scale,
             None,
             None,
             None,
             None,
         )
+
+
+class _CGUnrolledResult(torch.autograd.Function):
+    """Preserve the iterate but reject differentiation through singular CG steps."""
+
+    @staticmethod
+    def forward(ctx, solution, initial_residual, singular):
+        ctx.save_for_backward(singular)
+        return solution
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        (singular,) = ctx.saved_tensors
+        if singular.item():
+            raise RuntimeError(
+                "Unrolled CG cannot differentiate a zero-residual recurrence: "
+                "the truncated iterations need not have a unique derivative there. "
+                "For first-order gradients of b with a fixed operator, use "
+                "backward_mode='implicit'. Otherwise avoid iterating through an "
+                "exact solution or use a differentiable direct solve."
+            )
+        return grad_outputs[0], None, None
 
 
 def cg_block(
@@ -74,15 +117,22 @@ def cg_block(
     iteration count without synchronizing the device on every iteration.
     """
     residual = b - A * x0
+    initial_residual = residual
+    guard_backward = differentiable and residual.requires_grad and max_iter > 0
+    singular_unrolled = (
+        torch.zeros((), dtype=torch.bool, device=residual.device)
+        if guard_backward
+        else None
+    )
     preconditioned = residual if P is None else P * residual
     direction = (
         preconditioned.clone() if differentiable else preconditioned.detach().clone()
     )
     solution = x0.clone() if differentiable else x0.detach().clone()
     rho = (residual.conj() * preconditioned).sum().real
-    residual_squared = squared_l2_norm(residual)
+    residual_squared = rho if P is None else squared_l2_norm(residual)
     saved = []
-    recurrences_valid = None
+    recurrences_valid = torch.isfinite(residual_squared) & torch.isfinite(rho)
     iterations = 0
     converged = False
 
@@ -104,6 +154,10 @@ def cg_block(
             stopping_squared is not None
             and (residual_squared <= stopping_squared).item()
         ):
+            if singular_unrolled is not None:
+                # A positive stopping margin gives a locally unchanged stopping
+                # decision. An rtol-only test at b=0 has no such margin.
+                singular_unrolled = singular_unrolled | (stopping_squared == 0)
             converged = True
             break
 
@@ -111,15 +165,13 @@ def cg_block(
         applied_direction = A * direction
         denominator = (direction.conj() * applied_direction).sum().real
         active = residual_squared != 0
+        if singular_unrolled is not None:
+            singular_unrolled = singular_unrolled | ~active
         rho_valid = torch.isfinite(rho) & (rho > 0)
         denominator_valid = torch.isfinite(denominator) & (denominator > 0)
         update_valid = active & rho_valid & denominator_valid
         recurrence_valid = ~active | update_valid
-        recurrences_valid = (
-            recurrence_valid
-            if recurrences_valid is None
-            else recurrences_valid & recurrence_valid
-        )
+        recurrences_valid = recurrences_valid & recurrence_valid
 
         safe_denominator = torch.where(
             denominator_valid,
@@ -140,7 +192,9 @@ def cg_block(
         next_residual = residual - step * applied_direction
         next_preconditioned = next_residual if P is None else P * next_residual
         next_rho = (next_residual.conj() * next_preconditioned).sum().real
-        next_residual_squared = squared_l2_norm(next_residual)
+        next_residual_squared = (
+            next_rho if P is None else squared_l2_norm(next_residual)
+        )
         next_active = next_residual_squared != 0
         next_rho_valid = torch.isfinite(next_rho) & (next_rho > 0)
         next_recurrence_valid = ~next_active | next_rho_valid
@@ -169,10 +223,16 @@ def cg_block(
                 residual_squared,
             )
 
-    if recurrences_valid is not None and not recurrences_valid.item():
+    if not recurrences_valid.item():
         raise RuntimeError(
             "CG encountered a non-positive or non-finite recurrence inner product; "
             "A and P must be Hermitian positive definite on the active subspace"
+        )
+    if singular_unrolled is not None:
+        # The extra residual argument keeps the guard reachable when stopping
+        # returns an initialization that has no gradient history of its own.
+        solution = _CGUnrolledResult.apply(
+            solution, initial_residual, singular_unrolled
         )
     if report is not None:
         if stopping_squared is not None and not converged:
@@ -192,9 +252,28 @@ class CG:
 
     ``backward_mode="implicit"`` (the default) solves another CG system in
     backward and avoids storing the iteration history.  It treats the operator
-    as fixed and differentiates only the right-hand side. ``"unrolled"``
+    as fixed and supports first-order derivatives of the right-hand side only.
+    The backward solve normalizes its right-hand side and uses zero absolute
+    tolerance and relative tolerance ``max(1e-12, 10 * dtype_epsilon)``, or a
+    smaller explicit positive ``rtol``. It reuses ``max_iter`` and preserves
+    fixed-iteration mode when all forward stopping thresholds are zero.
+    Consequently, absolute forward tolerances do not erase small gradients.
+    Like other implicit methods, this derivative describes the converged
+    solution, which can differ from the derivative of a truncated solve.
+    ``"unrolled"``
     differentiates the truncated iterations, including ``x0`` and tensors
-    captured by the operator; use it when operator parameters require gradients.
+    captured by the operator; use it for higher-order derivatives or when
+    operator parameters require gradients.
+
+    If the initial residual depends on differentiable inputs, unrolled backward
+    raises when the run encounters a zero-residual recurrence, initially or
+    after exact convergence. Masking its ``0/0`` coefficient is sufficient for a
+    forward result, but cannot generally define the derivative of truncated CG.
+    This check is conservative even for operators whose exact inverse is smooth.
+    It does not change forward values, inference, ``max_iter=0``, or stopping
+    before the recurrence with a positive residual threshold. A relative-only
+    threshold at ``b=0`` is zero and is guarded as well. Non-singular unrolled
+    runs retain higher-order derivatives.
 
     Supplying either ``rtol`` or ``atol`` selects the conventional criterion
     ``||r|| <= atol + rtol * ||b||`` and takes precedence over legacy ``tol``.

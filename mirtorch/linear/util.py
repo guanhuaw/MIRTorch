@@ -2,7 +2,6 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 import torch
-import torchvision
 from torch import Tensor, nn
 
 
@@ -24,8 +23,11 @@ def nufft_trajectory_vjp(
     This evaluates ``-1j * A(x * r[d])`` for every spatial dimension in one
     batched transform, following Wang and Fessler, IEEE TCI 2023.
     """
-    weighted_modes = []
+    batch, transforms = modes.shape[:2]
     spatial_shape = modes.shape[2:]
+    # Fill the batched transform directly instead of retaining one full set
+    # of coil images per axis alongside a second stacked copy.
+    weighted = modes.new_empty(batch, len(spatial_shape), transforms, *spatial_shape)
     for dimension, size in enumerate(spatial_shape):
         coordinates = torch.arange(
             -(size // 2),
@@ -35,10 +37,9 @@ def nufft_trajectory_vjp(
         )
         shape = [1] * len(spatial_shape)
         shape[dimension] = size
-        weighted_modes.append(modes * coordinates.reshape(shape))
+        weighted[:, dimension] = modes * coordinates.reshape(shape)
 
-    batch, transforms = modes.shape[:2]
-    weighted = torch.stack(weighted_modes, dim=1).reshape(
+    weighted = weighted.reshape(
         batch,
         len(spatial_shape) * transforms,
         *spatial_shape,
@@ -182,17 +183,25 @@ def dim_conv(dim_in, dim_kernel_size, dim_stride=1, dim_padding=0, dim_dilation=
 
 
 def imrotate(img, angle):
-    """
+    """Rotate an image using the optional ``torchvision`` dependency.
+
     Args:
         img: N * C * H * W tensor
         angle: in degree
     Returns:
         rotated img
     """
-    return torchvision.transforms.functional.rotate(
+    try:
+        from torchvision.transforms import InterpolationMode, functional
+    except ImportError as error:
+        raise ImportError(
+            "imrotate requires torchvision; install it with "
+            "`pip install 'MIRTorch[examples]'` or `pip install torchvision`."
+        ) from error
+    return functional.rotate(
         img,
         angle,
-        interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+        interpolation=InterpolationMode.BILINEAR,
         fill=0,
     )
 
@@ -286,7 +295,8 @@ def pad2sizezero(img, padx, padz):
 
 
 def fft_conv(img, ker):
-    """
+    """Centered 2D convolution with replicate boundaries, real or complex.
+
     Args:
         img: nx * nz
         ker: px * pz
@@ -300,7 +310,7 @@ def fft_conv(img, ker):
     padleft = _padleft(nz, pz)
     padright = _padright(nz, pz)
     m = nn.ReplicationPad2d((padleft, padright, padup, paddown))
-    pad_img = m(img.unsqueeze(0).unsqueeze(0)).squeeze()
+    pad_img = m(img.unsqueeze(0).unsqueeze(0))[0, 0]
 
     padx, padz = pad_img.shape[0], pad_img.shape[1]
 
@@ -308,12 +318,18 @@ def fft_conv(img, ker):
     pad_img_fft = fft2(pad_img)
     pad_ker_fft = fft2(pad_ker)
     freq = torch.mul(pad_img_fft, pad_ker_fft)
-    xout = torch.real(ifft2(freq))
+    xout = ifft2(freq)
+    if not img.is_complex() and not ker.is_complex():
+        xout = xout.real
     return xout[padup : padup + nx, padleft : padleft + nz]
 
 
 def fft_conv_adj(img, ker):
-    """
+    """Hermitian adjoint of :func:`fft_conv` for the same image shape.
+
+    Conjugate the kernel spectrum before transposing replicate padding;
+    using the forward spectrum is valid only for a self-adjoint kernel.
+
     Args:
         img: nx * nz
         ker: px * pz
@@ -327,15 +343,17 @@ def fft_conv_adj(img, ker):
     padleft = _padleft(nz, pz)
     padright = _padright(nz, pz)
     m = nn.ZeroPad2d((padleft, padright, padup, paddown))
-    pad_img = m(img.unsqueeze(0).unsqueeze(0)).squeeze()
+    pad_img = m(img.unsqueeze(0).unsqueeze(0))[0, 0]
 
     padx, padz = pad_img.shape[0], pad_img.shape[1]
 
     pad_ker = pad2sizezero(ker, padx, padz)
     pad_img_fft = fft2(pad_img)
     pad_ker_fft = fft2(pad_ker)
-    freq = torch.mul(pad_img_fft, pad_ker_fft)
-    xout = torch.real(ifft2(freq))
+    freq = torch.mul(pad_img_fft, pad_ker_fft.conj())
+    xout = ifft2(freq)
+    if not img.is_complex() and not ker.is_complex():
+        xout = xout.real
     xout[padup, :] += torch.sum(xout[0:padup, :], dim=0)
     xout[nx + padup - 1, :] += torch.sum(xout[nx + padup :, :], dim=0)
     xout[:, padleft] += torch.sum(xout[:, 0:padleft], dim=1)

@@ -7,6 +7,7 @@ from mirtorch.linear import (
     Add,
     BlockDiagonal,
     ConjTranspose,
+    Diag,
     Diff2dgram,
     Hstack,
     Identity,
@@ -207,3 +208,39 @@ def test_hstack_operator_nonzero_dimension():
 def test_stacked_operators_reject_empty_input(operator):
     with pytest.raises(ValueError, match="At least one"):
         operator([])
+
+
+@pytest.mark.parametrize("composite", [BlockDiagonal, Kron])
+@pytest.mark.parametrize("adjoint", [False, True])
+@pytest.mark.parametrize("input_dtype", [torch.float32, torch.complex64])
+def test_block_composites_preserve_complex_output_dtype_and_gradients(
+    composite, adjoint, input_dtype
+):
+    diagonal = torch.tensor([1 + 2j, -0.5 + 0.3j], dtype=torch.complex128)
+    child = Diag(diagonal)
+    operator = (
+        composite([child, child]) if composite is BlockDiagonal else composite(child, 2)
+    )
+    value = torch.tensor([[1, 2], [3, 4]], dtype=input_dtype, requires_grad=True)
+    result = operator.adjoint(value) if adjoint else operator(value)
+    expected_diagonal = diagonal.conj() if adjoint else diagonal
+    expected = expected_diagonal[:, None] * value
+    assert result.dtype == torch.complex128
+    torch.testing.assert_close(result, expected)
+    actual_gradient = torch.autograd.grad(result.abs().square().sum(), value)[0]
+    expected_gradient = torch.autograd.grad(expected.abs().square().sum(), value)[0]
+    torch.testing.assert_close(actual_gradient, expected_gradient)
+
+
+@pytest.mark.parametrize("adjoint", [False, True])
+def test_block_diagonal_promotes_different_child_output_dtypes(adjoint):
+    first = Diag(torch.tensor([1, 2], dtype=torch.float32))
+    second = Diag(torch.tensor([1 + 2j, 2 - 0.5j], dtype=torch.complex128))
+    operator = BlockDiagonal([first, second])
+    value = torch.ones(2, 2)
+    result = operator.adjoint(value) if adjoint else operator(value)
+    expected = torch.tensor([[1, 1 + 2j], [2, 2 - 0.5j]], dtype=torch.complex128)
+    if adjoint:
+        expected = expected.conj()
+    assert result.dtype == torch.complex128
+    torch.testing.assert_close(result, expected)

@@ -11,6 +11,7 @@ from .basics import (
     Patch2D,
     Patch3D,
 )
+from .ct import CT
 from .linearmaps import (
     Add,
     BlockDiagonal,
@@ -23,10 +24,11 @@ from .linearmaps import (
     Vstack,
 )
 from .mri import FFTCn, Gmri, GmriGram, NuSense, NuSenseGram, Sense
-from .spect import SPECT
+from .spect import SPECT, parallel_hole_psfs, required_rotation_shape
 from .wavelets import Wavelet2D
 
 __all__ = [
+    "CT",
     "SPECT",
     "Add",
     "BlockDiagonal",
@@ -55,4 +57,6 @@ __all__ = [
     "Sense",
     "Vstack",
     "Wavelet2D",
+    "parallel_hole_psfs",
+    "required_rotation_shape",
 ]

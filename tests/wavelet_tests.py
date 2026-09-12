@@ -1,4 +1,5 @@
 import pytest
+import pywt
 import torch
 
 from mirtorch.linear import Wavelet2D
@@ -153,6 +154,105 @@ def test_wavelet2d_preserves_deep_padded_decompositions():
     rhs = (image * operator.H(coefficients)).sum()
 
     torch.testing.assert_close(lhs, rhs, rtol=3e-5, atol=3e-5)
+
+
+@pytest.mark.parametrize("wave_type", ["haar", "db4", "bior2.2"])
+@pytest.mark.parametrize("padding", ["zero", "symmetric", "reflect", "periodization"])
+def test_wavelet2d_double_precision_matches_pywavelets(wave_type, padding):
+    image = torch.randn(9, 11, dtype=torch.float64)
+    operator = Wavelet2D(image.shape, wave_type, padding, J=2)
+    low, details = operator._analysis(image[None, None])
+    reference = image.numpy()
+    for level, detail in enumerate(details):
+        reference, expected_details = pywt.dwt2(reference, wave_type, mode=padding)
+        for band, expected in zip(detail[0, 0], expected_details):
+            torch.testing.assert_close(
+                band, torch.from_numpy(expected), rtol=1e-12, atol=1e-12
+            )
+    torch.testing.assert_close(
+        low[0, 0], torch.from_numpy(reference), rtol=1e-12, atol=1e-12
+    )
+
+    coefficients = torch.randn(operator.size_out, dtype=torch.float64)
+    torch.testing.assert_close(
+        (operator(image) * coefficients).sum(),
+        (image * operator.H(coefficients)).sum(),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+@pytest.mark.parametrize("padding", ["zero", "symmetric", "reflect", "periodization"])
+def test_wavelet2d_complex_double_gradients_match_finite_differences(padding):
+    operator = Wavelet2D((5, 6), "db2", padding, J=1)
+    image = torch.randn(operator.size_in, dtype=torch.complex128, requires_grad=True)
+    coefficients = torch.randn(
+        operator.size_out, dtype=torch.complex128, requires_grad=True
+    )
+    assert torch.autograd.gradcheck(operator, (image,), fast_mode=True)
+    assert torch.autograd.gradcheck(operator.H, (coefficients,), fast_mode=True)
+
+
+@pytest.mark.parametrize("created_inside", [False, True])
+@pytest.mark.parametrize("padding", ["zero", "symmetric", "reflect", "periodization"])
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "mps",
+            marks=pytest.mark.skipif(
+                not torch.backends.mps.is_available(),
+                reason="Apple Metal is unavailable",
+            ),
+        ),
+    ],
+)
+def test_wavelet2d_inference_mode_has_exact_adjoint(device, padding, created_inside):
+    def create():
+        operator = Wavelet2D((1, 2, 9, 11), "db2", padding, J=2, device=device)
+        image = torch.randn(operator.size_in, dtype=torch.complex64, device=device)
+        coefficients = torch.randn(
+            operator.size_out, dtype=torch.complex64, device=device
+        )
+        return operator, image, coefficients
+
+    if not created_inside:
+        operator, image, coefficients = create()
+    with torch.inference_mode():
+        if created_inside:
+            operator, image, coefficients = create()
+        torch.testing.assert_close(
+            (operator(image).conj() * coefficients).sum(),
+            (image.conj() * operator.H(coefficients)).sum(),
+            rtol=3e-5,
+            atol=3e-5,
+        )
+
+
+def test_wavelet2d_adjoint_does_not_build_an_autograd_graph(monkeypatch):
+    operator = Wavelet2D((16, 16), padding="symmetric", J=2)
+    coefficients = torch.randn(operator.size_out)
+
+    def unexpected_autograd(*args, **kwargs):
+        pytest.fail("Wavelet adjoint must use explicit filtering")
+
+    monkeypatch.setattr(torch.autograd, "grad", unexpected_autograd)
+    assert operator.H(coefficients).shape == (16, 16)
+
+
+def test_wavelet2d_accepts_conjugate_views():
+    operator = Wavelet2D((9, 11), "db2", "periodization", J=2)
+    for transform, shape in [
+        (operator, operator.size_in),
+        (operator.H, operator.size_out),
+    ]:
+        value = torch.randn(shape, dtype=torch.complex128, requires_grad=True)
+        actual = transform(value.conj())
+        expected = transform(value).conj()
+        torch.testing.assert_close(actual, expected)
+        actual.real.sum().backward()
+        assert torch.isfinite(value.grad).all()
 
 
 def test_vendored_dtcwt_coefficients_ship_and_round_trip():
